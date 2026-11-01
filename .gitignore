@@ -1,0 +1,21 @@
+# Build artifacts
+*.o
+*.d
+aurade
+tools/cc_preview
+tools/gesture_sim
+build/
+*.zip
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Temporary and editor files
+*.tmp
+*.swp
+*.swo
+*~
+.DS_Store
+.cache/

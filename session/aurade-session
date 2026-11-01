@@ -1,0 +1,35 @@
+#!/bin/bash
+# AuraDE Wayland Session Startup Script
+
+export XDG_CURRENT_DESKTOP=AuraDE
+export XDG_SESSION_DESKTOP=AuraDE
+export XDG_SESSION_TYPE=wayland
+export _JAVA_AWT_WM_NONREPARENTING=1
+export MOZ_ENABLE_WAYLAND=1
+export QT_QPA_PLATFORM=wayland
+export XCURSOR_THEME=Aura-Circle
+export XCURSOR_SIZE=24
+export XCURSOR_PATH="$HOME/.icons:$HOME/.local/share/icons:/usr/share/icons:/usr/share/pixmaps"
+
+# Sync session environment to D-Bus and systemd user services so portals & apps inherit it
+dbus-update-activation-environment --systemd --all XCURSOR_THEME XCURSOR_SIZE XCURSOR_PATH XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP 2>/dev/null
+systemctl --user import-environment XCURSOR_THEME XCURSOR_SIZE XCURSOR_PATH XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP 2>/dev/null
+systemctl --user start graphical-session.target 2>/dev/null
+
+# GTK3/GTK4 windows draw their own client-side titlebar. WhiteSur rounds the
+# top corners already, but leaves the bottom corners square because GTK does
+# not clip child widgets to the window radius. Add one tiny user-CSS override
+# to make every GTK window match the AuraDE titlebar radius. Existing user CSS
+# is left untouched; the marked block is appended only once.
+for version in 3.0 4.0; do
+    css_dir="$HOME/.config/gtk-$version"
+    css_file="$css_dir/gtk.css"
+    mkdir -p "$css_dir"
+    if ! grep -q "AuraDE: rounded GTK window corners" "$css_file" 2>/dev/null; then
+        printf '\n/* AuraDE: rounded GTK window corners */\nwindow.background.csd { border-radius: 10px; }\n' >>"$css_file"
+    fi
+done
+
+mkdir -p "$HOME/.cache/aurade"
+python3 /home/user/AI/aura-connect/linux/aura_connect_daemon.py >>"$HOME/.cache/aurade/aura-connect.log" 2>&1 &
+exec /home/user/AI/de/aurade >>"$HOME/.cache/aurade/aurade.log" 2>&1

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=AuraDE
+Comment=Desktop Environment focused on smooth macOS-logic touchpad gestures
+Exec=/home/user/AI/de/session/aurade-session
+Type=Application
+DesktopNames=AuraDE

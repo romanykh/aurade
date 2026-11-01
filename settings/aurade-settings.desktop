@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=AuraDE Settings
+Comment=Desktop environment settings: dock, gestures, appearance, keyboard
+Exec=python3 /home/user/AI/de/settings/aurade_settings.py
+Icon=preferences-desktop
+Terminal=false
+Type=Application
+Categories=Settings;DesktopSettings;
+Keywords=aurade;settings;dock;autohide;gestures;appearance;wallpaper;keyboard;
