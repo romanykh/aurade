@@ -111,6 +111,9 @@ aurade_config_t config_get_defaults(void) {
         .blur_launchpad = true,
         .blur_workspace_overview = true,
         .blur_strength = 1.0,
+
+        // Topbar
+        .topbar_cpu_temp = true,
     };
     return cfg;
 }
@@ -294,6 +297,12 @@ bool config_load(aurade_config_t *cfg, const char *path) {
         }
     }
 
+    struct json_object *tb = NULL;
+    if (json_object_object_get_ex(root, "topbar", &tb)) {
+        struct json_object *v;
+        if (json_object_object_get_ex(tb, "cpu_temp", &v)) cfg->topbar_cpu_temp = json_object_get_boolean(v);
+    }
+
     json_object_put(root);
     return true;
 }
@@ -391,6 +400,10 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     json_object_object_add(blur, "workspace_overview", json_object_new_boolean(cfg->blur_workspace_overview));
     json_object_object_add(blur, "strength", json_object_new_double(cfg->blur_strength > 0.05 ? cfg->blur_strength : 1.0));
     json_object_object_add(root, "blur", blur);
+
+    struct json_object *tb = json_object_new_object();
+    json_object_object_add(tb, "cpu_temp", json_object_new_boolean(cfg->topbar_cpu_temp));
+    json_object_object_add(root, "topbar", tb);
 
     int ret = json_object_to_file_ext(path, root, JSON_C_TO_STRING_PRETTY);
     json_object_put(root);

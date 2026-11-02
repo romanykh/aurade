@@ -95,6 +95,142 @@ static bool read_battery(int *capacity, bool *charging) {
     return found;
 }
 
+#define MAX_CPU_SENSORS 32
+
+typedef struct {
+    char paths[MAX_CPU_SENSORS][256];
+    bool is_core[MAX_CPU_SENSORS];
+    int count;
+    uint64_t last_discovered_ms;
+} cpu_sensor_cache_t;
+
+static cpu_sensor_cache_t g_cpu_sensors = {0};
+
+static uint64_t get_time_monotonic_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static void discover_cpu_sensors(cpu_sensor_cache_t *sc) {
+    sc->count = 0;
+    glob_t g;
+    if (glob("/sys/class/hwmon/hwmon*", 0, NULL, &g) != 0) return;
+
+    bool found = false;
+    for (size_t i = 0; i < g.gl_pathc && !found; i++) {
+        char name_path[512];
+        snprintf(name_path, sizeof(name_path), "%s/name", g.gl_pathv[i]);
+        FILE *fn = fopen(name_path, "r");
+        if (!fn) continue;
+        char name[64] = {0};
+        if (fscanf(fn, "%63s", name) != 1) { fclose(fn); continue; }
+        fclose(fn);
+
+        if (strcmp(name, "coretemp") == 0 || strcmp(name, "k10temp") == 0 || strcmp(name, "zenpower") == 0) {
+            glob_t tg;
+            char pattern[512];
+            snprintf(pattern, sizeof(pattern), "%s/temp*_input", g.gl_pathv[i]);
+            if (glob(pattern, 0, NULL, &tg) == 0) {
+                for (size_t j = 0; j < tg.gl_pathc && sc->count < MAX_CPU_SENSORS; j++) {
+                    snprintf(sc->paths[sc->count], sizeof(sc->paths[0]), "%s", tg.gl_pathv[j]);
+                    sc->is_core[sc->count] = false;
+
+                    // Check label to distinguish individual cores from overall package
+                    char label_path[512];
+                    snprintf(label_path, sizeof(label_path), "%s", tg.gl_pathv[j]);
+                    char *suffix = strstr(label_path, "_input");
+                    if (suffix) {
+                        strcpy(suffix, "_label");
+                        FILE *fl = fopen(label_path, "r");
+                        if (fl) {
+                            char label[64] = {0};
+                            if (fgets(label, sizeof(label), fl)) {
+                                if (strstr(label, "Core") || strstr(label, "Tccd")) {
+                                    sc->is_core[sc->count] = true;
+                                }
+                            }
+                            fclose(fl);
+                        }
+                    }
+                    sc->count++;
+                    found = true;
+                }
+                globfree(&tg);
+            }
+        }
+    }
+    globfree(&g);
+
+    // Fallback thermal zones (x86_pkg_temp, cpu-thermal, etc.)
+    if (!found) {
+        glob_t zg;
+        if (glob("/sys/class/thermal/thermal_zone*", 0, NULL, &zg) == 0) {
+            for (size_t i = 0; i < zg.gl_pathc && sc->count < MAX_CPU_SENSORS; i++) {
+                char type_path[512];
+                snprintf(type_path, sizeof(type_path), "%s/type", zg.gl_pathv[i]);
+                FILE *ft = fopen(type_path, "r");
+                if (!ft) continue;
+                char type[64] = {0};
+                if (fscanf(ft, "%63s", type) == 1) {
+                    if (strstr(type, "pkg") || strstr(type, "cpu") || strstr(type, "x86")) {
+                        snprintf(sc->paths[sc->count], sizeof(sc->paths[0]), "%s/temp", zg.gl_pathv[i]);
+                        sc->is_core[sc->count] = false;
+                        sc->count++;
+                    }
+                }
+                fclose(ft);
+            }
+            globfree(&zg);
+        }
+    }
+    sc->last_discovered_ms = get_time_monotonic_ms();
+}
+
+static bool read_cpu_temp(double *out_avg, double *out_max) {
+    uint64_t now = get_time_monotonic_ms();
+    if (g_cpu_sensors.count == 0 || (now - g_cpu_sensors.last_discovered_ms > 30000)) {
+        discover_cpu_sensors(&g_cpu_sensors);
+    }
+    if (g_cpu_sensors.count == 0) return false;
+
+    double core_sum = 0.0;
+    int core_count = 0;
+    double all_sum = 0.0;
+    int all_count = 0;
+    double max_temp = -1000.0;
+
+    for (int i = 0; i < g_cpu_sensors.count; i++) {
+        FILE *f = fopen(g_cpu_sensors.paths[i], "r");
+        if (!f) continue;
+        long millideg = 0;
+        if (fscanf(f, "%ld", &millideg) == 1 && millideg > 0 && millideg < 150000) {
+            double deg = millideg / 1000.0;
+            all_sum += deg;
+            all_count++;
+            if (deg > max_temp) max_temp = deg;
+            if (g_cpu_sensors.is_core[i]) {
+                core_sum += deg;
+                core_count++;
+            }
+        }
+        fclose(f);
+    }
+
+    if (all_count == 0) {
+        g_cpu_sensors.count = 0; // force rediscovery next tick
+        return false;
+    }
+
+    if (core_count > 0) {
+        if (out_avg) *out_avg = core_sum / core_count;
+    } else {
+        if (out_avg) *out_avg = all_sum / all_count;
+    }
+    if (out_max) *out_max = max_temp;
+    return true;
+}
+
 aurade_topbar_t *topbar_create(aurade_server_t *server) {
     aurade_topbar_t *bar = calloc(1, sizeof(*bar));
     bar->server = server;
@@ -263,6 +399,96 @@ void topbar_render(aurade_topbar_t *bar) {
                              (bar->hover_cc || cc_open) ? 1.0 : 0.88);
 
     cursor_x -= 8.0;
+
+    // Processor Temperature Widget (Average and Max)
+    bool show_cpu = bar->server && bar->server->config.topbar_cpu_temp;
+    if (show_cpu) {
+        uint64_t now_ms = get_time_monotonic_ms();
+        if (bar->last_temp_check_ms == 0 || (now_ms - bar->last_temp_check_ms >= 1000)) {
+            bar->last_temp_check_ms = now_ms;
+            double avg = 0.0, max = 0.0;
+            if (read_cpu_temp(&avg, &max)) {
+                bar->cached_cpu_avg = avg;
+                bar->cached_cpu_max = max;
+                bar->cpu_temp_valid = true;
+            }
+        }
+
+        if (bar->cpu_temp_valid) {
+            double avg = bar->cached_cpu_avg;
+            double max = bar->cached_cpu_max;
+
+            char str_avg_lbl[] = "avg ";
+            char str_avg_val[16]; snprintf(str_avg_val, sizeof(str_avg_val), "%.0f°", avg);
+            char str_sep[] = "  ";
+            char str_max_lbl[] = "max ";
+            char str_max_val[16]; snprintf(str_max_val, sizeof(str_max_val), "%.0f°", max);
+
+            double icon_sz = 13.0;
+            double pad_h = 7.0;
+            double fsz = 11.0;
+
+            double w_avg_lbl = text_width(cr, str_avg_lbl, FONT_UI, fsz, false);
+            double w_avg_val = text_width(cr, str_avg_val, FONT_UI, fsz, true);
+            double w_sep     = text_width(cr, str_sep,     FONT_UI, fsz, false);
+            double w_max_lbl = text_width(cr, str_max_lbl, FONT_UI, fsz, false);
+            double w_max_val = text_width(cr, str_max_val, FONT_UI, fsz, true);
+
+            double content_w = icon_sz + 6.0 + w_avg_lbl + w_avg_val + w_sep + w_max_lbl + w_max_val;
+            double pill_w = pad_h * 2.0 + content_w;
+            double pill_h = 18.0;
+
+            cursor_x -= pill_w;
+            bar->cpu_temp_x = cursor_x;
+            bar->cpu_temp_y = (h - pill_h) / 2.0;
+            bar->cpu_temp_w = pill_w;
+            bar->cpu_temp_h = pill_h;
+
+            // Draw pill container
+            draw_rounded_rect(cr, bar->cpu_temp_x, bar->cpu_temp_y, pill_w, pill_h, pill_h / 2.0);
+            if (bar->hover_cpu_temp) {
+                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.20);
+            } else {
+                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.10);
+            }
+            cairo_fill_preserve(cr);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, bar->hover_cpu_temp ? 0.26 : 0.15);
+            cairo_set_line_width(cr, 1.0);
+            cairo_stroke(cr);
+
+            // Dynamic color tint based on temperature
+            double tr = 1.0, tg = 1.0, tb = 1.0;
+            if (max >= 80.0) { tr = 1.0; tg = 0.35; tb = 0.32; }
+            else if (max >= 65.0) { tr = 1.0; tg = 0.80; tb = 0.35; }
+            else { tr = 0.85; tg = 0.92; tb = 1.0; }
+
+            // CPU Icon
+            double icon_cx = bar->cpu_temp_x + pad_h + icon_sz / 2.0;
+            double icon_cy = h / 2.0;
+            draw_icon_tint(tr, tg, tb);
+            draw_cpu_icon(cr, icon_cx, icon_cy, icon_sz, 0.95);
+
+            // Text
+            double tx = icon_cx + icon_sz / 2.0 + 6.0;
+            draw_text(cr, str_avg_lbl, FONT_UI, fsz, false, 1.0, 1.0, 1.0, 0.60, tx, h / 2.0, false, true);
+            tx += w_avg_lbl;
+            draw_text(cr, str_avg_val, FONT_UI, fsz, true, 1.0, 1.0, 1.0, 0.95, tx, h / 2.0, false, true);
+            tx += w_avg_val;
+            draw_text(cr, str_sep, FONT_UI, fsz, false, 1.0, 1.0, 1.0, 0.40, tx, h / 2.0, false, true);
+            tx += w_sep;
+            draw_text(cr, str_max_lbl, FONT_UI, fsz, false, 1.0, 1.0, 1.0, 0.60, tx, h / 2.0, false, true);
+            tx += w_max_lbl;
+            draw_text(cr, str_max_val, FONT_UI, fsz, true, tr, tg, tb, 0.98, tx, h / 2.0, false, true);
+
+            cursor_x -= 8.0;
+        } else {
+            bar->cpu_temp_w = 0;
+            bar->cpu_temp_h = 0;
+        }
+    } else {
+        bar->cpu_temp_w = 0;
+        bar->cpu_temp_h = 0;
+    }
 
     // Screen recording status pill
     bool is_rec = bar->server && screenshot_is_recording(bar->server->screenshot);
@@ -614,10 +840,11 @@ bool topbar_handle_motion(aurade_topbar_t *bar, double x, double y) {
     }
 
     if (y > bar->height + 2.0) {
-        if (bar->hover_cc || bar->hover_apple || bar->hover_rec) {
+        if (bar->hover_cc || bar->hover_apple || bar->hover_rec || bar->hover_cpu_temp) {
             bar->hover_cc = false;
             bar->hover_apple = false;
             bar->hover_rec = false;
+            bar->hover_cpu_temp = false;
             topbar_render(bar);
         }
         return false;
@@ -630,11 +857,15 @@ bool topbar_handle_motion(aurade_topbar_t *bar, double x, double y) {
     bool rec = (bar->rec_w > 0 &&
                 x >= bar->rec_x && x <= bar->rec_x + bar->rec_w &&
                 y >= bar->rec_y && y <= bar->rec_y + bar->rec_h);
+    bool temp = (bar->cpu_temp_w > 0 &&
+                 x >= bar->cpu_temp_x && x <= bar->cpu_temp_x + bar->cpu_temp_w &&
+                 y >= bar->cpu_temp_y && y <= bar->cpu_temp_y + bar->cpu_temp_h);
 
-    if (cc != bar->hover_cc || apple != bar->hover_apple || rec != bar->hover_rec) {
+    if (cc != bar->hover_cc || apple != bar->hover_apple || rec != bar->hover_rec || temp != bar->hover_cpu_temp) {
         bar->hover_cc = cc;
         bar->hover_apple = apple;
         bar->hover_rec = rec;
+        bar->hover_cpu_temp = temp;
         topbar_render(bar);
         return true;
     }
@@ -660,6 +891,14 @@ bool topbar_handle_click(aurade_topbar_t *bar, double x, double y) {
             topbar_render(bar);
             return true;
         }
+    }
+
+    // Processor temperature widget click -> Open System Monitor
+    if (bar->cpu_temp_w > 0 &&
+        x >= bar->cpu_temp_x && x <= bar->cpu_temp_x + bar->cpu_temp_w &&
+        y >= bar->cpu_temp_y && y <= bar->cpu_temp_y + bar->cpu_temp_h) {
+        app_launch_command("gnome-system-monitor 2>/dev/null || x-terminal-emulator -e htop 2>/dev/null &");
+        return true;
     }
 
     // Screen recording pill click -> Stop recording

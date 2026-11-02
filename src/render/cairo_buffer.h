@@ -98,6 +98,7 @@ void draw_half_circle_icon(cairo_t *cr, double cx, double cy, double size, doubl
 void draw_sun_icon(cairo_t *cr, double cx, double cy, double size, double a);
 void draw_speaker_icon(cairo_t *cr, double cx, double cy, double size, double a);
 void draw_search_icon(cairo_t *cr, double cx, double cy, double size, double a);
+void draw_cpu_icon(cairo_t *cr, double cx, double cy, double size, double a);
 void draw_chevron(cairo_t *cr, double cx, double cy, double size, int direction, double a);
 
 /**

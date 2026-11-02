@@ -517,6 +517,46 @@ void draw_search_icon(cairo_t *cr, double cx, double cy, double s, double a) {
     cairo_restore(cr);
 }
 
+void draw_cpu_icon(cairo_t *cr, double cx, double cy, double s, double a) {
+    cairo_save(cr);
+    double die_sz = s * 0.64;
+    double half = die_sz / 2.0;
+
+    // Outer chip body with rounded corners
+    draw_rounded_rect(cr, cx - half, cy - half, die_sz, die_sz, 1.8);
+    cairo_set_source_rgba(cr, g_icon_rgb[0], g_icon_rgb[1], g_icon_rgb[2], a * 0.90);
+    cairo_set_line_width(cr, 1.0);
+    cairo_stroke(cr);
+
+    // Micro pins (2 pins extending outward from each edge)
+    double pin_len = s * 0.16;
+    double pin_spacing = die_sz * 0.28;
+    cairo_set_line_width(cr, 0.9);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+
+    for (int dir = -1; dir <= 1; dir += 2) {
+        // Horizontal pins
+        cairo_move_to(cr, cx - half, cy + dir * pin_spacing);
+        cairo_line_to(cr, cx - half - pin_len, cy + dir * pin_spacing);
+        cairo_move_to(cr, cx + half, cy + dir * pin_spacing);
+        cairo_line_to(cr, cx + half + pin_len, cy + dir * pin_spacing);
+
+        // Vertical pins
+        cairo_move_to(cr, cx + dir * pin_spacing, cy - half);
+        cairo_line_to(cr, cx + dir * pin_spacing, cy - half - pin_len);
+        cairo_move_to(cr, cx + dir * pin_spacing, cy + half);
+        cairo_line_to(cr, cx + dir * pin_spacing, cy + half + pin_len);
+    }
+    cairo_stroke(cr);
+
+    // Thermal indicator core dot
+    cairo_arc(cr, cx, cy, die_sz * 0.22, 0, 2 * M_PI);
+    cairo_set_source_rgba(cr, g_icon_rgb[0], g_icon_rgb[1], g_icon_rgb[2], a);
+    cairo_fill(cr);
+
+    cairo_restore(cr);
+}
+
 void draw_chevron(cairo_t *cr, double cx, double cy, double s, int direction, double a) {
     // direction: 0 = left, 1 = right, 2 = up, 3 = down
     cairo_save(cr);

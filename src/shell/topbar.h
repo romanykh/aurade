@@ -37,6 +37,14 @@ typedef struct aurade_topbar {
     double rec_x, rec_y, rec_w, rec_h;
     bool hover_rec;
 
+    // CPU Temperature widget
+    double cpu_temp_x, cpu_temp_y, cpu_temp_w, cpu_temp_h;
+    bool hover_cpu_temp;
+    double cached_cpu_avg;
+    double cached_cpu_max;
+    bool cpu_temp_valid;
+    uint64_t last_temp_check_ms;
+
     // Apple menu (system power menu)
     power_menu_state_t power_menu_state;
     power_action_t power_menu_confirm;

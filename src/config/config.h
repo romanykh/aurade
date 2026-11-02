@@ -93,6 +93,9 @@ typedef struct {
     bool blur_launchpad;
     bool blur_workspace_overview;
     double blur_strength;
+
+    // Topbar Widgets
+    bool topbar_cpu_temp;
 } aurade_config_t;
 
 /**
