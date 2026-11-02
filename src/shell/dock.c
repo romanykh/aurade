@@ -1288,9 +1288,19 @@ bool dock_handle_context_menu_click(aurade_dock_t *dock, double x, double y) {
             }
             break;
         case DOCK_MENU_ACT_LAUNCHPAD:
+            if (dock->server && dock->server->launchpad && dock->server->launchpad->active) {
+                server_close_overlay(dock->server);
+                break;
+            }
             server_handle_gesture_begin(dock->server, ACTION_LAUNCHPAD);
-            server_handle_gesture_update(dock->server, 0, 0, 0.6);
-            server_handle_gesture_end(dock->server, false, 0, 0);
+            dock->server->gesture_progress = 0.001;
+            dock->server->gesture_in_progress = false;
+            dock->server->gesture_animating = true;
+            dock->server->gesture_is_closing = false;
+            spring_simulation_start(&dock->server->gesture_spring, &dock->server->config.spring,
+                                    0.0, 1.0, 0.0);
+            launchpad_update_progress(dock->server->launchpad, 0.001);
+            schedule_all_outputs(dock->server);
             break;
         case DOCK_MENU_ACT_UNPIN: {
             if (item->is_running) {
@@ -1470,9 +1480,19 @@ void dock_handle_motion(aurade_dock_t *dock, double mouse_x, double mouse_y) {
 
 static void activate_item(aurade_dock_t *dock, dock_item_t *item) {
     if (strcmp(item->name, "Launchpad") == 0) {
+        if (dock->server && dock->server->launchpad && dock->server->launchpad->active) {
+            server_close_overlay(dock->server);
+            return;
+        }
         server_handle_gesture_begin(dock->server, ACTION_LAUNCHPAD);
-        server_handle_gesture_update(dock->server, 0, 0, 0.6);
-        server_handle_gesture_end(dock->server, false, 0, 0);
+        dock->server->gesture_progress = 0.001;
+        dock->server->gesture_in_progress = false;
+        dock->server->gesture_animating = true;
+        dock->server->gesture_is_closing = false;
+        spring_simulation_start(&dock->server->gesture_spring, &dock->server->config.spring,
+                                0.0, 1.0, 0.0);
+        launchpad_update_progress(dock->server->launchpad, 0.001);
+        schedule_all_outputs(dock->server);
         return;
     }
 

@@ -1562,9 +1562,20 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
             return;
         }
         if (sym == XKB_KEY_F4) {
-            server_handle_gesture_begin(server, ACTION_LAUNCHPAD);
-            server_handle_gesture_update(server, 0, 0, 0.30);
-            server_handle_gesture_end(server, false, 0, 0);
+            if (server->launchpad && server->launchpad->active) {
+                close_overlay(server);
+            } else {
+                close_overlay(server);
+                server_handle_gesture_begin(server, ACTION_LAUNCHPAD);
+                server->gesture_progress = 0.001;
+                server->gesture_in_progress = false;
+                server->gesture_animating = true;
+                server->gesture_is_closing = false;
+                spring_simulation_start(&server->gesture_spring, &server->config.spring,
+                                        0.0, 1.0, 0.0);
+                launchpad_update_progress(server->launchpad, 0.001);
+                schedule_all_outputs(server);
+            }
             return;
         }
         if (sym == XKB_KEY_F10) {

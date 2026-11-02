@@ -1098,9 +1098,7 @@ void launchpad_handle_motion(aurade_launchpad_t *lp, double x, double y) {
 bool launchpad_handle_click(aurade_launchpad_t *lp, double x, double y) {
     int res = launchpad_handle_release(lp, x, y);
     if (res == 2) {
-        server_handle_gesture_begin(lp->server, ACTION_LAUNCHPAD);
-        server_handle_gesture_update(lp->server, 0, 0, 1.5);
-        server_handle_gesture_end(lp->server, false, 0, 0);
+        server_close_overlay(lp->server);
         return true;
     }
     return res != 0;
@@ -1156,9 +1154,7 @@ bool launchpad_handle_key(aurade_launchpad_t *lp, uint32_t keyval, bool pressed)
             if (lp->open_folder->app_count > 0) {
                 desktop_app_t *app = lp->open_folder->apps[0];
                 app_launch_command(app->exec);
-                server_handle_gesture_begin(lp->server, ACTION_LAUNCHPAD);
-                server_handle_gesture_update(lp->server, 0, 0, 1.5);
-                server_handle_gesture_end(lp->server, false, 0, 0);
+                server_close_overlay(lp->server);
             }
             return true;
         }
@@ -1171,9 +1167,7 @@ bool launchpad_handle_key(aurade_launchpad_t *lp, uint32_t keyval, bool pressed)
             filter_items(lp);
             launchpad_render(lp);
         } else {
-            server_handle_gesture_begin(lp->server, ACTION_LAUNCHPAD);
-            server_handle_gesture_update(lp->server, 0, 0, 1.5);
-            server_handle_gesture_end(lp->server, false, 0, 0);
+            server_close_overlay(lp->server);
         }
         return true;
     } else if (keyval == XKB_KEY_Return || keyval == XKB_KEY_KP_Enter) {
@@ -1182,9 +1176,7 @@ bool launchpad_handle_key(aurade_launchpad_t *lp, uint32_t keyval, bool pressed)
                 desktop_app_t *app = lp->filtered_items[0].app;
                 if (lp->server && lp->server->dock) dock_start_bounce(lp->server->dock, app->name);
                 app_launch_command(app->exec);
-                server_handle_gesture_begin(lp->server, ACTION_LAUNCHPAD);
-                server_handle_gesture_update(lp->server, 0, 0, 1.5);
-                server_handle_gesture_end(lp->server, false, 0, 0);
+                server_close_overlay(lp->server);
             } else if (lp->filtered_items[0].type == LP_ITEM_FOLDER && lp->filtered_items[0].folder) {
                 lp->open_folder = lp->filtered_items[0].folder;
                 lp->open_folder_item_idx = 0;
@@ -1391,9 +1383,9 @@ void launchpad_render(aurade_launchpad_t *lp) {
     cairo_t *cr = lp->buffer->cr;
     cairo_buffer_clear(lp->buffer);
 
-    double p = lp->progress;
-    if (p <= 0.0) return;
-    if (p > 1.0) p = 1.0;
+    double p_raw = lp->progress;
+    if (p_raw <= 0.0) return;
+    double p = fmin(1.0, fmax(0.0, p_raw));
 
     // Background: Frosted real-time blur, wallpaper blur or translucent dark scrim
     if (lp->server->config.blur_launchpad && lp->realtime_blur) {
@@ -1422,8 +1414,10 @@ void launchpad_render(aurade_launchpad_t *lp) {
     lp_layout_t l;
     lp_layout(lp, &l);
 
-    // Zoom in slightly during transition
-    double zoom = 0.92 + 0.08 * p;
+    // Zoom & convergence transform:
+    // Opening: items start scaled up (1.30) in the 4 corners and converge towards the center (1.0).
+    // Closing: items disperse radially outwards towards the 4 corners (1.0 -> 1.30) and fade out.
+    double zoom = 1.0 + 0.30 * (1.0 - p_raw);
     cairo_save(cr);
     cairo_translate(cr, lp->screen_width / 2.0, lp->screen_height / 2.0);
     cairo_scale(cr, zoom, zoom);
@@ -1531,8 +1525,6 @@ void launchpad_render(aurade_launchpad_t *lp) {
                   lp->screen_height / 2.0, true, true);
     }
 
-    cairo_restore(cr);
-
     // Pagination dots + chevrons
     if (lp->total_pages > 1 && lp->open_folder == NULL) {
         double dots_y = launchpad_dots_y(lp);
@@ -1635,6 +1627,8 @@ void launchpad_render(aurade_launchpad_t *lp) {
                                cx, cy + size / 2.0 + 15.0, true, true);
         }
     }
+
+    cairo_restore(cr);
 
     cairo_buffer_apply_to_scene(lp->buffer, lp->scene_buffer);
 }
