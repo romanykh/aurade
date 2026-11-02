@@ -282,6 +282,13 @@ typedef struct aurade_server {
     // Config hot‑reload watcher
     int config_inotify_fd;
     struct wl_event_source *config_inotify_source;
+
+    // Hardware Session State (Volume, Brightness & Earbuds Protection)
+    aurade_session_state_t state;
+    char current_audio_sink[128];
+    pid_t audio_subscribe_pid;
+    int audio_subscribe_fd;
+    struct wl_event_source *audio_subscribe_source;
 } aurade_server_t;
 
 // View operations
@@ -323,6 +330,8 @@ void server_adjust_volume(aurade_server_t *server, double delta);
 void server_toggle_mute(aurade_server_t *server);
 void server_adjust_brightness(aurade_server_t *server, double delta);
 void server_update_touchpad_settings(aurade_server_t *server);
+void server_check_audio_sink(aurade_server_t *server);
+void server_restore_hardware_state(aurade_server_t *server);
 
 typedef struct aurade_input_device {
     struct wl_list link;

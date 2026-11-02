@@ -2051,6 +2051,9 @@ static void apply_brightness(aurade_control_center_t *cc) {
     char command[128];
     snprintf(command, sizeof(command), "brightnessctl set %d%%", pct);
     app_launch_command(command);
+    if (cc->server) {
+        session_state_set_brightness(&cc->server->state, cc->brightness);
+    }
     cc_schedule_refresh(cc, 300);
 }
 
@@ -2072,6 +2075,9 @@ static void apply_volume(aurade_control_center_t *cc) {
     }
     cc->volume_muted = false;
     app_launch_command(command);
+    if (cc->server) {
+        session_state_set_sink_volume(&cc->server->state, cc->server->current_audio_sink, cc->volume, false);
+    }
     cc_schedule_refresh(cc, 220);
 }
 
@@ -2087,6 +2093,9 @@ static void toggle_mute(aurade_control_center_t *cc) {
             app_launch_command("pactl set-sink-mute @DEFAULT_SINK@ 1");
         } else {
             app_launch_command("wpctl set-mute @DEFAULT_AUDIO_SINK@ 1");
+        }
+        if (cc->server) {
+            session_state_set_sink_volume(&cc->server->state, cc->server->current_audio_sink, cc->volume, true);
         }
         cc_schedule_refresh(cc, 220);
     }

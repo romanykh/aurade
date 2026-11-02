@@ -124,6 +124,7 @@ static int config_inotify_handler(int fd, uint32_t mask, void *data) {
 static int clock_tick(void *data) {
     aurade_server_t *server = data;
     if (server->topbar) topbar_render(server->topbar);
+    server_check_audio_sink(server);
     if (server->clock_timer) wl_event_source_timer_update(server->clock_timer, 1000);
     return 0;
 }
@@ -2223,6 +2224,19 @@ static bool query_hardware_volume(double *out_vol, bool *out_muted) {
     return false;
 }
 
+static bool query_hardware_default_sink(char *out_sink, size_t max_len) {
+    if (!out_sink || max_len == 0) return false;
+    out_sink[0] = '\0';
+    if (run_command_capture("pactl get-default-sink 2>/dev/null", out_sink, max_len)) {
+        size_t len = strlen(out_sink);
+        while (len > 0 && (out_sink[len - 1] == '\n' || out_sink[len - 1] == '\r' || out_sink[len - 1] == ' ')) {
+            out_sink[--len] = '\0';
+        }
+        return len > 0;
+    }
+    return false;
+}
+
 static bool query_hardware_brightness(double *out_br) {
     DIR *dir = opendir("/sys/class/backlight");
     if (dir) {
@@ -2291,6 +2305,7 @@ void server_adjust_volume(aurade_server_t *server, double delta) {
     double vol = 0.0;
     bool muted = false;
     if (query_hardware_volume(&vol, &muted)) {
+        session_state_set_sink_volume(&server->state, server->current_audio_sink, vol, muted);
         if (server->osd) {
             osd_show_volume(server->osd, vol, muted);
         }
@@ -2310,6 +2325,7 @@ void server_toggle_mute(aurade_server_t *server) {
     double vol = 0.0;
     bool muted = false;
     if (query_hardware_volume(&vol, &muted)) {
+        session_state_set_sink_volume(&server->state, server->current_audio_sink, vol, muted);
         if (server->osd) {
             osd_show_volume(server->osd, vol, muted);
         }
@@ -2336,6 +2352,7 @@ void server_adjust_brightness(aurade_server_t *server, double delta) {
 
     double br = 0.5;
     if (query_hardware_brightness(&br)) {
+        session_state_set_brightness(&server->state, br);
         if (server->osd) {
             osd_show_brightness(server->osd, br);
         }
@@ -2343,6 +2360,162 @@ void server_adjust_brightness(aurade_server_t *server, double delta) {
             control_center_sync_brightness(server->control_center, br);
         }
         schedule_all_outputs(server);
+    }
+}
+
+void server_check_audio_sink(aurade_server_t *server) {
+    if (!server) return;
+    char def_sink[128] = "";
+    if (!query_hardware_default_sink(def_sink, sizeof(def_sink))) return;
+
+    double cur_vol = 0.0;
+    bool cur_muted = false;
+    if (!query_hardware_volume(&cur_vol, &cur_muted)) return;
+
+    bool sink_changed = (def_sink[0] != '\0' && strcmp(def_sink, server->current_audio_sink) != 0);
+    bool is_bluetooth = (strstr(def_sink, "bluez") != NULL);
+
+    if (sink_changed) {
+        fprintf(stderr, "[AuraDE] Audio sink changed: '%s' -> '%s' (initial vol=%.2f)\n",
+                server->current_audio_sink, def_sink, cur_vol);
+        strncpy(server->current_audio_sink, def_sink, sizeof(server->current_audio_sink));
+
+        double saved_vol = session_state_get_sink_volume(&server->state, def_sink, -1.0);
+        double target_vol = 0.0;
+        if (saved_vol >= 0.01) {
+            target_vol = saved_vol;
+        } else {
+            // New device/earbuds: use remembered general volume or cap at 0.30 for safety!
+            target_vol = (server->state.volume >= 0.01 && server->state.volume <= 0.50) ? server->state.volume : 0.30;
+            if (is_bluetooth && target_vol > 0.35) target_vol = 0.30;
+        }
+
+        // If the new sink is at 100% (earbuds!) or noticeably differs from target, clamp immediately
+        if (cur_vol > 0.85 || fabs(cur_vol - target_vol) > 0.05) {
+            fprintf(stderr, "[AuraDE] Ear-Protection: Setting volume to %.0f%% for sink '%s'\n",
+                    target_vol * 100.0, def_sink);
+            int vol_pct = (int)lround(target_vol * 100.0);
+            char cmd[256];
+            snprintf(cmd, sizeof(cmd),
+                     "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ %d%% 2>/dev/null || pactl set-sink-volume @DEFAULT_SINK@ %d%% 2>/dev/null",
+                     vol_pct, vol_pct);
+            int rc = system(cmd);
+            (void)rc;
+            cur_vol = target_vol;
+            if (is_bluetooth && server->osd) {
+                osd_show_volume(server->osd, target_vol, false);
+            }
+        }
+        session_state_set_sink_volume(&server->state, def_sink, cur_vol, cur_muted);
+        if (server->control_center) {
+            control_center_sync_audio(server->control_center, cur_vol, cur_muted);
+        }
+        schedule_all_outputs(server);
+    } else if (is_bluetooth && cur_vol > 0.98) {
+        // Bluetooth AVRCP / PipeWire sudden jump to 100% bug protection
+        double saved_vol = session_state_get_sink_volume(&server->state, def_sink, server->state.volume);
+        if (saved_vol < 0.80) {
+            fprintf(stderr, "[AuraDE] Ear-Protection: Clamping runaway Bluetooth volume (100%% -> %.0f%%)\n",
+                    saved_vol * 100.0);
+            int vol_pct = (int)lround(saved_vol * 100.0);
+            char cmd[256];
+            snprintf(cmd, sizeof(cmd),
+                     "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ %d%% 2>/dev/null || pactl set-sink-volume @DEFAULT_SINK@ %d%% 2>/dev/null",
+                     vol_pct, vol_pct);
+            int rc = system(cmd);
+            (void)rc;
+            cur_vol = saved_vol;
+            if (server->osd) osd_show_volume(server->osd, cur_vol, cur_muted);
+            if (server->control_center) control_center_sync_audio(server->control_center, cur_vol, cur_muted);
+            schedule_all_outputs(server);
+        }
+    }
+}
+
+void server_restore_hardware_state(aurade_server_t *server) {
+    if (!server) return;
+    session_state_load(&server->state);
+
+    // 1. Restore Brightness
+    int br_pct = (int)lround(server->state.brightness * 100.0);
+    if (br_pct < 1) br_pct = 1;
+    if (br_pct > 100) br_pct = 100;
+    char br_cmd[128];
+    snprintf(br_cmd, sizeof(br_cmd), "brightnessctl set %d%% 2>/dev/null", br_pct);
+    int rc = system(br_cmd);
+    (void)rc;
+    if (server->control_center) {
+        control_center_sync_brightness(server->control_center, server->state.brightness);
+    }
+
+    // 2. Restore Volume & detect current sink
+    char def_sink[128] = "";
+    if (query_hardware_default_sink(def_sink, sizeof(def_sink))) {
+        strncpy(server->current_audio_sink, def_sink, sizeof(server->current_audio_sink));
+    }
+    double target_vol = session_state_get_sink_volume(&server->state, server->current_audio_sink, server->state.volume);
+    if (target_vol < 0.01) target_vol = 0.30;
+    if (strstr(server->current_audio_sink, "bluez") && target_vol > 0.40) {
+        target_vol = 0.30; // Extra safety cap for bluetooth earbuds on relogin
+    }
+    int vol_pct = (int)lround(target_vol * 100.0);
+    char vol_cmd[256];
+    snprintf(vol_cmd, sizeof(vol_cmd),
+             "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ %d%% 2>/dev/null || pactl set-sink-volume @DEFAULT_SINK@ %d%% 2>/dev/null; "
+             "wpctl set-mute @DEFAULT_AUDIO_SINK@ %d 2>/dev/null || pactl set-sink-mute @DEFAULT_SINK@ %d 2>/dev/null",
+             vol_pct, vol_pct, server->state.volume_muted ? 1 : 0, server->state.volume_muted ? 1 : 0);
+    rc = system(vol_cmd);
+    (void)rc;
+    if (server->control_center) {
+        control_center_sync_audio(server->control_center, target_vol, server->state.volume_muted);
+    }
+}
+
+static int audio_subscribe_handler(int fd, uint32_t mask, void *data) {
+    (void)mask;
+    aurade_server_t *server = data;
+    char buf[512];
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = '\0';
+        if (strstr(buf, "sink") || strstr(buf, "server") || strstr(buf, "card")) {
+            server_check_audio_sink(server);
+        }
+    }
+    return 0;
+}
+
+static void server_init_audio_monitor(aurade_server_t *server, struct wl_event_loop *loop) {
+    server->audio_subscribe_fd = -1;
+    server->audio_subscribe_pid = -1;
+    server->audio_subscribe_source = NULL;
+
+    int pipefd[2];
+    if (pipe2(pipefd, O_NONBLOCK | O_CLOEXEC) < 0) return;
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[1]);
+        int null_fd = open("/dev/null", O_WRONLY);
+        if (null_fd >= 0) {
+            dup2(null_fd, STDERR_FILENO);
+            close(null_fd);
+        }
+        execlp("pactl", "pactl", "subscribe", (char *)NULL);
+        _exit(1);
+    } else if (pid > 0) {
+        close(pipefd[1]);
+        server->audio_subscribe_pid = pid;
+        server->audio_subscribe_fd = pipefd[0];
+        server->audio_subscribe_source = wl_event_loop_add_fd(loop, pipefd[0],
+                                                              WL_EVENT_READABLE,
+                                                              audio_subscribe_handler,
+                                                              server);
+    } else {
+        close(pipefd[0]);
+        close(pipefd[1]);
     }
 }
 
@@ -2686,6 +2859,10 @@ if (server.config_inotify_fd >= 0) {
         wl_event_source_timer_update(server.clock_timer, 1000);
     }
 
+    // Restore saved hardware brightness and volume, and subscribe to audio sink change events
+    server_restore_hardware_state(&server);
+    server_init_audio_monitor(&server, event_loop);
+
     // Wayland socket setup
     const char *socket_name = wl_display_add_socket_auto(server.wl_display);
     if (!socket_name) {
@@ -2703,6 +2880,10 @@ if (server.config_inotify_fd >= 0) {
     wl_display_run(server.wl_display);
 
     // Cleanup
+    if (server.audio_subscribe_source) wl_event_source_remove(server.audio_subscribe_source);
+    if (server.audio_subscribe_fd >= 0) close(server.audio_subscribe_fd);
+    if (server.audio_subscribe_pid > 0) kill(server.audio_subscribe_pid, SIGTERM);
+
     server_finish_xwayland(&server);
     if (server.notifications) notifications_destroy(server.notifications);
     if (server.osd) osd_destroy(server.osd);

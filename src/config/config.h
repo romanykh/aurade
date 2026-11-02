@@ -126,4 +126,26 @@ const char *action_to_string(const gesture_action_t *action, char *buf, size_t b
  */
 const char *config_get_default_path(void);
 
+/*
+ * Session Hardware State (Volume, Brightness & Per-Device Earbuds Memory)
+ */
+typedef struct {
+    double volume;           // Last active volume (0.01 - 1.0, default 0.30)
+    bool volume_muted;       // Mute state
+    double brightness;       // Brightness (0.01 - 1.0, default 0.60)
+    int sink_count;
+    struct {
+        char name[128];
+        double volume;
+        bool muted;
+    } sinks[32];
+} aurade_session_state_t;
+
+const char *config_get_state_path(void);
+void session_state_load(aurade_session_state_t *st);
+void session_state_save(const aurade_session_state_t *st);
+double session_state_get_sink_volume(const aurade_session_state_t *st, const char *sink_name, double fallback);
+void session_state_set_sink_volume(aurade_session_state_t *st, const char *sink_name, double volume, bool muted);
+void session_state_set_brightness(aurade_session_state_t *st, double brightness);
+
 #endif // AURADE_CONFIG_H

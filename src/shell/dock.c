@@ -353,7 +353,12 @@ static void dock_arm_animation(aurade_dock_t *dock) {
 }
 
 static void dock_request_visible(aurade_dock_t *dock, bool visible) {
-    if (!dock->autohide && !dock->intellihide) visible = true;
+    if (dock->server && dock->server->launchpad &&
+        (dock->server->launchpad->active || dock->server->gesture_mode == GESTURE_MODE_LAUNCHPAD)) {
+        visible = true;
+    } else if (!dock->autohide && !dock->intellihide) {
+        visible = true;
+    }
 
     if (visible) {
         bool was_away = dock->hide_target || dock->hide_at_ms || dock->hide_progress > 0.001;
@@ -422,7 +427,8 @@ bool dock_intersects_window(aurade_dock_t *dock) {
 void dock_update_visibility(aurade_dock_t *dock) {
     if (!dock || !dock->enabled) return;
 
-    if (dock->server && dock->server->launchpad && dock->server->launchpad->active) {
+    if (dock->server && dock->server->launchpad &&
+        (dock->server->launchpad->active || dock->server->gesture_mode == GESTURE_MODE_LAUNCHPAD)) {
         dock_request_visible(dock, true);
         return;
     }
@@ -1452,7 +1458,10 @@ void dock_handle_motion(aurade_dock_t *dock, double mouse_x, double mouse_y) {
     dock->mouse_y = mouse_y;
     dock->mouse_over_dock = over;
 
-    if (dock->autohide) {
+    if (dock->server && dock->server->launchpad &&
+        (dock->server->launchpad->active || dock->server->gesture_mode == GESTURE_MODE_LAUNCHPAD)) {
+        dock_request_visible(dock, true);
+    } else if (dock->autohide) {
         dock_request_visible(dock, near_edge || over);
     } else if (dock->intellihide) {
         bool overlaps = dock_intersects_window(dock);

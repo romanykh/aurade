@@ -125,7 +125,7 @@ const char *config_get_default_path(void) {
 
 static void ensure_parent_dir(const char *file_path) {
     char dir[512];
-    strncpy(dir, file_path, sizeof(dir) - 1);
+    snprintf(dir, sizeof(dir), "%s", file_path);
     char *last_slash = strrchr(dir, '/');
     if (last_slash) {
         *last_slash = '\0';
@@ -299,7 +299,7 @@ bool config_load(aurade_config_t *cfg, const char *path) {
 }
 
 static void add_action(struct json_object *obj, const char *key, const gesture_action_t *action) {
-    char buf[256];
+    char buf[320];
     json_object_object_add(obj, key, json_object_new_string(action_to_string(action, buf, sizeof(buf))));
 }
 
@@ -396,3 +396,145 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     json_object_put(root);
     return ret == 0;
 }
+
+const char *config_get_state_path(void) {
+    static char path[512];
+    const char *home = getenv("HOME");
+    if (!home) home = "/home/user";
+    snprintf(path, sizeof(path), "%s/.config/aurade/state.json", home);
+    return path;
+}
+
+void session_state_load(aurade_session_state_t *st) {
+    if (!st) return;
+    st->volume = 0.30;
+    st->volume_muted = false;
+    st->brightness = 0.60;
+    st->sink_count = 0;
+
+    const char *path = config_get_state_path();
+    struct json_object *root = json_object_from_file(path);
+    if (!root) return;
+
+    struct json_object *val = NULL;
+    if (json_object_object_get_ex(root, "volume", &val)) {
+        double v = json_object_get_double(val);
+        if (v >= 0.01 && v <= 1.0) st->volume = v;
+    }
+    if (json_object_object_get_ex(root, "volume_muted", &val)) {
+        st->volume_muted = json_object_get_boolean(val);
+    }
+    if (json_object_object_get_ex(root, "brightness", &val)) {
+        double b = json_object_get_double(val);
+        if (b >= 0.01 && b <= 1.0) st->brightness = b;
+    }
+
+    struct json_object *sinks_obj = NULL;
+    if (json_object_object_get_ex(root, "sinks", &sinks_obj) &&
+        json_object_get_type(sinks_obj) == json_type_object) {
+        json_object_object_foreach(sinks_obj, key, sink_val) {
+            if (st->sink_count >= 32) break;
+            if (!key || !*key) continue;
+            strncpy(st->sinks[st->sink_count].name, key, sizeof(st->sinks[st->sink_count].name) - 1);
+            if (json_object_get_type(sink_val) == json_type_double || json_object_get_type(sink_val) == json_type_int) {
+                double sv = json_object_get_double(sink_val);
+                if (sv < 0.01) sv = 0.01;
+                if (sv > 1.0) sv = 1.0;
+                st->sinks[st->sink_count].volume = sv;
+                st->sinks[st->sink_count].muted = false;
+                st->sink_count++;
+            } else if (json_object_get_type(sink_val) == json_type_object) {
+                struct json_object *sv_obj = NULL;
+                double sv = 0.30;
+                bool sm = false;
+                if (json_object_object_get_ex(sink_val, "volume", &sv_obj)) {
+                    sv = json_object_get_double(sv_obj);
+                }
+                if (json_object_object_get_ex(sink_val, "muted", &sv_obj)) {
+                    sm = json_object_get_boolean(sv_obj);
+                }
+                if (sv < 0.01) sv = 0.01;
+                if (sv > 1.0) sv = 1.0;
+                st->sinks[st->sink_count].volume = sv;
+                st->sinks[st->sink_count].muted = sm;
+                st->sink_count++;
+            }
+        }
+    }
+
+    json_object_put(root);
+}
+
+void session_state_save(const aurade_session_state_t *st) {
+    if (!st) return;
+    const char *path = config_get_state_path();
+    ensure_parent_dir(path);
+
+    struct json_object *root = json_object_new_object();
+    json_object_object_add(root, "volume", json_object_new_double(st->volume));
+    json_object_object_add(root, "volume_muted", json_object_new_boolean(st->volume_muted));
+    json_object_object_add(root, "brightness", json_object_new_double(st->brightness));
+
+    struct json_object *sinks_obj = json_object_new_object();
+    for (int i = 0; i < st->sink_count; i++) {
+        struct json_object *s_entry = json_object_new_object();
+        json_object_object_add(s_entry, "volume", json_object_new_double(st->sinks[i].volume));
+        json_object_object_add(s_entry, "muted", json_object_new_boolean(st->sinks[i].muted));
+        json_object_object_add(sinks_obj, st->sinks[i].name, s_entry);
+    }
+    json_object_object_add(root, "sinks", sinks_obj);
+
+    char tmp_path[540];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+    if (json_object_to_file_ext(tmp_path, root, JSON_C_TO_STRING_PRETTY) == 0) {
+        rename(tmp_path, path);
+    }
+    json_object_put(root);
+}
+
+double session_state_get_sink_volume(const aurade_session_state_t *st, const char *sink_name, double fallback) {
+    if (!st || !sink_name || !*sink_name) return fallback;
+    for (int i = 0; i < st->sink_count; i++) {
+        if (strcmp(st->sinks[i].name, sink_name) == 0) {
+            return st->sinks[i].volume;
+        }
+    }
+    return fallback;
+}
+
+void session_state_set_sink_volume(aurade_session_state_t *st, const char *sink_name, double volume, bool muted) {
+    if (!st) return;
+    if (volume < 0.01) volume = 0.01;
+    if (volume > 1.0) volume = 1.0;
+    st->volume = volume;
+    st->volume_muted = muted;
+
+    if (sink_name && *sink_name) {
+        int found = -1;
+        for (int i = 0; i < st->sink_count; i++) {
+            if (strcmp(st->sinks[i].name, sink_name) == 0) {
+                found = i;
+                break;
+            }
+        }
+        if (found >= 0) {
+            st->sinks[found].volume = volume;
+            st->sinks[found].muted = muted;
+        } else if (st->sink_count < 32) {
+            strncpy(st->sinks[st->sink_count].name, sink_name, sizeof(st->sinks[st->sink_count].name) - 1);
+            st->sinks[st->sink_count].volume = volume;
+            st->sinks[st->sink_count].muted = muted;
+            st->sink_count++;
+        }
+    }
+    session_state_save(st);
+}
+
+void session_state_set_brightness(aurade_session_state_t *st, double brightness) {
+    if (!st) return;
+    if (brightness < 0.01) brightness = 0.01;
+    if (brightness > 1.0) brightness = 1.0;
+    st->brightness = brightness;
+    session_state_save(st);
+}
+
