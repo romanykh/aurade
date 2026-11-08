@@ -2018,7 +2018,7 @@ void server_handle_gesture_begin(aurade_server_t *server, gesture_action_type_t 
     if (server->gesture_mode != GESTURE_MODE_IDLE) {
         gesture_mode_t cur = server->gesture_mode;
 
-        // Swiping while Mission Control is open: swiping down closes, swiping left/right switches workspaces
+        // Swiping while Mission Control is open: swiping down closes, swiping left/right switches workspaces continuously
         if (cur == GESTURE_MODE_MISSION_CONTROL) {
             if (action == ACTION_APP_EXPOSE || action == ACTION_MISSION_CONTROL) {
                 server->gesture_in_progress = true;
@@ -2026,14 +2026,11 @@ void server_handle_gesture_begin(aurade_server_t *server, gesture_action_type_t 
                 server->gesture_is_closing = true;
                 server->gesture_start_progress = server->gesture_progress > 0.0 ? server->gesture_progress : 1.0;
                 return;
-            } else if (action == ACTION_WORKSPACE_NEXT) {
+            } else if (action == ACTION_WORKSPACE_NEXT || action == ACTION_WORKSPACE_PREV) {
                 if (server->mission_control) {
-                    mission_control_switch_workspace(server->mission_control, server->current_workspace + 1);
-                }
-                return;
-            } else if (action == ACTION_WORKSPACE_PREV) {
-                if (server->mission_control) {
-                    mission_control_switch_workspace(server->mission_control, server->current_workspace - 1);
+                    server->gesture_in_progress = true;
+                    server->gesture_animating = false;
+                    mission_control_ws_gesture_begin(server->mission_control);
                 }
                 return;
             }
@@ -2089,9 +2086,9 @@ void server_handle_gesture_begin(aurade_server_t *server, gesture_action_type_t 
         case ACTION_WORKSPACE_NEXT:
         case ACTION_WORKSPACE_PREV:
             if (server->mission_control && server->mission_control->active) {
-                int target_ws = (action == ACTION_WORKSPACE_NEXT) ?
-                    (server->current_workspace + 1) : (server->current_workspace - 1);
-                mission_control_switch_workspace(server->mission_control, target_ws);
+                server->gesture_mode = GESTURE_MODE_MISSION_CONTROL;
+                server->gesture_progress = 1.0;
+                mission_control_ws_gesture_begin(server->mission_control);
                 return;
             }
             // A previous swipe may still be settling. Freeze it at its current
@@ -2149,6 +2146,10 @@ void server_handle_gesture_update(aurade_server_t *server, double delta_x, doubl
 
     switch (server->gesture_mode) {
         case GESTURE_MODE_MISSION_CONTROL: {
+            if (server->mission_control && server->mission_control->ws_gesture_active) {
+                mission_control_ws_gesture_update(server->mission_control, delta_x);
+                break;
+            }
             double p;
             if (server->gesture_is_closing) {
                 p = server->gesture_start_progress - (fabs(delta_y) * sens) / 380.0;
@@ -2166,9 +2167,10 @@ void server_handle_gesture_update(aurade_server_t *server, double delta_x, doubl
 
             // Reference pixels -> screen pixels, then the macOS-like gain that
             // lets a short swipe move a whole space.
+            double eff_sens = fmax(sens, 0.85);
             double ref_to_screen = (double)screen_w / GESTURE_REFERENCE_PX;
             double offset = server->gesture_base_offset +
-                            delta_x * sens * WORKSPACE_GESTURE_GAIN * ref_to_screen;
+                            delta_x * eff_sens * WORKSPACE_GESTURE_GAIN * ref_to_screen;
 
             // Elastic resistance applies to the overshoot only. Compressing the
             // whole carousel offset (the old behaviour) made the first and last
@@ -2246,6 +2248,12 @@ void server_handle_gesture_end(aurade_server_t *server, bool cancelled, double v
     double snap_thresh = server->config.snap_threshold;
     double sens = server->config.sensitivity > 0.0 ? server->config.sensitivity : 1.0;
 
+    if (server->gesture_mode == GESTURE_MODE_MISSION_CONTROL &&
+        server->mission_control && server->mission_control->ws_gesture_active) {
+        mission_control_ws_gesture_end(server->mission_control, cancelled, velocity_x);
+        return;
+    }
+
     // The configured flick speed is expressed in reference pixels per second.
     // Converting it to "progress per second" makes the same flick feel the same
     // for a 380 px overlay, the 330 px Control Center and the full-screen
@@ -2253,17 +2261,15 @@ void server_handle_gesture_end(aurade_server_t *server, bool cancelled, double v
     // every release above 266 px/s counted as a flick.
     double flick_px = server->config.flick_velocity_threshold;
     if (flick_px <= 1.0) flick_px = 700.0;
-    double flick_norm = flick_px / GESTURE_FLICK_REFERENCE;
 
     if (server->gesture_mode == GESTURE_MODE_WORKSPACE_CAROUSEL) {
         int screen_w = server->screen_width > 0 ? server->screen_width : 1920;
+        double eff_sens = fmax(sens, 0.85);
         double ref_to_screen = (double)screen_w / GESTURE_REFERENCE_PX;
         double offset = server->workspace_offset;
 
-        // Finger velocity -> carousel progress per second. The carousel moves
-        // WORKSPACE_GESTURE_GAIN times faster than the fingers, so the flick
-        // test has to use the amplified value.
-        double ws_flick_px = flick_norm * GESTURE_REFERENCE_PX / WORKSPACE_GESTURE_GAIN;
+        double ws_flick_px = 420.0;
+        double ws_snap = fmin(snap_thresh > 0.0 ? snap_thresh : 0.16, 0.18);
 
         // The carousel can be grabbed mid-transition, so decide from its
         // continuous position rather than assuming offset is zero-relative.
@@ -2285,11 +2291,11 @@ void server_handle_gesture_end(aurade_server_t *server, bool cancelled, double v
         } else if (p >= server->current_workspace) {
             // Slow release: use the same threshold relative to the workspace
             // the gesture was anchored to.
-            if (p - server->current_workspace >= snap_thresh) {
+            if (p - server->current_workspace >= ws_snap) {
                 target_workspace = server->current_workspace + 1;
             }
         } else {
-            if (server->current_workspace - p >= snap_thresh) {
+            if (server->current_workspace - p >= ws_snap) {
                 target_workspace = server->current_workspace - 1;
             }
         }
@@ -2312,7 +2318,7 @@ void server_handle_gesture_end(aurade_server_t *server, bool cancelled, double v
         server->workspace_offset = new_offset;
 
         // Hand the spring the velocity the carousel actually had on screen.
-        double offset_velocity = velocity_x * sens * WORKSPACE_GESTURE_GAIN * ref_to_screen;
+        double offset_velocity = velocity_x * eff_sens * WORKSPACE_GESTURE_GAIN * ref_to_screen;
 
         spring_simulation_start(&server->workspace_spring, &server->config.spring,
                                 new_offset, 0.0, offset_velocity);

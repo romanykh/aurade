@@ -21,16 +21,14 @@
 // an overlay open or switch a workspace. Without it, a 10 px movement followed
 // by a finger lift reports a huge instantaneous velocity and triggers actions
 // the user never intended.
-#define FLICK_MIN_TRAVEL_PX 90.0
+#define FLICK_MIN_TRAVEL_PX 45.0
 
 // Reject near-diagonal swipes: without an axis lock a 45-degree movement is
 // ambiguous and used to flip between horizontal and vertical actions.
-#define AXIS_DOMINANCE 1.45
+#define AXIS_DOMINANCE 1.35
 
 // Recognition slop. Below this the fingers are considered to be resting.
-// Roughly 4 mm on a typical pad: anything smaller made three-finger gestures
-// fire while a hand was merely settling on the touchpad.
-#define DEADZONE_MIN_PX 80.0
+#define DEADZONE_MIN_PX 28.0
 
 // Pinch recognition needs a meaningful initial spread, otherwise the radius
 // ratio is dominated by contact jitter. All values are in reference pixels.
@@ -236,11 +234,17 @@ static gesture_action_type_t resolve_action(aurade_server_t *server, int fingers
     }
 
     if (dir_x != 0) {
+        gesture_action_type_t act;
         if (dir_x > 0) {
-            return (family == 3) ? cfg->swipe_right_3.type : cfg->swipe_right_4.type;
+            act = (family == 3) ? cfg->swipe_right_3.type : cfg->swipe_right_4.type;
         } else {
-            return (family == 3) ? cfg->swipe_left_3.type : cfg->swipe_left_4.type;
+            act = (family == 3) ? cfg->swipe_left_3.type : cfg->swipe_left_4.type;
         }
+        // Workspace switching only activates on 3-finger horizontal swipes
+        if ((act == ACTION_WORKSPACE_NEXT || act == ACTION_WORKSPACE_PREV) && fingers != 3) {
+            return ACTION_NONE;
+        }
+        return act;
     }
 
     if (dir_y != 0) {

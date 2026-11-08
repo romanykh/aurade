@@ -11,56 +11,46 @@
 #include <time.h>
 
 #define MC_FONT "Inter, Adwaita Sans, sans-serif"
-#define MC_RADIUS 12.0
 
-static uint64_t mc_now_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
+static double mc_ease_out_cubic(double p) {
+    if (p <= 0.0) return 0.0;
+    if (p >= 1.0) return 1.0;
+    double inv = 1.0 - p;
+    return 1.0 - inv * inv * inv;
 }
 
 typedef struct {
     double r, g, b, a;
-} mc_color_t;
+} mc_rgba_t;
 
 typedef struct {
-    mc_color_t panel_top, panel_bottom, border, highlight;
-    mc_color_t card, card_hover, card_pressed, card_border;
-    mc_color_t text, text_dim, text_faint;
-    mc_color_t accent_blue;
+    mc_rgba_t panel_top, panel_bottom;
+    mc_rgba_t border, highlight;
+    mc_rgba_t text, text_dim;
+    mc_rgba_t accent;
     bool dark;
 } mc_theme_t;
 
-static mc_theme_t mc_get_theme(aurade_mission_control_t *mc) {
-    bool dark = mc && mc->server ? mc->server->config.dark_mode : true;
+static mc_theme_t mc_get_theme(const aurade_mission_control_t *mc) {
+    bool dark = (mc && mc->server) ? mc->server->config.dark_mode : true;
     mc_theme_t t = {0};
     t.dark = dark;
-    t.accent_blue = (mc_color_t){0.0, 0.48, 1.0, 1.0};
+    t.accent = (mc_rgba_t){0.0, 0.48, 1.0, 1.0};
 
     if (dark) {
-        t.panel_top = (mc_color_t){0.18, 0.20, 0.24, 0.88};
-        t.panel_bottom = (mc_color_t){0.11, 0.12, 0.15, 0.94};
-        t.border = (mc_color_t){1.0, 1.0, 1.0, 0.15};
-        t.highlight = (mc_color_t){1.0, 1.0, 1.0, 0.22};
-        t.card = (mc_color_t){1.0, 1.0, 1.0, 0.085};
-        t.card_hover = (mc_color_t){1.0, 1.0, 1.0, 0.14};
-        t.card_pressed = (mc_color_t){1.0, 1.0, 1.0, 0.055};
-        t.card_border = (mc_color_t){1.0, 1.0, 1.0, 0.07};
-        t.text = (mc_color_t){1.0, 1.0, 1.0, 0.96};
-        t.text_dim = (mc_color_t){0.85, 0.86, 0.90, 0.65};
-        t.text_faint = (mc_color_t){0.80, 0.82, 0.88, 0.40};
+        t.panel_top    = (mc_rgba_t){0.17, 0.19, 0.23, 0.88};
+        t.panel_bottom = (mc_rgba_t){0.10, 0.11, 0.14, 0.94};
+        t.border       = (mc_rgba_t){1.00, 1.00, 1.00, 0.15};
+        t.highlight    = (mc_rgba_t){1.00, 1.00, 1.00, 0.22};
+        t.text         = (mc_rgba_t){1.00, 1.00, 1.00, 0.96};
+        t.text_dim     = (mc_rgba_t){0.84, 0.86, 0.90, 0.65};
     } else {
-        t.panel_top = (mc_color_t){0.96, 0.96, 0.97, 0.88};
-        t.panel_bottom = (mc_color_t){0.88, 0.89, 0.92, 0.94};
-        t.border = (mc_color_t){1.0, 1.0, 1.0, 0.65};
-        t.highlight = (mc_color_t){1.0, 1.0, 1.0, 0.90};
-        t.card = (mc_color_t){1.0, 1.0, 1.0, 0.55};
-        t.card_hover = (mc_color_t){1.0, 1.0, 1.0, 0.75};
-        t.card_pressed = (mc_color_t){1.0, 1.0, 1.0, 0.45};
-        t.card_border = (mc_color_t){0.0, 0.0, 0.0, 0.06};
-        t.text = (mc_color_t){0.10, 0.10, 0.12, 0.94};
-        t.text_dim = (mc_color_t){0.35, 0.36, 0.40, 0.75};
-        t.text_faint = (mc_color_t){0.50, 0.52, 0.56, 0.55};
+        t.panel_top    = (mc_rgba_t){0.96, 0.96, 0.98, 0.88};
+        t.panel_bottom = (mc_rgba_t){0.88, 0.89, 0.92, 0.94};
+        t.border       = (mc_rgba_t){1.00, 1.00, 1.00, 0.65};
+        t.highlight    = (mc_rgba_t){1.00, 1.00, 1.00, 0.90};
+        t.text         = (mc_rgba_t){0.10, 0.10, 0.12, 0.94};
+        t.text_dim     = (mc_rgba_t){0.34, 0.36, 0.40, 0.75};
     }
     return t;
 }
@@ -70,10 +60,11 @@ typedef struct {
     double thumb_w, thumb_h, gap;
     double pad_x, pad_top, pad_bottom;
     double label_gap, label_h;
-} mc_bar_t;
+} mc_bar_geom_t;
 
-static void mc_bar_layout(aurade_mission_control_t *mc, mc_bar_t *b, double p) {
-    int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
+static void mc_compute_bar_geom(const aurade_mission_control_t *mc, mc_bar_geom_t *g, double p) {
+    int num_ws = (mc && mc->server && mc->server->num_workspaces > 0)
+                 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
     double gap = 14.0;
     double pad_x = 18.0;
     double pad_top = 14.0;
@@ -81,14 +72,13 @@ static void mc_bar_layout(aurade_mission_control_t *mc, mc_bar_t *b, double p) {
     double label_gap = 8.0;
     double label_h = 22.0;
 
-    double aspect = (mc->screen_height > 0 && mc->screen_width > 0)
-        ? ((double)mc->screen_height / (double)mc->screen_width) : 0.5625;
+    double aspect = (mc && mc->screen_width > 0 && mc->screen_height > 0)
+                    ? ((double)mc->screen_height / (double)mc->screen_width) : 0.5625;
 
     double thumb_w = 152.0;
     double thumb_h = round(thumb_w * aspect);
 
-    // Make sure all workspaces fit comfortably within screen width
-    double max_avail_w = mc->screen_width - 120.0;
+    double max_avail_w = (mc ? mc->screen_width : 1920) - 120.0;
     if (thumb_w * num_ws + gap * (num_ws - 1) + 2.0 * pad_x > max_avail_w) {
         thumb_w = (max_avail_w - 2.0 * pad_x - gap * (num_ws - 1)) / (double)num_ws;
         if (thumb_w < 80.0) thumb_w = 80.0;
@@ -96,24 +86,167 @@ static void mc_bar_layout(aurade_mission_control_t *mc, mc_bar_t *b, double p) {
     }
 
     double total_thumbs = thumb_w * num_ws + gap * (num_ws - 1);
-    b->thumb_w = thumb_w;
-    b->thumb_h = thumb_h;
-    b->gap = gap;
-    b->pad_x = pad_x;
-    b->pad_top = pad_top;
-    b->pad_bottom = pad_bottom;
-    b->label_gap = label_gap;
-    b->label_h = label_h;
-    b->bar_w = total_thumbs + 2.0 * pad_x;
-    b->bar_h = pad_top + thumb_h + label_gap + label_h + pad_bottom;
-    b->bar_x = (mc->screen_width - b->bar_w) / 2.0;
-    // Slide down smoothly from above as gesture opens
-    b->bar_y = -b->bar_h - 12.0 + p * (38.0 + b->bar_h + 12.0);
+    g->thumb_w = thumb_w;
+    g->thumb_h = thumb_h;
+    g->gap = gap;
+    g->pad_x = pad_x;
+    g->pad_top = pad_top;
+    g->pad_bottom = pad_bottom;
+    g->label_gap = label_gap;
+    g->label_h = label_h;
+    g->bar_w = total_thumbs + 2.0 * pad_x;
+    g->bar_h = pad_top + thumb_h + label_gap + label_h + pad_bottom;
+    g->bar_x = ((mc ? mc->screen_width : 1920) - g->bar_w) / 2.0;
+    g->bar_y = -g->bar_h - 12.0 + p * (38.0 + g->bar_h + 12.0);
 }
 
-static void paint_wallpaper_thumb(cairo_t *cr, aurade_mission_control_t *mc,
-                                  double x, double y, double w, double h, double alpha) {
-    if (mc && mc->wallpaper_thumb) {
+/*
+ * Query the authoritative visible window geometry (excluding CSD shadow margins).
+ */
+static void mc_query_view_geometry(aurade_view_t *view, int *out_w, int *out_h) {
+    int vw = view ? view->width : 0;
+    int vh = view ? view->height : 0;
+
+    if (view && view->xdg_toplevel && view->xdg_toplevel->base) {
+        struct wlr_box geo = view->xdg_toplevel->base->geometry;
+        if (geo.width > 0 && geo.height > 0) {
+            vw = geo.width;
+            vh = geo.height;
+        } else if (view->xdg_toplevel->base->surface) {
+            int sw = view->xdg_toplevel->base->surface->current.width;
+            int sh = view->xdg_toplevel->base->surface->current.height;
+            if (vw <= 0 && sw > 0) vw = sw;
+            if (vh <= 0 && sh > 0) vh = sh;
+        }
+    } else if (view && view->xwayland_surface) {
+        if (view->xwayland_surface->width > 0 && view->xwayland_surface->height > 0) {
+            vw = view->xwayland_surface->width;
+            vh = view->xwayland_surface->height;
+        }
+    }
+
+    if (out_w) *out_w = vw;
+    if (out_h) *out_h = vh;
+}
+
+#include "../window/workspace.h"
+
+/*
+ * Single source of truth for a slot's current integer rectangle and scale.
+ * - out_local_x: X relative to the slot's workspace_trees[s->workspace]
+ * - out_screen_x: X on screen (including workspace carousel offset + ws_slide_offset)
+ */
+static void mc_slot_current_rect(aurade_mission_control_t *mc, int idx, double ep,
+                                 int *out_local_x, int *out_screen_x, int *out_y,
+                                 int *out_w, int *out_h, double *out_scale) {
+    mc_window_slot_t *s = &mc->slots[idx];
+    if (s->view) {
+        int live_w = 0, live_h = 0;
+        mc_query_view_geometry(s->view, &live_w, &live_h);
+        if (live_w > 0 && live_h > 0 &&
+            (fabs(s->orig_w - live_w) > 0.5 || fabs(s->orig_h - live_h) > 0.5)) {
+            s->orig_w = (double)live_w;
+            s->orig_h = (double)live_h;
+            s->target_w = round(s->orig_w * s->scale);
+            s->target_h = round(s->orig_h * s->scale);
+        }
+    }
+
+    int cur_ws = (mc && mc->server) ? mc->server->current_workspace : 0;
+    int screen_w = (mc && mc->screen_width > 0) ? mc->screen_width : 1920;
+    double ws_dx = (double)(s->workspace - cur_ws) * (double)screen_w + mc->ws_slide_offset;
+
+    double cur_scale = (1.0 - ep) * 1.0 + ep * s->scale;
+    double fx_local = (1.0 - ep) * s->orig_x + ep * s->target_x;
+    double fy = (1.0 - ep) * s->orig_y + ep * s->target_y;
+
+    int local_rx = (int)round(fx_local);
+    int screen_rx = (int)round(fx_local + ws_dx);
+    int ry = (int)round(fy);
+    int rw = (int)round(s->orig_w * cur_scale);
+    int rh = (int)round(s->orig_h * cur_scale);
+    if (rw < 1) rw = 1;
+    if (rh < 1) rh = 1;
+
+    if (out_local_x) *out_local_x = local_rx;
+    if (out_screen_x) *out_screen_x = screen_rx;
+    if (out_y) *out_y = ry;
+    if (out_w) *out_w = rw;
+    if (out_h) *out_h = rh;
+    if (out_scale) *out_scale = cur_scale;
+}
+
+static const char *mc_view_app_id(const aurade_view_t *v) {
+    if (!v) return NULL;
+    if (v->xdg_toplevel && v->xdg_toplevel->app_id) {
+        return v->xdg_toplevel->app_id;
+    }
+    if (v->xwayland_surface) {
+        return v->xwayland_surface->class ? v->xwayland_surface->class
+                                          : v->xwayland_surface->instance;
+    }
+    return NULL;
+}
+
+static const char *mc_view_title(const aurade_view_t *v) {
+    if (!v) return "Window";
+    if (v->xdg_toplevel && v->xdg_toplevel->title && *v->xdg_toplevel->title) {
+        return v->xdg_toplevel->title;
+    }
+    if (v->xwayland_surface && v->xwayland_surface->title && *v->xwayland_surface->title) {
+        return v->xwayland_surface->title;
+    }
+    const char *app_id = mc_view_app_id(v);
+    return (app_id && *app_id) ? app_id : "Window";
+}
+
+static void mc_draw_app_icon(cairo_t *cr, double cx, double cy, double size,
+                             const char *name, cairo_surface_t *surface, double alpha) {
+    if (surface && cairo_surface_status(surface) == CAIRO_STATUS_SUCCESS) {
+        int iw = cairo_image_surface_get_width(surface);
+        int ih = cairo_image_surface_get_height(surface);
+        if (iw > 0 && ih > 0) {
+            cairo_save(cr);
+            cairo_translate(cr, cx - size / 2.0, cy - size / 2.0);
+            cairo_scale(cr, size / (double)iw, size / (double)ih);
+            cairo_set_source_surface(cr, surface, 0, 0);
+            cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
+            cairo_paint_with_alpha(cr, alpha);
+            cairo_restore(cr);
+            return;
+        }
+    }
+
+    unsigned hash = 2166136261u;
+    for (const char *p = name ? name : "App"; *p; p++) {
+        hash ^= (unsigned char)*p;
+        hash *= 16777619u;
+    }
+    double h = (hash % 360) / 360.0;
+    cairo_save(cr);
+    draw_rounded_rect(cr, cx - size / 2.0, cy - size / 2.0, size, size, size * 0.24);
+
+    cairo_pattern_t *pat = cairo_pattern_create_linear(cx, cy - size / 2.0, cx, cy + size / 2.0);
+    double r = 0.30 + 0.35 * fabs(sin(h * M_PI));
+    double g = 0.30 + 0.35 * fabs(sin((h + 0.33) * M_PI));
+    double b = 0.40 + 0.35 * fabs(sin((h + 0.66) * M_PI));
+    cairo_pattern_add_color_stop_rgba(pat, 0.0, fmin(1.0, r + 0.18), fmin(1.0, g + 0.18), fmin(1.0, b + 0.18), alpha);
+    cairo_pattern_add_color_stop_rgba(pat, 1.0, r * 0.72, g * 0.72, b * 0.72, alpha);
+    cairo_set_source(cr, pat);
+    cairo_fill(cr);
+    cairo_pattern_destroy(pat);
+
+    draw_rounded_rect(cr, cx - size / 2.0 + 1.0, cy - size / 2.0 + 1.0,
+                      size - 2.0, size * 0.42, size * 0.20);
+    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.18 * alpha);
+    cairo_fill(cr);
+    cairo_restore(cr);
+}
+
+static void mc_paint_wallpaper_thumb(cairo_t *cr, aurade_mission_control_t *mc,
+                                     double x, double y, double w, double h, double alpha) {
+    if (mc && mc->wallpaper_thumb &&
+        cairo_surface_status(mc->wallpaper_thumb) == CAIRO_STATUS_SUCCESS) {
         int bw = cairo_image_surface_get_width(mc->wallpaper_thumb);
         int bh = cairo_image_surface_get_height(mc->wallpaper_thumb);
         if (bw > 0 && bh > 0) {
@@ -135,49 +268,190 @@ static void paint_wallpaper_thumb(cairo_t *cr, aurade_mission_control_t *mc,
     cairo_fill(cr);
 }
 
+/*
+ * Compute proportional grid / shelf layout independently for each workspace.
+ */
+static void mc_compute_layout(aurade_mission_control_t *mc) {
+    if (!mc || mc->slot_count <= 0) return;
 
-static void draw_mc_app_icon(cairo_t *cr, double cx, double cy, double size,
-                             const char *name, cairo_surface_t *surface, double alpha) {
-    if (surface) {
-        int iw = cairo_image_surface_get_width(surface);
-        int ih = cairo_image_surface_get_height(surface);
-        if (iw > 0 && ih > 0) {
-            cairo_save(cr);
-            cairo_translate(cr, cx - size / 2.0, cy - size / 2.0);
-            cairo_scale(cr, size / iw, size / ih);
-            cairo_set_source_surface(cr, surface, 0, 0);
-            cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
-            cairo_paint_with_alpha(cr, alpha);
-            cairo_restore(cr);
-            return;
+    mc_bar_geom_t bar;
+    mc_compute_bar_geom(mc, &bar, 1.0);
+
+    double avail_x = mc->screen_width * 0.07;
+    double avail_w = mc->screen_width * 0.86;
+    double avail_y = bar.bar_y + bar.bar_h + 30.0;
+    double avail_h = mc->screen_height - avail_y - 98.0;
+    if (avail_w < 300.0) avail_w = 300.0;
+    if (avail_h < 220.0) avail_h = 220.0;
+
+    int num_ws = (mc->server && mc->server->num_workspaces > 0)
+                 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
+
+    for (int ws = 0; ws < num_ws; ws++) {
+        int ws_indices[MC_MAX_SLOTS];
+        int n = 0;
+        for (int i = 0; i < mc->slot_count; i++) {
+            if (mc->slots[i].workspace == ws) {
+                ws_indices[n++] = i;
+            }
+        }
+        if (n <= 0) continue;
+
+        int cols = 1;
+        if (n == 2) cols = 2;
+        else if (n == 3 || n == 4) cols = 2;
+        else if (n <= 9) cols = 3;
+        else cols = 4;
+
+        int rows = (n + cols - 1) / cols;
+
+        double gap_x = (n <= 2) ? 38.0 : 28.0;
+        double gap_y = (rows <= 1) ? 0.0 : 48.0;
+
+        double cell_w = (avail_w - gap_x * (cols - 1)) / (double)cols;
+        double cell_h = (avail_h - gap_y * (rows - 1)) / (double)rows;
+
+        double max_scale_cap = (n == 1) ? 0.62 : (n == 2 ? 0.55 : 0.50);
+        double fit_ratio_w = (n == 1) ? 0.60 : (n == 2 ? 0.94 : 0.92);
+        double fit_ratio_h = (n == 1) ? 0.70 : (n == 2 ? 0.76 : 0.88);
+
+        double total_grid_h = rows * cell_h + (rows - 1) * gap_y;
+        double start_y = avail_y + (avail_h - total_grid_h) / 2.0;
+
+        for (int r = 0; r < rows; r++) {
+            int in_row = (r == rows - 1) ? (n - r * cols) : cols;
+            double row_w = 0.0;
+
+            for (int c = 0; c < in_row; c++) {
+                int idx = ws_indices[r * cols + c];
+                mc_window_slot_t *s = &mc->slots[idx];
+                double ow = s->orig_w > 0.0 ? s->orig_w : 800.0;
+                double oh = s->orig_h > 0.0 ? s->orig_h : 600.0;
+
+                double max_w = (n == 1) ? (avail_w * fit_ratio_w) : (cell_w * fit_ratio_w);
+                double max_h = (n == 1) ? (avail_h * fit_ratio_h) : (cell_h * fit_ratio_h);
+
+                double sc = fmin(max_w / ow, max_h / oh);
+                if (sc > max_scale_cap) sc = max_scale_cap;
+                if (sc < 0.12) sc = 0.12;
+
+                double tw = round(ow * sc);
+                double th = round(oh * sc);
+
+                s->scale = sc;
+                s->target_w = tw;
+                s->target_h = th;
+                row_w += tw;
+            }
+
+            row_w += gap_x * (in_row - 1);
+            double cur_x = avail_x + (avail_w - row_w) / 2.0;
+            double row_cy = start_y + r * (cell_h + gap_y) + cell_h / 2.0;
+
+            for (int c = 0; c < in_row; c++) {
+                int idx = ws_indices[r * cols + c];
+                mc_window_slot_t *s = &mc->slots[idx];
+                s->target_x = round(cur_x);
+                s->target_y = round(row_cy - s->target_h / 2.0);
+                cur_x += s->target_w + gap_x;
+            }
         }
     }
+}
 
-    // Glossy squircle icon from hash
-    unsigned hash = 2166136261u;
-    for (const char *p = name ? name : "App"; *p; p++) {
-        hash ^= (unsigned char)*p;
-        hash *= 16777619u;
+static void mc_init_slot_metadata(aurade_mission_control_t *mc) {
+    if (!mc) return;
+    cairo_t *cr = (mc->buffer && mc->buffer->cr) ? mc->buffer->cr : NULL;
+
+    for (int i = 0; i < mc->slot_count; i++) {
+        mc_window_slot_t *s = &mc->slots[i];
+        aurade_view_t *v = s->view;
+        if (!v) continue;
+
+        const char *app_id = mc_view_app_id(v);
+        const char *title = mc_view_title(v);
+
+        snprintf(s->display_title, sizeof(s->display_title), "%s", title);
+        s->app = apps_find(mc->server->apps, app_id);
+
+        double tw = cr ? text_width(cr, s->display_title, MC_FONT, 10.5, true)
+                       : (strlen(s->display_title) * 7.0);
+        s->title_width = tw;
+        double bw = tw + 24.0;
+        if (bw < 64.0) bw = 64.0;
+        s->badge_w = bw;
     }
-    double h = (hash % 360) / 360.0;
-    cairo_save(cr);
-    draw_rounded_rect(cr, cx - size / 2.0, cy - size / 2.0, size, size, size * 0.24);
+}
 
-    cairo_pattern_t *pat = cairo_pattern_create_linear(cx, cy - size / 2.0, cx, cy + size / 2.0);
-    double r = 0.30 + 0.35 * fabs(sin(h * M_PI));
-    double g = 0.30 + 0.35 * fabs(sin((h + 0.33) * M_PI));
-    double b = 0.40 + 0.35 * fabs(sin((h + 0.66) * M_PI));
-    cairo_pattern_add_color_stop_rgba(pat, 0.0, fmin(1, r + 0.18), fmin(1, g + 0.18), fmin(1, b + 0.18), alpha);
-    cairo_pattern_add_color_stop_rgba(pat, 1.0, r * 0.72, g * 0.72, b * 0.72, alpha);
-    cairo_set_source(cr, pat);
-    cairo_fill(cr);
-    cairo_pattern_destroy(pat);
+static void mc_collect_workspace_slots(aurade_mission_control_t *mc) {
+    if (!mc || !mc->server) return;
+    mc->slot_count = 0;
 
-    draw_rounded_rect(cr, cx - size / 2.0 + 1.0, cy - size / 2.0 + 1.0,
-                      size - 2.0, size * 0.42, size * 0.20);
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.18 * alpha);
-    cairo_fill(cr);
-    cairo_restore(cr);
+    aurade_view_t *view;
+    wl_list_for_each(view, &mc->server->views, link) {
+        if (view->minimized) continue;
+        if (mc->slot_count >= MC_MAX_SLOTS) break;
+
+        int vw = 0, vh = 0;
+        mc_query_view_geometry(view, &vw, &vh);
+        if (vw < 60 || vh <= 0) continue;
+
+        view->width = vw;
+        view->height = vh;
+
+        mc_window_slot_t *s = &mc->slots[mc->slot_count++];
+        memset(s, 0, sizeof(*s));
+        s->view = view;
+        s->workspace = view->workspace;
+        s->orig_x = (double)view->x;
+        s->orig_y = (double)view->y;
+        s->orig_w = (double)vw;
+        s->orig_h = (double)vh;
+        s->scale = 1.0;
+    }
+
+    if (mc->slot_count > 0) {
+        mc_compute_layout(mc);
+        mc_init_slot_metadata(mc);
+    }
+}
+
+static void mc_restore_slots_to_desktop(aurade_mission_control_t *mc) {
+    if (!mc) return;
+    for (int i = 0; i < mc->slot_count; i++) {
+        aurade_view_t *view = mc->slots[i].view;
+        if (!view || !view->scene_tree) continue;
+        view->x = (int)round(mc->slots[i].orig_x);
+        view->y = (int)round(mc->slots[i].orig_y);
+        view->width = (int)round(mc->slots[i].orig_w);
+        view->height = (int)round(mc->slots[i].orig_h);
+        view_set_scale(view, 1.0, 1.0);
+        wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
+    }
+    if (mc->server) {
+        mc->server->workspace_offset = 0.0;
+        server_update_workspace_positions(mc->server);
+    }
+}
+
+static void mc_apply_slots_scene_state(aurade_mission_control_t *mc, double ep) {
+    if (!mc) return;
+    if (mc->server) {
+        mc->server->workspace_offset = (ep > 0.05) ? mc->ws_slide_offset : 0.0;
+        server_update_workspace_positions(mc->server);
+    }
+    for (int i = 0; i < mc->slot_count; i++) {
+        aurade_view_t *view = mc->slots[i].view;
+        if (!view || !view->scene_tree) continue;
+        if (mc->is_dragging && mc->dragged_view == view) continue;
+
+        int local_rx = 0, ry = 0, rw = 0, rh = 0;
+        double cur_scale = 1.0;
+        mc_slot_current_rect(mc, i, ep, &local_rx, NULL, &ry, &rw, &rh, &cur_scale);
+
+        wlr_scene_node_set_position(&view->scene_tree->node, local_rx, ry);
+        view_set_scale(view, cur_scale, cur_scale);
+    }
 }
 
 void mission_control_forget_view(aurade_mission_control_t *mc, aurade_view_t *view) {
@@ -190,138 +464,18 @@ void mission_control_forget_view(aurade_mission_control_t *mc, aurade_view_t *vi
         mc->slot_count--;
         if (mc->hovered_view == view) mc->hovered_view = NULL;
         if (mc->hovered_close_view == view) mc->hovered_close_view = NULL;
-        if (mc->dragged_view == view) mc->dragged_view = NULL;
+        if (mc->dragged_view == view) {
+            mc->dragged_view = NULL;
+            mc->is_dragging = false;
+        }
         i--;
     }
     mc->spaces_bar_dirty = true;
 }
 
-static void mission_control_compute_layout(aurade_mission_control_t *mc) {
-    if (!mc || mc->slot_count == 0) return;
-
-    mc_bar_t bar;
-    mc_bar_layout(mc, &bar, 1.0);
-
-    double avail_x = mc->screen_width * 0.08;
-    double avail_w = mc->screen_width * 0.84;
-    double avail_y = bar.bar_y + bar.bar_h + 32.0;
-    double avail_h = mc->screen_height - avail_y - 96.0;
-
-    if (mc->slot_count == 1) {
-        // Single window: comfortable GNOME-style thumbnail, max 58% screen width
-        double max_w = avail_w * 0.58;
-        double max_h = avail_h * 0.68;
-        double orig_w = mc->slots[0].orig_w > 0 ? mc->slots[0].orig_w : 800.0;
-        double orig_h = mc->slots[0].orig_h > 0 ? mc->slots[0].orig_h : 600.0;
-        double scale = fmin(max_w / orig_w, max_h / orig_h);
-        if (scale > 0.62) scale = 0.62;
-        double tw = round(orig_w * scale);
-        double th = round(orig_h * scale);
-        if (tw < 260.0) tw = 260.0;
-        if (th < 180.0) th = 180.0;
-
-        mc->slots[0].scale = scale;
-        mc->slots[0].target_w = tw;
-        mc->slots[0].target_h = th;
-        mc->slots[0].target_x = round(avail_x + (avail_w - tw) / 2.0);
-        mc->slots[0].target_y = round(avail_y + (avail_h - th) / 2.0);
-    } else if (mc->slot_count == 2) {
-        // Two windows: side-by-side with nice gap, centered horizontally & vertically
-        double gap = 36.0;
-        double max_cell_w = (avail_w - gap) / 2.0;
-        double max_cell_h = avail_h * 0.72;
-        double total_w = 0.0;
-
-        for (int i = 0; i < 2; i++) {
-            double orig_w = mc->slots[i].orig_w > 0 ? mc->slots[i].orig_w : 800.0;
-            double orig_h = mc->slots[i].orig_h > 0 ? mc->slots[i].orig_h : 600.0;
-            double scale = fmin(max_cell_w / orig_w, max_cell_h / orig_h);
-            if (scale > 0.55) scale = 0.55;
-            double tw = round(orig_w * scale);
-            double th = round(orig_h * scale);
-            if (tw < 260.0) tw = 260.0;
-            if (th < 180.0) th = 180.0;
-            mc->slots[i].scale = scale;
-            mc->slots[i].target_w = tw;
-            mc->slots[i].target_h = th;
-            total_w += tw;
-        }
-        total_w += gap;
-        double cur_x = avail_x + (avail_w - total_w) / 2.0;
-        for (int i = 0; i < 2; i++) {
-            mc->slots[i].target_x = round(cur_x);
-            mc->slots[i].target_y = round(avail_y + (avail_h - mc->slots[i].target_h) / 2.0);
-            cur_x += mc->slots[i].target_w + gap;
-        }
-    } else {
-        // Grid: 2, 3 or 4 columns
-        int cols = 2;
-        if (mc->slot_count >= 5) cols = 3;
-        if (mc->slot_count >= 10) cols = 4;
-        int rows = (mc->slot_count + cols - 1) / cols;
-
-        double gap_x = 28.0;
-        double gap_y = 32.0;
-        double cell_w = (avail_w - gap_x * (cols - 1)) / cols;
-        double cell_h = (avail_h - gap_y * (rows - 1)) / rows;
-
-        for (int r = 0; r < rows; r++) {
-            int in_this_row = (r == rows - 1) ? (mc->slot_count - r * cols) : cols;
-            double row_w = 0.0;
-            for (int c = 0; c < in_this_row; c++) {
-                int idx = r * cols + c;
-                double orig_w = mc->slots[idx].orig_w > 0 ? mc->slots[idx].orig_w : 800.0;
-                double orig_h = mc->slots[idx].orig_h > 0 ? mc->slots[idx].orig_h : 600.0;
-                double scale = fmin((cell_w * 0.92) / orig_w, (cell_h * 0.90) / orig_h);
-                if (scale > 0.52) scale = 0.52;
-                double tw = round(orig_w * scale);
-                double th = round(orig_h * scale);
-                if (tw < 260.0) tw = 260.0;
-                if (th < 180.0) th = 180.0;
-                mc->slots[idx].scale = scale;
-                mc->slots[idx].target_w = tw;
-                mc->slots[idx].target_h = th;
-                row_w += tw;
-            }
-            row_w += gap_x * (in_this_row - 1);
-            double row_start_x = avail_x + (avail_w - row_w) / 2.0;
-            double cur_x = row_start_x;
-
-            for (int c = 0; c < in_this_row; c++) {
-                int idx = r * cols + c;
-                mc->slots[idx].target_x = round(cur_x);
-                mc->slots[idx].target_y = round(avail_y + r * (cell_h + gap_y) + (cell_h - mc->slots[idx].target_h) / 2.0);
-                cur_x += mc->slots[idx].target_w + gap_x;
-            }
-        }
-    }
-}
-
-static void mission_control_init_slot_metadata(aurade_mission_control_t *mc) {
-    if (!mc) return;
-    cairo_t *init_cr = mc->buffer ? mc->buffer->cr : NULL;
-    for (int i = 0; i < mc->slot_count; i++) {
-        aurade_view_t *v = mc->slots[i].view;
-        if (!v) continue;
-        const char *app_id = (v->xdg_toplevel && v->xdg_toplevel->app_id) ? v->xdg_toplevel->app_id :
-            (v->xwayland_surface ? (v->xwayland_surface->class ? v->xwayland_surface->class : v->xwayland_surface->instance) : NULL);
-        const char *title = (v->xdg_toplevel && v->xdg_toplevel->title) ? v->xdg_toplevel->title :
-            (v->xwayland_surface && v->xwayland_surface->title ? v->xwayland_surface->title : app_id);
-        if (!title || !*title) title = "Window";
-
-        snprintf(mc->slots[i].display_title, sizeof(mc->slots[i].display_title), "%s", title);
-        mc->slots[i].app = apps_find(mc->server->apps, app_id);
-        double tw = init_cr ? text_width(init_cr, mc->slots[i].display_title, MC_FONT, 10.5, true) :
-                              (strlen(mc->slots[i].display_title) * 7.0);
-        mc->slots[i].title_width = tw;
-        double bw = tw + 24.0;
-        if (bw < 60.0) bw = 60.0;
-        mc->slots[i].badge_w = bw;
-    }
-}
-
 aurade_mission_control_t *mission_control_create(aurade_server_t *server) {
     aurade_mission_control_t *mc = calloc(1, sizeof(*mc));
+    if (!mc) return NULL;
     mc->server = server;
     mc->screen_width = 1920;
     mc->screen_height = 1080;
@@ -350,16 +504,15 @@ void mission_control_resize(aurade_mission_control_t *mc, int width, int height)
 }
 
 void mission_control_begin(aurade_mission_control_t *mc) {
-    if (!mc) return;
+    if (!mc || !mc->server) return;
 
-    // Settle any active workspace spring animation immediately so windows are
-    // cleanly positioned at (0, 0) for the active workspace.
+    // Settle any in-progress workspace transition
     if (mc->server->workspace_animating || mc->server->workspace_offset != 0.0) {
         int screen_w = mc->server->screen_width > 0 ? mc->server->screen_width : 1920;
         double p = mc->server->current_workspace - mc->server->workspace_offset / (double)screen_w;
         int target = (int)round(p);
-        if (target < 0) target = 0;
         int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
+        if (target < 0) target = 0;
         if (target >= num_ws) target = num_ws - 1;
 
         mc->server->current_workspace = target;
@@ -368,62 +521,71 @@ void mission_control_begin(aurade_mission_control_t *mc) {
         server_update_workspace_positions(mc->server);
     }
 
+    // Settle any active window open/minimize/geometry animations across all workspaces
+    aurade_view_t *v;
+    wl_list_for_each(v, &mc->server->views, link) {
+        if (!v->minimized && v->anim_type != VIEW_ANIM_NONE) {
+            v->anim_type = VIEW_ANIM_NONE;
+            view_set_scale(v, 1.0, 1.0);
+            view_set_opacity(v, 1.0f);
+            wlr_scene_node_set_position(&v->scene_tree->node, v->x, v->y);
+        }
+    }
+
     mc->active = true;
     mc->progress = 0.0;
     mc->slot_count = 0;
     mc->hovered_view = NULL;
+    mc->hovered_close_view = NULL;
     mc->hovered_workspace = -1;
-    mc->is_dragging = false;
     mc->mouse_pressed = false;
+    mc->is_dragging = false;
     mc->dragged_view = NULL;
     mc->drag_target_workspace = -1;
     mc->spaces_bar_dirty = true;
     mc->ws_animating = false;
+    mc->ws_gesture_active = false;
+    mc->ws_gesture_base_offset = 0.0;
     mc->ws_slide_offset = 0.0;
     mc->scroll_accum_x = 0.0;
     mc->last_scroll_time_ms = 0;
 
-    // Dismiss any open client popups and disable popup tree while overview is active
-    if (mc->server) {
-        server_dismiss_popups(mc->server);
-        if (mc->server->dock && dock_context_menu_is_open(mc->server->dock)) {
-            dock_close_context_menu(mc->server->dock);
-        }
-        if (mc->server->popup_tree) {
-            wlr_scene_node_set_enabled(&mc->server->popup_tree->node, false);
-        }
+    server_dismiss_popups(mc->server);
+    if (mc->server->dock && dock_context_menu_is_open(mc->server->dock)) {
+        dock_close_context_menu(mc->server->dock);
     }
-
-    // Pause dock and topbar blur shaders while Mission Control overlays the screen
-    if (mc->server && mc->server->topbar && mc->server->topbar->blur_node) {
+    if (mc->server->popup_tree) {
+        wlr_scene_node_set_enabled(&mc->server->popup_tree->node, false);
+    }
+    if (mc->server->topbar && mc->server->topbar->blur_node) {
         wlr_scene_node_set_enabled(&mc->server->topbar->blur_node->node, false);
     }
-    if (mc->server && mc->server->dock && mc->server->dock->blur_node) {
+    if (mc->server->dock && mc->server->dock->blur_node) {
         wlr_scene_node_set_enabled(&mc->server->dock->blur_node->node, false);
     }
 
     wlr_scene_node_set_enabled(&mc->scene_buffer->node, true);
 
-    // Pre-cache wallpaper thumbnail for Spaces bar (avoids CPU downscaling every frame)
+    // Pre-cache downscaled wallpaper thumbnail for Spaces bar
     if (mc->wallpaper_thumb) {
         cairo_surface_destroy(mc->wallpaper_thumb);
         mc->wallpaper_thumb = NULL;
     }
-    mc_bar_t bar;
-    mc_bar_layout(mc, &bar, 1.0);
+    mc_bar_geom_t bar;
+    mc_compute_bar_geom(mc, &bar, 1.0);
     int tw = (int)ceil(bar.thumb_w);
     int th = (int)ceil(bar.thumb_h);
     if (tw > 0 && th > 0 && mc->server->wallpaper) {
         aurade_wallpaper_t *wp = mc->server->wallpaper;
-        cairo_surface_t *source_surf = (wp->buffer && wp->buffer->surface) ? wp->buffer->surface : wp->blurred;
-        if (source_surf) {
-            int sw = cairo_image_surface_get_width(source_surf);
-            int sh = cairo_image_surface_get_height(source_surf);
+        cairo_surface_t *src = (wp->buffer && wp->buffer->surface) ? wp->buffer->surface : wp->blurred;
+        if (src && cairo_surface_status(src) == CAIRO_STATUS_SUCCESS) {
+            int sw = cairo_image_surface_get_width(src);
+            int sh = cairo_image_surface_get_height(src);
             if (sw > 0 && sh > 0) {
                 mc->wallpaper_thumb = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, tw, th);
                 cairo_t *tcr = cairo_create(mc->wallpaper_thumb);
                 cairo_scale(tcr, (double)tw / sw, (double)th / sh);
-                cairo_set_source_surface(tcr, source_surf, 0, 0);
+                cairo_set_source_surface(tcr, src, 0, 0);
                 cairo_pattern_set_filter(cairo_get_source(tcr), CAIRO_FILTER_GOOD);
                 cairo_paint(tcr);
                 cairo_destroy(tcr);
@@ -431,37 +593,8 @@ void mission_control_begin(aurade_mission_control_t *mc) {
         }
     }
 
-    // Collect visible views in current workspace only
-    aurade_view_t *view;
-    wl_list_for_each(view, &mc->server->views, link) {
-        if (view->workspace != mc->server->current_workspace || view->minimized) continue;
-        if (view->width < 60 || view->height <= 0) continue;
-        if (mc->slot_count >= 32) break;
-
-        mc->slots[mc->slot_count].view = view;
-        mc->slots[mc->slot_count].orig_x = view->x;
-        mc->slots[mc->slot_count].orig_y = view->y;
-        mc->slots[mc->slot_count].orig_w = view->width;
-        mc->slots[mc->slot_count].orig_h = view->height;
-        mc->slot_count++;
-    }
-
-    if (mc->slot_count == 0) {
-        mission_control_render(mc);
-        return;
-    }
-
-    mission_control_compute_layout(mc);
-    for (int i = 0; i < mc->slot_count; i++) {
-        aurade_view_t *v = mc->slots[i].view;
-        if (!v) continue;
-        if (v->scene_tree) {
-            view_set_scale(v, 1.0, 1.0);
-            wlr_scene_node_set_position(&v->scene_tree->node,
-                                        (int)mc->slots[i].orig_x, (int)mc->slots[i].orig_y);
-        }
-    }
-    mission_control_init_slot_metadata(mc);
+    mc_collect_workspace_slots(mc);
+    mc_apply_slots_scene_state(mc, 0.0);
     mission_control_render(mc);
 }
 
@@ -476,18 +609,7 @@ void mission_control_update_progress(aurade_mission_control_t *mc, double progre
         if (mc->server && mc->server->popup_tree) {
             wlr_scene_node_set_enabled(&mc->server->popup_tree->node, true);
         }
-        // Fully closed — restore all windows to original positions and 1.0 scale
-        for (int i = 0; i < mc->slot_count; i++) {
-            aurade_view_t *view = mc->slots[i].view;
-            if (!view || !view->scene_tree) continue;
-            view_set_scale(view, 1.0, 1.0);
-            wlr_scene_node_set_position(&view->scene_tree->node,
-                                        (int)mc->slots[i].orig_x, (int)mc->slots[i].orig_y);
-            view->x = (int)mc->slots[i].orig_x;
-            view->y = (int)mc->slots[i].orig_y;
-            view->width = (int)mc->slots[i].orig_w;
-            view->height = (int)mc->slots[i].orig_h;
-        }
+        mc_restore_slots_to_desktop(mc);
         wlr_scene_node_set_enabled(&mc->scene_buffer->node, false);
         mc->needs_render = false;
         server_update_workspace_positions(mc->server);
@@ -499,27 +621,8 @@ void mission_control_update_progress(aurade_mission_control_t *mc, double progre
         wallpaper_set_overview_blur(mc->server->wallpaper, progress);
     }
 
-    double p = progress;
-    if (p > 1.0) p = 1.0;
-    if (p < 0.0) p = 0.0;
-    double ep = 1.0 - pow(1.0 - p, 3.0);
-
-    for (int i = 0; i < mc->slot_count; i++) {
-        aurade_view_t *view = mc->slots[i].view;
-        if (!view || !view->scene_tree) continue;
-
-        if (mc->is_dragging && mc->dragged_view == view) continue;
-
-        double cur_scale = (1.0 - ep) * 1.0 + ep * mc->slots[i].scale;
-        double cur_x = (1.0 - ep) * mc->slots[i].orig_x + ep * (mc->slots[i].target_x + mc->ws_slide_offset);
-        double cur_y = (1.0 - ep) * mc->slots[i].orig_y + ep * mc->slots[i].target_y;
-
-        view->x = (int)cur_x;
-        view->y = (int)cur_y;
-        wlr_scene_node_set_position(&view->scene_tree->node, (int)round(cur_x), (int)round(cur_y));
-        view_set_scale(view, cur_scale, cur_scale);
-    }
-
+    double ep = mc_ease_out_cubic(progress);
+    mc_apply_slots_scene_state(mc, ep);
     mc->needs_render = true;
 }
 
@@ -528,6 +631,8 @@ void mission_control_end(aurade_mission_control_t *mc, bool opened) {
     mc->active = opened;
     if (!opened) {
         mc->ws_animating = false;
+        mc->ws_gesture_active = false;
+        mc->ws_gesture_base_offset = 0.0;
         mc->ws_slide_offset = 0.0;
         mc->scroll_accum_x = 0.0;
         if (mc->is_dragging && mc->dragged_view) {
@@ -537,16 +642,24 @@ void mission_control_end(aurade_mission_control_t *mc, bool opened) {
             mc->dragged_view = NULL;
         }
         if (mc->server && mc->server->topbar && mc->server->topbar->blur_node) {
-            wlr_scene_node_set_enabled(&mc->server->topbar->blur_node->node, mc->server->config.blur_topbar);
+            wlr_scene_node_set_enabled(&mc->server->topbar->blur_node->node,
+                                       mc->server->config.blur_topbar);
         }
         if (mc->server && mc->server->dock && mc->server->dock->blur_node) {
-            wlr_scene_node_set_enabled(&mc->server->dock->blur_node->node, mc->server->config.blur_dock);
+            wlr_scene_node_set_enabled(&mc->server->dock->blur_node->node,
+                                       mc->server->config.blur_dock);
         }
         if (mc->server && mc->server->popup_tree) {
             wlr_scene_node_set_enabled(&mc->server->popup_tree->node, true);
         }
         mc->progress = 0.0;
-        mission_control_update_progress(mc, 0.0);
+        if (mc->server && mc->server->wallpaper) {
+            wallpaper_set_overview_blur(mc->server->wallpaper, 0.0);
+        }
+        mc_restore_slots_to_desktop(mc);
+        wlr_scene_node_set_enabled(&mc->scene_buffer->node, false);
+        mc->needs_render = false;
+        server_update_workspace_positions(mc->server);
     }
 }
 
@@ -559,25 +672,30 @@ bool mission_control_handle_press(aurade_mission_control_t *mc, double x, double
     mc->drag_start_x = x;
     mc->drag_start_y = y;
 
-    // Check if clicked close button on any window slot
+    double ep = mc_ease_out_cubic(mc->progress);
+
+    // 1. Check close button on any visible slot
     for (int i = 0; i < mc->slot_count; i++) {
-        double slot_x = mc->slots[i].target_x + mc->ws_slide_offset;
-        double btn_x = slot_x + 16.0;
-        double btn_y = mc->slots[i].target_y + 16.0;
+        int rx = 0, ry = 0, rw = 0, rh = 0;
+        mc_slot_current_rect(mc, i, ep, NULL, &rx, &ry, &rw, &rh, NULL);
+        if (rx + rw < 0 || rx > mc->screen_width) continue;
+        double btn_x = rx + 16.0;
+        double btn_y = ry + 16.0;
         if (hypot(x - btn_x, y - btn_y) <= 16.0) {
             return true;
         }
     }
 
-    // Check if clicked inside a window slot
+    // 2. Check window slot body for drag or click
     for (int i = 0; i < mc->slot_count; i++) {
-        double slot_x = mc->slots[i].target_x + mc->ws_slide_offset;
-        if (x >= slot_x && x <= slot_x + mc->slots[i].target_w &&
-            y >= mc->slots[i].target_y && y <= mc->slots[i].target_y + mc->slots[i].target_h) {
+        int rx = 0, ry = 0, rw = 0, rh = 0;
+        mc_slot_current_rect(mc, i, ep, NULL, &rx, &ry, &rw, &rh, NULL);
+        if (rx + rw < 0 || rx > mc->screen_width) continue;
+        if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
             mc->drag_slot = i;
             mc->dragged_view = mc->slots[i].view;
-            mc->drag_offset_x = x - slot_x;
-            mc->drag_offset_y = y - mc->slots[i].target_y;
+            mc->drag_offset_x = x - rx;
+            mc->drag_offset_y = y - ry;
             return true;
         }
     }
@@ -588,26 +706,23 @@ bool mission_control_handle_press(aurade_mission_control_t *mc, double x, double
 void mission_control_handle_motion(aurade_mission_control_t *mc, double x, double y) {
     if (!mc || !mc->active || mc->progress < 0.4) return;
 
+    double ep = mc_ease_out_cubic(mc->progress);
+
     if (mc->mouse_pressed && mc->dragged_view) {
-        if (!mc->is_dragging) {
-            if (hypot(x - mc->drag_start_x, y - mc->drag_start_y) > 6.0) {
-                mc->is_dragging = true;
-                wlr_scene_node_reparent(&mc->dragged_view->scene_tree->node, mc->server->dock_tree);
-                wlr_scene_node_raise_to_top(&mc->dragged_view->scene_tree->node);
-                mission_control_render(mc);
-            }
+        if (!mc->is_dragging && hypot(x - mc->drag_start_x, y - mc->drag_start_y) > 6.0) {
+            mc->is_dragging = true;
+            wlr_scene_node_reparent(&mc->dragged_view->scene_tree->node, mc->server->dock_tree);
+            wlr_scene_node_raise_to_top(&mc->dragged_view->scene_tree->node);
+            mission_control_render(mc);
         }
 
         if (mc->is_dragging) {
-            double win_x = x - mc->drag_offset_x;
-            double win_y = y - mc->drag_offset_y;
-            mc->dragged_view->x = (int)win_x;
-            mc->dragged_view->y = (int)win_y;
-            wlr_scene_node_set_position(&mc->dragged_view->scene_tree->node, (int)win_x, (int)win_y);
+            int win_x = (int)round(x - mc->drag_offset_x);
+            int win_y = (int)round(y - mc->drag_offset_y);
+            wlr_scene_node_set_position(&mc->dragged_view->scene_tree->node, win_x, win_y);
 
-            // Check if hovering over any workspace thumbnail
-            mc_bar_t bar;
-            mc_bar_layout(mc, &bar, 1.0);
+            mc_bar_geom_t bar;
+            mc_compute_bar_geom(mc, &bar, 1.0);
             int prev_target = mc->drag_target_workspace;
             mc->drag_target_workspace = -1;
 
@@ -631,11 +746,10 @@ void mission_control_handle_motion(aurade_mission_control_t *mc, double x, doubl
         }
     }
 
-    // Check workspace thumbnail hover in Spaces bar
     int prev_ws_hover = mc->hovered_workspace;
     mc->hovered_workspace = -1;
-    mc_bar_t bar;
-    mc_bar_layout(mc, &bar, 1.0);
+    mc_bar_geom_t bar;
+    mc_compute_bar_geom(mc, &bar, 1.0);
     if (y >= bar.bar_y && y <= bar.bar_y + bar.bar_h) {
         int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
         for (int i = 0; i < num_ws; i++) {
@@ -648,24 +762,22 @@ void mission_control_handle_motion(aurade_mission_control_t *mc, double x, doubl
     }
 
     aurade_view_t *prev_close = mc->hovered_close_view;
-    mc->hovered_close_view = NULL;
-    for (int i = 0; i < mc->slot_count; i++) {
-        double slot_x = mc->slots[i].target_x + mc->ws_slide_offset;
-        double btn_x = slot_x + 16.0;
-        double btn_y = mc->slots[i].target_y + 16.0;
-        if (hypot(x - btn_x, y - btn_y) <= 16.0) {
-            mc->hovered_close_view = mc->slots[i].view;
-            break;
-        }
-    }
-
     aurade_view_t *prev_hover = mc->hovered_view;
+    mc->hovered_close_view = NULL;
     mc->hovered_view = NULL;
 
     for (int i = 0; i < mc->slot_count; i++) {
-        double slot_x = mc->slots[i].target_x + mc->ws_slide_offset;
-        if (x >= slot_x && x <= slot_x + mc->slots[i].target_w &&
-            y >= mc->slots[i].target_y && y <= mc->slots[i].target_y + mc->slots[i].target_h) {
+        int rx = 0, ry = 0, rw = 0, rh = 0;
+        mc_slot_current_rect(mc, i, ep, NULL, &rx, &ry, &rw, &rh, NULL);
+        if (rx + rw < 0 || rx > mc->screen_width) continue;
+        double btn_x = rx + 16.0;
+        double btn_y = ry + 16.0;
+        if (hypot(x - btn_x, y - btn_y) <= 16.0) {
+            mc->hovered_close_view = mc->slots[i].view;
+            mc->hovered_view = mc->slots[i].view;
+            break;
+        }
+        if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
             mc->hovered_view = mc->slots[i].view;
             break;
         }
@@ -674,75 +786,77 @@ void mission_control_handle_motion(aurade_mission_control_t *mc, double x, doubl
     if (mc->hovered_workspace != prev_ws_hover) {
         mc->spaces_bar_dirty = true;
     }
-    if (mc->hovered_view != prev_hover || mc->hovered_close_view != prev_close ||
+    if (mc->hovered_view != prev_hover ||
+        mc->hovered_close_view != prev_close ||
         mc->hovered_workspace != prev_ws_hover) {
         mission_control_render(mc);
+        schedule_all_outputs(mc->server);
     }
 }
 
 bool mission_control_handle_release(aurade_mission_control_t *mc, double x, double y) {
     if (!mc || !mc->active || mc->progress < 0.4) return false;
     if (!mc->mouse_pressed) return false;
+
     bool was_dragging = mc->is_dragging;
     aurade_view_t *dragged = mc->dragged_view;
     int target_ws = mc->drag_target_workspace;
+    int drag_slot = mc->drag_slot;
 
     mc->mouse_pressed = false;
     mc->is_dragging = false;
     mc->dragged_view = NULL;
     mc->drag_target_workspace = -1;
 
+    double ep = mc_ease_out_cubic(mc->progress);
+
     if (was_dragging && dragged) {
         if (target_ws >= 0 && target_ws != dragged->workspace) {
-            // Move window to target workspace!
-            view_set_scale(dragged, 1.0, 1.0);
             dragged->workspace = target_ws;
             wlr_scene_node_reparent(&dragged->scene_tree->node,
                                     mc->server->workspace_trees[target_ws]);
-            dragged->x = (mc->screen_width - dragged->width) / 2;
-            dragged->y = (mc->screen_height - dragged->height) / 2;
-            if (dragged->x < 0) dragged->x = 0;
-            if (dragged->y < TOPBAR_HEIGHT) dragged->y = TOPBAR_HEIGHT;
-            wlr_scene_node_set_position(&dragged->scene_tree->node, dragged->x, dragged->y);
-
-            mission_control_forget_view(mc, dragged);
-            mission_control_compute_layout(mc);
-            mission_control_init_slot_metadata(mc);
-            mission_control_update_progress(mc, mc->progress);
+            if (drag_slot >= 0 && drag_slot < mc->slot_count && mc->slots[drag_slot].view == dragged) {
+                mc->slots[drag_slot].workspace = target_ws;
+            }
+            mc->spaces_bar_dirty = true;
+            if (mc->slot_count > 0) {
+                mc_compute_layout(mc);
+                mc_init_slot_metadata(mc);
+                mc_apply_slots_scene_state(mc, ep);
+            }
             mission_control_render(mc);
             schedule_all_outputs(mc->server);
             return true;
         } else {
-            // Snapped back to slot
             wlr_scene_node_reparent(&dragged->scene_tree->node,
                                     mc->server->workspace_trees[dragged->workspace]);
-            double tx = mc->slots[mc->drag_slot].target_x + mc->ws_slide_offset;
-            double ty = mc->slots[mc->drag_slot].target_y;
-            dragged->x = (int)tx;
-            dragged->y = (int)ty;
-            wlr_scene_node_set_position(&dragged->scene_tree->node, (int)tx, (int)ty);
-            view_set_scale(dragged, mc->slots[mc->drag_slot].scale, mc->slots[mc->drag_slot].scale);
+            mc_apply_slots_scene_state(mc, ep);
             mission_control_render(mc);
             schedule_all_outputs(mc->server);
             return true;
         }
     }
 
-    // Single click (not dragging):
-    // 0. Close button on top-left of window slot
+    // 1. Close button click
     for (int i = 0; i < mc->slot_count; i++) {
         aurade_view_t *view = mc->slots[i].view;
         if (!view) continue;
-        double slot_x = mc->slots[i].target_x + mc->ws_slide_offset;
-        double btn_x = slot_x + 16.0;
-        double btn_y = mc->slots[i].target_y + 16.0;
+        int rx = 0, ry = 0, rw = 0, rh = 0;
+        mc_slot_current_rect(mc, i, ep, NULL, &rx, &ry, &rw, &rh, NULL);
+        if (rx + rw < 0 || rx > mc->screen_width) continue;
+        double btn_x = rx + 16.0;
+        double btn_y = ry + 16.0;
         if (hypot(x - btn_x, y - btn_y) <= 16.0) {
+            view_set_scale(view, 1.0, 1.0);
+            wlr_scene_node_set_position(&view->scene_tree->node,
+                                        (int)round(mc->slots[i].orig_x),
+                                        (int)round(mc->slots[i].orig_y));
             view_close(view);
             mission_control_forget_view(mc, view);
             if (mc->slot_count > 0) {
-                mission_control_compute_layout(mc);
-                mission_control_init_slot_metadata(mc);
-                mission_control_update_progress(mc, mc->progress);
+                mc_compute_layout(mc);
+                mc_init_slot_metadata(mc);
+                mc_apply_slots_scene_state(mc, ep);
             }
             mission_control_render(mc);
             schedule_all_outputs(mc->server);
@@ -750,9 +864,9 @@ bool mission_control_handle_release(aurade_mission_control_t *mc, double x, doub
         }
     }
 
-    // 1. Workspace thumbnails in Spaces bar
-    mc_bar_t bar;
-    mc_bar_layout(mc, &bar, 1.0);
+    // 2. Spaces bar workspace click
+    mc_bar_geom_t bar;
+    mc_compute_bar_geom(mc, &bar, 1.0);
     if (y >= bar.bar_y && y <= bar.bar_y + bar.bar_h) {
         int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
         for (int i = 0; i < num_ws; i++) {
@@ -768,35 +882,25 @@ bool mission_control_handle_release(aurade_mission_control_t *mc, double x, doub
         }
     }
 
-    // 2. Clicked inside a window slot: focus it and exit
+    // 3. Window thumbnail click -> focus & exit Mission Control
     for (int i = 0; i < mc->slot_count; i++) {
-        double slot_x = mc->slots[i].target_x + mc->ws_slide_offset;
-        if (x >= slot_x && x <= slot_x + mc->slots[i].target_w &&
-            y >= mc->slots[i].target_y && y <= mc->slots[i].target_y + mc->slots[i].target_h) {
-            aurade_view_t *clicked_view = mc->slots[i].view;
-            int target_ws = clicked_view->workspace;
-            if (target_ws != mc->server->current_workspace) {
-                server_switch_workspace(mc->server, target_ws, false);
+        int rx = 0, ry = 0, rw = 0, rh = 0;
+        mc_slot_current_rect(mc, i, ep, NULL, &rx, &ry, &rw, &rh, NULL);
+        if (rx + rw < 0 || rx > mc->screen_width) continue;
+        if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
+            aurade_view_t *clicked = mc->slots[i].view;
+            if (clicked) {
+                if (clicked->workspace != mc->server->current_workspace) {
+                    server_switch_workspace(mc->server, clicked->workspace, false);
+                }
+                view_focus(clicked);
             }
-            view_focus(clicked_view);
             server_close_overlay(mc->server);
             return true;
         }
     }
 
-    // 3. Horizontal background swipe gesture (mouse drag / touch swipe on empty background)
-    double dx = x - mc->drag_start_x;
-    double dy = y - mc->drag_start_y;
-    if (fabs(dx) > 50.0 && fabs(dx) > fabs(dy) * 1.5) {
-        if (dx < 0) {
-            mission_control_switch_workspace(mc, mc->server->current_workspace + 1);
-        } else {
-            mission_control_switch_workspace(mc, mc->server->current_workspace - 1);
-        }
-        return true;
-    }
-
-    // 4. Clicked empty background: exit Mission Control
+    // 4. Empty background click -> close Mission Control
     server_close_overlay(mc->server);
     return true;
 }
@@ -809,10 +913,11 @@ void mission_control_switch_workspace(aurade_mission_control_t *mc, int new_work
     if (!mc || !mc->active || mc->progress < 0.4) return;
     int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
     if (new_workspace < 0 || new_workspace >= num_ws) return;
-    if (new_workspace == mc->server->current_workspace) return;
+    if (new_workspace == mc->server->current_workspace && fabs(mc->ws_slide_offset) < 0.5) return;
 
     int cur_ws = mc->server->current_workspace;
-    int dir = (new_workspace > cur_ws) ? 1 : -1;
+    int screen_w = mc->screen_width > 0 ? mc->screen_width : 1920;
+    double start_offset = mc->ws_slide_offset + (double)(new_workspace - cur_ws) * (double)screen_w;
 
     if (mc->is_dragging && mc->dragged_view) {
         wlr_scene_node_reparent(&mc->dragged_view->scene_tree->node,
@@ -821,77 +926,163 @@ void mission_control_switch_workspace(aurade_mission_control_t *mc, int new_work
         mc->dragged_view = NULL;
     }
 
-    // 1. Restore previous workspace's windows to original scale & coordinates
-    for (int i = 0; i < mc->slot_count; i++) {
-        aurade_view_t *view = mc->slots[i].view;
-        if (!view || !view->scene_tree) continue;
-        view_set_scale(view, 1.0, 1.0);
-        wlr_scene_node_set_position(&view->scene_tree->node,
-                                    (int)mc->slots[i].orig_x, (int)mc->slots[i].orig_y);
-        view->x = (int)mc->slots[i].orig_x;
-        view->y = (int)mc->slots[i].orig_y;
-        view->width = (int)mc->slots[i].orig_w;
-        view->height = (int)mc->slots[i].orig_h;
-    }
-
-    // 2. Switch workspace in server
-    server_switch_workspace(mc->server, new_workspace, false);
-
-    // 3. Clear and repopulate slots for new workspace
-    mc->slot_count = 0;
+    mc->server->current_workspace = new_workspace;
     mc->hovered_view = NULL;
     mc->hovered_close_view = NULL;
     mc->hovered_workspace = -1;
-    mc->is_dragging = false;
     mc->mouse_pressed = false;
+    mc->is_dragging = false;
     mc->dragged_view = NULL;
     mc->drag_target_workspace = -1;
     mc->spaces_bar_dirty = true;
+    mc->ws_gesture_active = false;
 
-    aurade_view_t *view;
-    wl_list_for_each(view, &mc->server->views, link) {
-        if (view->workspace != mc->server->current_workspace || view->minimized) continue;
-        if (view->width < 60 || view->height <= 0) continue;
-        if (mc->slot_count >= 32) break;
-
-        mc->slots[mc->slot_count].view = view;
-        mc->slots[mc->slot_count].orig_x = view->x;
-        mc->slots[mc->slot_count].orig_y = view->y;
-        mc->slots[mc->slot_count].orig_w = view->width;
-        mc->slots[mc->slot_count].orig_h = view->height;
-        mc->slot_count++;
-    }
-
-    if (mc->slot_count > 0) {
-        mission_control_compute_layout(mc);
-        mission_control_init_slot_metadata(mc);
-    }
-
-    // 4. Initialize spring sliding animation from swipe direction
     spring_config_t spring = {
         .stiffness = 380.0,
         .damping = 1.05,
         .mass = 1.0,
+        .velocity_threshold = 0.5,
+        .position_threshold = 0.2,
     };
     if (mc->server && mc->server->config.spring.stiffness > 10.0) {
         spring = mc->server->config.spring;
+        spring.position_threshold = 0.5;
+        spring.velocity_threshold = 1.0;
     }
 
-    spring_simulation_start(&mc->ws_spring, &spring, dir * 320.0, 0.0, 0.0);
-    mc->ws_slide_offset = dir * 320.0;
+    spring_simulation_start(&mc->ws_spring, &spring, start_offset, 0.0, 0.0);
+    mc->ws_slide_offset = start_offset;
     mc->ws_animating = true;
 
-    for (int i = 0; i < mc->slot_count; i++) {
-        aurade_view_t *v = mc->slots[i].view;
-        if (!v || !v->scene_tree) continue;
-        double cur_x = mc->slots[i].target_x + mc->ws_slide_offset;
-        double cur_y = mc->slots[i].target_y;
-        v->x = (int)cur_x;
-        v->y = (int)cur_y;
-        wlr_scene_node_set_position(&v->scene_tree->node, (int)round(cur_x), (int)round(cur_y));
-        view_set_scale(v, mc->slots[i].scale, mc->slots[i].scale);
+    double ep = mc_ease_out_cubic(mc->progress);
+    mc_apply_slots_scene_state(mc, ep);
+    mission_control_render(mc);
+    schedule_all_outputs(mc->server);
+}
+
+void mission_control_ws_gesture_begin(aurade_mission_control_t *mc) {
+    if (!mc || !mc->active || !mc->server) return;
+
+    int screen_w = mc->screen_width > 0 ? mc->screen_width : 1920;
+    int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
+
+    if (mc->ws_animating) {
+        mc->ws_animating = false;
+        double p = mc->server->current_workspace - mc->ws_slide_offset / (double)screen_w;
+        int anchor = (int)round(p);
+        if (anchor < 0) anchor = 0;
+        if (anchor >= num_ws) anchor = num_ws - 1;
+        if (anchor != mc->server->current_workspace) {
+            mc->ws_slide_offset += (double)(anchor - mc->server->current_workspace) * (double)screen_w;
+            mc->server->current_workspace = anchor;
+            mc->spaces_bar_dirty = true;
+        }
     }
 
+    mc->ws_gesture_active = true;
+    mc->ws_gesture_base_offset = mc->ws_slide_offset;
+}
+
+void mission_control_ws_gesture_update(aurade_mission_control_t *mc, double delta_x) {
+    if (!mc || !mc->active || !mc->ws_gesture_active || !mc->server) return;
+
+    int screen_w = mc->screen_width > 0 ? mc->screen_width : 1920;
+    int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
+    double sens = mc->server->config.sensitivity > 0.0 ? mc->server->config.sensitivity : 1.0;
+    double eff_sens = fmax(sens, 0.85);
+    double gain = 2.6;
+    double ref_to_screen = (double)screen_w / 1920.0;
+
+    double offset = mc->ws_gesture_base_offset + delta_x * eff_sens * gain * ref_to_screen;
+
+    double max_offset = (double)mc->server->current_workspace * (double)screen_w;
+    double min_offset = (double)(mc->server->current_workspace - (num_ws - 1)) * (double)screen_w;
+    double limit = mc->server->config.rubber_band_limit > 10.0 ? mc->server->config.rubber_band_limit : 300.0;
+
+    if (offset > max_offset) {
+        offset = max_offset + rubber_band_calculate(offset - max_offset, limit);
+    } else if (offset < min_offset) {
+        offset = min_offset + rubber_band_calculate(offset - min_offset, limit);
+    }
+
+    mc->ws_slide_offset = offset;
+    double ep = mc_ease_out_cubic(mc->progress);
+    mc_apply_slots_scene_state(mc, ep);
+    mc->needs_render = true;
+    schedule_all_outputs(mc->server);
+}
+
+void mission_control_ws_gesture_end(aurade_mission_control_t *mc, bool cancelled, double velocity_x) {
+    if (!mc || !mc->active || !mc->server) return;
+    mc->ws_gesture_active = false;
+
+    int screen_w = mc->screen_width > 0 ? mc->screen_width : 1920;
+    int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
+    double sens = mc->server->config.sensitivity > 0.0 ? mc->server->config.sensitivity : 1.0;
+    double eff_sens = fmax(sens, 0.85);
+    double gain = 2.6;
+    double ref_to_screen = (double)screen_w / 1920.0;
+
+    double offset = mc->ws_slide_offset;
+    double p = mc->server->current_workspace - offset / (double)screen_w;
+    int lower = (int)floor(p);
+    int upper = lower + 1;
+
+    double ws_flick_px = 420.0;
+    double ws_snap = fmin(mc->server->config.snap_threshold > 0.0 ? mc->server->config.snap_threshold : 0.16, 0.18);
+
+    int target_workspace = mc->server->current_workspace;
+    if (cancelled) {
+        // Spring back to anchored workspace
+    } else if (velocity_x < -ws_flick_px) {
+        target_workspace = upper;
+    } else if (velocity_x > ws_flick_px) {
+        target_workspace = lower;
+    } else if (p >= mc->server->current_workspace) {
+        if (p - mc->server->current_workspace >= ws_snap) {
+            target_workspace = mc->server->current_workspace + 1;
+        }
+    } else {
+        if (mc->server->current_workspace - p >= ws_snap) {
+            target_workspace = mc->server->current_workspace - 1;
+        }
+    }
+
+    if (target_workspace > mc->server->current_workspace + 1) {
+        target_workspace = mc->server->current_workspace + 1;
+    }
+    if (target_workspace < mc->server->current_workspace - 1) {
+        target_workspace = mc->server->current_workspace - 1;
+    }
+    if (target_workspace < 0) target_workspace = 0;
+    if (target_workspace >= num_ws) target_workspace = num_ws - 1;
+
+    int diff = target_workspace - mc->server->current_workspace;
+    double new_offset = offset + (double)diff * (double)screen_w;
+    mc->server->current_workspace = target_workspace;
+    mc->ws_slide_offset = new_offset;
+    mc->spaces_bar_dirty = true;
+
+    double offset_velocity = velocity_x * eff_sens * gain * ref_to_screen;
+
+    spring_config_t spring = {
+        .stiffness = 380.0,
+        .damping = 1.05,
+        .mass = 1.0,
+        .velocity_threshold = 1.0,
+        .position_threshold = 0.5,
+    };
+    if (mc->server->config.spring.stiffness > 10.0) {
+        spring = mc->server->config.spring;
+        spring.position_threshold = 0.5;
+        spring.velocity_threshold = 1.0;
+    }
+
+    spring_simulation_start(&mc->ws_spring, &spring, new_offset, 0.0, offset_velocity);
+    mc->ws_animating = true;
+
+    double ep = mc_ease_out_cubic(mc->progress);
+    mc_apply_slots_scene_state(mc, ep);
     mission_control_render(mc);
     schedule_all_outputs(mc->server);
 }
@@ -907,57 +1098,23 @@ void mission_control_tick(aurade_mission_control_t *mc, double dt) {
         mc->ws_animating = false;
     }
 
-    for (int i = 0; i < mc->slot_count; i++) {
-        aurade_view_t *view = mc->slots[i].view;
-        if (!view || !view->scene_tree) continue;
-        if (mc->is_dragging && mc->dragged_view == view) continue;
-        double cur_x = mc->slots[i].target_x + mc->ws_slide_offset;
-        double cur_y = mc->slots[i].target_y;
-        view->x = (int)cur_x;
-        view->y = (int)cur_y;
-        wlr_scene_node_set_position(&view->scene_tree->node, (int)round(cur_x), (int)round(cur_y));
-        view_set_scale(view, mc->slots[i].scale, mc->slots[i].scale);
-    }
-
+    double ep = mc_ease_out_cubic(mc->progress);
+    mc_apply_slots_scene_state(mc, ep);
     mission_control_render(mc);
     schedule_all_outputs(mc->server);
 }
 
 void mission_control_handle_axis(aurade_mission_control_t *mc, enum wl_pointer_axis orientation,
                                  double delta, int32_t delta_discrete) {
-    if (!mc || !mc->active || mc->progress < 0.5) return;
-
-    if (orientation != WL_POINTER_AXIS_HORIZONTAL_SCROLL) return;
-
-    uint64_t now = mc_now_ms();
-    if (delta_discrete != 0) {
-        if (now - mc->last_scroll_time_ms < 250) return;
-        if (delta_discrete > 0) {
-            mission_control_switch_workspace(mc, mc->server->current_workspace + 1);
-            mc->last_scroll_time_ms = now;
-        } else if (delta_discrete < 0) {
-            mission_control_switch_workspace(mc, mc->server->current_workspace - 1);
-            mc->last_scroll_time_ms = now;
-        }
-        return;
-    }
-
-    if (now - mc->last_scroll_time_ms > 300) {
-        mc->scroll_accum_x = 0;
-    }
-    mc->last_scroll_time_ms = now;
-    mc->scroll_accum_x += delta;
-
-    if (mc->scroll_accum_x > 25.0) {
-        mission_control_switch_workspace(mc, mc->server->current_workspace + 1);
-        mc->scroll_accum_x = 0;
-    } else if (mc->scroll_accum_x < -25.0) {
-        mission_control_switch_workspace(mc, mc->server->current_workspace - 1);
-        mc->scroll_accum_x = 0;
-    }
+    // Workspace switching only responds to 3-finger horizontal touchpad gestures,
+    // never mouse wheel up/down or 2-finger touchpad scrolling.
+    (void)mc;
+    (void)orientation;
+    (void)delta;
+    (void)delta_discrete;
 }
 
-static int workspace_window_count(aurade_server_t *server, int workspace) {
+static int mc_workspace_window_count(aurade_server_t *server, int workspace) {
     int count = 0;
     aurade_view_t *view;
     wl_list_for_each(view, &server->views, link) {
@@ -966,20 +1123,21 @@ static int workspace_window_count(aurade_server_t *server, int workspace) {
     return count;
 }
 
-static void draw_workspace_mini_windows(cairo_t *cr, aurade_mission_control_t *mc,
-                                        int ws, double sx, double sy,
-                                        double thumb_w, double thumb_h,
-                                        bool is_dark, double p) {
+static void mc_draw_workspace_mini_windows(cairo_t *cr, aurade_mission_control_t *mc,
+                                           int ws, double sx, double sy,
+                                           double thumb_w, double thumb_h,
+                                           bool is_dark, double alpha) {
     if (!mc || !mc->server || mc->screen_width <= 0 || mc->screen_height <= 0) return;
 
-    // Collect visible, unminimized views in this workspace (bottom to top)
-    aurade_view_t *ws_views[32];
+    aurade_view_t *ws_views[MC_MAX_SLOTS];
     int ws_count = 0;
     aurade_view_t *view;
     wl_list_for_each(view, &mc->server->views, link) {
         if (view->workspace != ws || view->minimized) continue;
-        if (view->width < 40 || view->height < 40) continue;
-        if (ws_count < 32) {
+        int vw = 0, vh = 0;
+        mc_query_view_geometry(view, &vw, &vh);
+        if (vw < 40 || vh < 40) continue;
+        if (ws_count < MC_MAX_SLOTS) {
             ws_views[ws_count++] = view;
         }
     }
@@ -988,130 +1146,100 @@ static void draw_workspace_mini_windows(cairo_t *cr, aurade_mission_control_t *m
     double scale_x = thumb_w / (double)mc->screen_width;
     double scale_y = thumb_h / (double)mc->screen_height;
 
-    // Render back-to-front so topmost window in z-order is drawn last on top
     for (int i = ws_count - 1; i >= 0; i--) {
         aurade_view_t *v = ws_views[i];
-
-        // For views in current workspace, use unscaled desktop coordinates
+        int vw = 0, vh = 0;
+        mc_query_view_geometry(v, &vw, &vh);
         double vx = (double)v->x;
         double vy = (double)v->y;
-        double vw = (double)v->width;
-        double vh = (double)v->height;
+
         if (ws == mc->server->current_workspace) {
             for (int k = 0; k < mc->slot_count; k++) {
                 if (mc->slots[k].view == v) {
                     vx = mc->slots[k].orig_x;
                     vy = mc->slots[k].orig_y;
-                    vw = mc->slots[k].orig_w;
-                    vh = mc->slots[k].orig_h;
+                    vw = (int)mc->slots[k].orig_w;
+                    vh = (int)mc->slots[k].orig_h;
                     break;
                 }
             }
         }
 
-        // Map screen coordinates to thumbnail coordinates
         double wx = sx + vx * scale_x;
         double wy = sy + vy * scale_y;
         double ww = vw * scale_x;
         double wh = vh * scale_y;
-
-        // Ensure reasonable minimum dimensions so tiny windows remain visible
         if (ww < 14.0) ww = 14.0;
         if (wh < 10.0) wh = 10.0;
 
         double r = fmin(3.5, fmin(ww, wh) * 0.14);
         if (r < 2.0) r = 2.0;
 
-        // Window drop shadow
         draw_rounded_rect(cr, wx, wy + 1.2, ww, wh, r);
-        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.45 * p);
+        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.45 * alpha);
         cairo_fill(cr);
 
-        // Window body fill (subtle vertical gradient matching Control Center dark/light themes)
         cairo_pattern_t *pat = cairo_pattern_create_linear(wx, wy, wx, wy + wh);
         if (is_dark) {
-            cairo_pattern_add_color_stop_rgba(pat, 0.0, 0.18, 0.20, 0.24, 0.95 * p);
-            cairo_pattern_add_color_stop_rgba(pat, 1.0, 0.11, 0.12, 0.15, 0.98 * p);
+            cairo_pattern_add_color_stop_rgba(pat, 0.0, 0.18, 0.20, 0.24, 0.95 * alpha);
+            cairo_pattern_add_color_stop_rgba(pat, 1.0, 0.11, 0.12, 0.15, 0.98 * alpha);
         } else {
-            cairo_pattern_add_color_stop_rgba(pat, 0.0, 0.96, 0.96, 0.98, 0.95 * p);
-            cairo_pattern_add_color_stop_rgba(pat, 1.0, 0.88, 0.89, 0.92, 0.98 * p);
+            cairo_pattern_add_color_stop_rgba(pat, 0.0, 0.96, 0.96, 0.98, 0.95 * alpha);
+            cairo_pattern_add_color_stop_rgba(pat, 1.0, 0.88, 0.89, 0.92, 0.98 * alpha);
         }
         cairo_set_source(cr, pat);
         draw_rounded_rect(cr, wx, wy, ww, wh, r);
         cairo_fill(cr);
         cairo_pattern_destroy(pat);
 
-        // Window header / titlebar stripe
         double tb_h = fmax(3.5, fmin(7.5, wh * 0.22));
         cairo_save(cr);
         draw_rounded_rect(cr, wx, wy, ww, wh, r);
         cairo_clip(cr);
         cairo_rectangle(cr, wx, wy, ww, tb_h);
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (is_dark ? 0.07 : 0.05) * p);
-        cairo_fill(cr);
-
-        // Hairline separator under titlebar
-        cairo_rectangle(cr, wx, wy + tb_h, ww, 0.5);
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (is_dark ? 0.08 : 0.06) * p);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (is_dark ? 0.07 : 0.05) * alpha);
         cairo_fill(cr);
         cairo_restore(cr);
 
-        // Traffic light dots if window is wide enough
         if (ww >= 22.0 && wh >= 14.0) {
             double dot_r = fmax(0.7, fmin(1.2, tb_h * 0.20));
             double dot_y = wy + tb_h / 2.0;
             double dot_x = wx + 3.0;
             double dot_spacing = dot_r * 2.0 + 1.8;
 
-            // Red dot
             cairo_arc(cr, dot_x, dot_y, dot_r, 0, 2 * M_PI);
-            cairo_set_source_rgba(cr, 1.0, 0.36, 0.33, 0.90 * p);
+            cairo_set_source_rgba(cr, 1.0, 0.36, 0.33, 0.90 * alpha);
             cairo_fill(cr);
 
-            // Yellow dot
             cairo_arc(cr, dot_x + dot_spacing, dot_y, dot_r, 0, 2 * M_PI);
-            cairo_set_source_rgba(cr, 1.0, 0.74, 0.18, 0.90 * p);
+            cairo_set_source_rgba(cr, 1.0, 0.74, 0.18, 0.90 * alpha);
             cairo_fill(cr);
 
-            // Green dot
             cairo_arc(cr, dot_x + dot_spacing * 2.0, dot_y, dot_r, 0, 2 * M_PI);
-            cairo_set_source_rgba(cr, 0.16, 0.80, 0.25, 0.90 * p);
+            cairo_set_source_rgba(cr, 0.16, 0.80, 0.25, 0.90 * alpha);
             cairo_fill(cr);
         }
 
-        // App Icon inside the mini window
-        const char *app_id = (v->xdg_toplevel && v->xdg_toplevel->app_id) ? v->xdg_toplevel->app_id :
-            (v->xwayland_surface ? (v->xwayland_surface->class ? v->xwayland_surface->class : v->xwayland_surface->instance) : NULL);
+        const char *app_id = mc_view_app_id(v);
         desktop_app_t *app = apps_find(mc->server->apps, app_id);
-
         double icon_sz = fmax(8.0, fmin(18.0, fmin(ww * 0.50, (wh - tb_h) * 0.70)));
         if (icon_sz >= 8.0) {
-            double icon_cx = wx + ww / 2.0;
-            double icon_cy = wy + tb_h + (wh - tb_h) / 2.0;
-            draw_mc_app_icon(cr, icon_cx, icon_cy, icon_sz,
+            mc_draw_app_icon(cr, wx + ww / 2.0, wy + tb_h + (wh - tb_h) / 2.0, icon_sz,
                              app ? app->name : (app_id ? app_id : "App"),
-                             app ? app->icon_surface : NULL, p);
+                             app ? app->icon_surface : NULL, alpha);
         }
 
-        // Specular border around mini window
         draw_rounded_rect(cr, wx + 0.5, wy + 0.5, ww - 1.0, wh - 1.0, r);
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (is_dark ? 0.20 : 0.28) * p);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (is_dark ? 0.20 : 0.28) * alpha);
         cairo_set_line_width(cr, 0.8);
-        cairo_stroke(cr);
-
-        // Specular highlight on top edge
-        cairo_new_path(cr);
-        cairo_move_to(cr, wx + r, wy + 0.5);
-        cairo_line_to(cr, wx + ww - r, wy + 0.5);
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (is_dark ? 0.35 : 0.50) * p);
         cairo_stroke(cr);
     }
 }
 
-static void render_spaces_bar_surface(aurade_mission_control_t *mc) {
+static void mc_render_spaces_bar_surface(aurade_mission_control_t *mc) {
     if (!mc) return;
-    mc_bar_t bar;
-    mc_bar_layout(mc, &bar, 1.0);
+    mc_bar_geom_t bar;
+    mc_compute_bar_geom(mc, &bar, 1.0);
 
     double shadow_pad = 24.0;
     int surf_w = (int)ceil(bar.bar_w + shadow_pad * 2.0);
@@ -1130,17 +1258,14 @@ static void render_spaces_bar_surface(aurade_mission_control_t *mc) {
     cairo_paint(cr);
     cairo_restore(cr);
 
-    double origin_x = shadow_pad;
-    double origin_y = shadow_pad;
+    double ox = shadow_pad;
+    double oy = shadow_pad;
     mc_theme_t theme = mc_get_theme(mc);
 
-    // 1. Soft ambient drop shadow around the Spaces bar
-    draw_drop_shadow(cr, origin_x, origin_y, bar.bar_w, bar.bar_h, 24.0, 20.0, 0.45);
+    draw_drop_shadow(cr, ox, oy, bar.bar_w, bar.bar_h, 24.0, 20.0, 0.45);
 
-    // 2. Glass panel background (gradient from panel_top to panel_bottom)
-    draw_rounded_rect(cr, origin_x, origin_y, bar.bar_w, bar.bar_h, 24.0);
-    cairo_pattern_t *bg = cairo_pattern_create_linear(origin_x, origin_y,
-                                                      origin_x, origin_y + bar.bar_h);
+    draw_rounded_rect(cr, ox, oy, bar.bar_w, bar.bar_h, 24.0);
+    cairo_pattern_t *bg = cairo_pattern_create_linear(ox, oy, ox, oy + bar.bar_h);
     cairo_pattern_add_color_stop_rgba(bg, 0.0, theme.panel_top.r, theme.panel_top.g,
                                       theme.panel_top.b, theme.panel_top.a);
     cairo_pattern_add_color_stop_rgba(bg, 1.0, theme.panel_bottom.r, theme.panel_bottom.g,
@@ -1149,60 +1274,49 @@ static void render_spaces_bar_surface(aurade_mission_control_t *mc) {
     cairo_fill(cr);
     cairo_pattern_destroy(bg);
 
-    // 3. Specular rim border
-    draw_rounded_rect(cr, origin_x + 0.5, origin_y + 0.5, bar.bar_w - 1.0, bar.bar_h - 1.0, 23.5);
+    draw_rounded_rect(cr, ox + 0.5, oy + 0.5, bar.bar_w - 1.0, bar.bar_h - 1.0, 23.5);
     cairo_set_source_rgba(cr, theme.border.r, theme.border.g, theme.border.b, theme.border.a);
     cairo_set_line_width(cr, 1.0);
     cairo_stroke(cr);
 
-    // 4. Specular top edge highlight line
     cairo_new_path(cr);
-    cairo_move_to(cr, origin_x + 24.0, origin_y + 1.0);
-    cairo_line_to(cr, origin_x + bar.bar_w - 24.0, origin_y + 1.0);
+    cairo_move_to(cr, ox + 24.0, oy + 1.0);
+    cairo_line_to(cr, ox + bar.bar_w - 24.0, oy + 1.0);
     cairo_set_source_rgba(cr, theme.highlight.r, theme.highlight.g, theme.highlight.b, theme.highlight.a);
     cairo_stroke(cr);
 
     int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
     for (int i = 0; i < num_ws; i++) {
-        double sx = origin_x + bar.pad_x + i * (bar.thumb_w + bar.gap);
-        double sy = origin_y + bar.pad_top;
+        double sx = ox + bar.pad_x + i * (bar.thumb_w + bar.gap);
+        double sy = oy + bar.pad_top;
         bool is_active = (i == mc->server->current_workspace);
         bool is_drag_target = (mc->is_dragging && mc->drag_target_workspace == i);
         bool is_hover = (mc->hovered_workspace == i && !is_active && !is_drag_target);
 
-        // Inset card drop shadow
         draw_rounded_rect(cr, sx, sy + 1.5, bar.thumb_w, bar.thumb_h, 12.0);
         cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.25);
         cairo_fill(cr);
 
-        // Wallpaper thumbnail + opened windows
         cairo_save(cr);
         draw_rounded_rect(cr, sx, sy, bar.thumb_w, bar.thumb_h, 11.0);
         cairo_clip(cr);
 
-        // Paint wallpaper
-        paint_wallpaper_thumb(cr, mc, sx, sy, bar.thumb_w, bar.thumb_h, 0.90);
+        mc_paint_wallpaper_thumb(cr, mc, sx, sy, bar.thumb_w, bar.thumb_h, 0.90);
 
-        // Subtle dimming overlay for inactive workspaces so active workspace pops
         if (!is_active && !is_drag_target) {
-            cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, (is_hover ? 0.12 : 0.25));
+            cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, is_hover ? 0.12 : 0.25);
             cairo_paint(cr);
         }
 
-        // RENDER OPENED WINDOWS ON THIS WORKSPACE
-        draw_workspace_mini_windows(cr, mc, i, sx, sy, bar.thumb_w, bar.thumb_h, theme.dark, 1.0);
-
+        mc_draw_workspace_mini_windows(cr, mc, i, sx, sy, bar.thumb_w, bar.thumb_h, theme.dark, 1.0);
         cairo_restore(cr);
 
-        // Highlight border around thumbnail card
         if (is_drag_target) {
-            // Drag target: bright cyan ring
             cairo_set_source_rgba(cr, 0.18, 0.78, 1.0, 1.0);
             cairo_set_line_width(cr, 3.0);
             draw_rounded_rect(cr, sx - 1.5, sy - 1.5, bar.thumb_w + 3.0, bar.thumb_h + 3.0, 13.0);
             cairo_stroke(cr);
         } else if (is_active) {
-            // Active workspace: Control Center Electric Blue Accent Ring + Outer Soft Glow
             cairo_set_source_rgba(cr, 0.0, 0.48, 1.0, 0.35);
             cairo_set_line_width(cr, 5.0);
             draw_rounded_rect(cr, sx - 1.0, sy - 1.0, bar.thumb_w + 2.0, bar.thumb_h + 2.0, 12.5);
@@ -1213,21 +1327,18 @@ static void render_spaces_bar_surface(aurade_mission_control_t *mc) {
             draw_rounded_rect(cr, sx - 1.0, sy - 1.0, bar.thumb_w + 2.0, bar.thumb_h + 2.0, 12.5);
             cairo_stroke(cr);
         } else if (is_hover) {
-            // Hover highlight
             cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.45);
             cairo_set_line_width(cr, 1.5);
             draw_rounded_rect(cr, sx - 0.5, sy - 0.5, bar.thumb_w + 1.0, bar.thumb_h + 1.0, 11.5);
             cairo_stroke(cr);
         } else {
-            // Inactive subtle border
             cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.16);
             cairo_set_line_width(cr, 1.0);
             draw_rounded_rect(cr, sx + 0.5, sy + 0.5, bar.thumb_w - 1.0, bar.thumb_h - 1.0, 11.0);
             cairo_stroke(cr);
         }
 
-        // Window count badge (top-right of thumbnail)
-        int count = workspace_window_count(mc->server, i);
+        int count = mc_workspace_window_count(mc->server, i);
         if (count > 0) {
             char cbuf[16];
             snprintf(cbuf, sizeof(cbuf), "%d", count);
@@ -1236,7 +1347,6 @@ static void render_spaces_bar_surface(aurade_mission_control_t *mc) {
             double bx = sx + bar.thumb_w - badge_w - 6.0;
             double by = sy + 6.0;
 
-            // Frosted dark glass badge pill
             draw_rounded_rect(cr, bx, by, badge_w, badge_h, 8.0);
             cairo_set_source_rgba(cr, 0.05, 0.06, 0.08, 0.65);
             cairo_fill_preserve(cr);
@@ -1248,7 +1358,6 @@ static void render_spaces_bar_surface(aurade_mission_control_t *mc) {
                       bx + badge_w / 2.0, by + badge_h / 2.0, true, true);
         }
 
-        // Desktop Label Pill (cleanly positioned in dedicated label area below thumbnail)
         char label[32];
         if (is_drag_target) {
             snprintf(label, sizeof(label), "Drop to Move");
@@ -1264,32 +1373,27 @@ static void render_spaces_bar_surface(aurade_mission_control_t *mc) {
         double pill_y = label_cy - pill_h / 2.0;
 
         if (is_drag_target) {
-            // Bright cyan drop pill
             draw_rounded_rect(cr, pill_x, pill_y, pill_w, pill_h, 11.0);
             cairo_set_source_rgba(cr, 0.18, 0.78, 1.0, 0.90);
             cairo_fill(cr);
             draw_text(cr, label, MC_FONT, 10.5, true, 0.05, 0.08, 0.14, 0.98,
                       sx + bar.thumb_w / 2.0, label_cy, true, true);
         } else if (is_active) {
-            // Control Center Electric Blue Accent Pill!
             draw_rounded_rect(cr, pill_x, pill_y, pill_w, pill_h, 11.0);
             cairo_set_source_rgba(cr, 0.0, 0.48, 1.0, 0.88);
             cairo_fill_preserve(cr);
             cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.25);
             cairo_set_line_width(cr, 1.0);
-            draw_rounded_rect(cr, pill_x, pill_y, pill_w, pill_h, 11.0);
             cairo_stroke(cr);
             draw_text(cr, label, MC_FONT, 11.0, true, 1.0, 1.0, 1.0, 0.98,
                       sx + bar.thumb_w / 2.0, label_cy, true, true);
         } else if (is_hover) {
-            // Hover card pill
             draw_rounded_rect(cr, pill_x, pill_y, pill_w, pill_h, 11.0);
             cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12);
             cairo_fill(cr);
             draw_text(cr, label, MC_FONT, 10.5, true, theme.text.r, theme.text.g, theme.text.b, 0.92,
                       sx + bar.thumb_w / 2.0, label_cy, true, true);
         } else {
-            // Subtle calm text
             draw_text(cr, label, MC_FONT, 10.5, false, theme.text_dim.r, theme.text_dim.g, theme.text_dim.b,
                       theme.text_dim.a, sx + bar.thumb_w / 2.0, label_cy, true, true);
         }
@@ -1306,30 +1410,34 @@ void mission_control_render(aurade_mission_control_t *mc) {
     cairo_buffer_clear(mc->buffer);
 
     double p = mc->progress;
-    if (p <= 0.0) return;
+    if (p <= 0.0) {
+        cairo_buffer_apply_to_scene(mc->buffer, mc->scene_buffer);
+        return;
+    }
     if (p > 1.0) p = 1.0;
 
     mc_theme_t theme = mc_get_theme(mc);
 
-    // If blur is disabled, fallback to a dimming scrim
     if (!mc->server->config.blur_workspace_overview) {
         cairo_set_source_rgba(cr, 0.03, 0.04, 0.07, 0.70 * p);
         cairo_paint(cr);
     }
 
-    // If dragging a view, draw sleek dashed drop-slot placeholder in the original slot
+    double ep = mc_ease_out_cubic(p);
+
+    // Drag placeholder slot
     if (mc->is_dragging && mc->dragged_view) {
         for (int i = 0; i < mc->slot_count; i++) {
             if (mc->slots[i].view == mc->dragged_view) {
-                double sx = mc->slots[i].target_x + mc->ws_slide_offset;
-                double sy = mc->slots[i].target_y;
-                double sw = mc->slots[i].target_w;
-                double sh = mc->slots[i].target_h;
+                int rx = 0, ry = 0, rw = 0, rh = 0;
+                double sc = 1.0;
+                mc_slot_current_rect(mc, i, ep, NULL, &rx, &ry, &rw, &rh, &sc);
+                double rad = fmax(4.0, round(8.0 * sc));
                 cairo_save(cr);
-                draw_rounded_rect(cr, sx, sy, sw, sh, MC_RADIUS);
-                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.06 * p);
+                draw_rounded_rect(cr, rx, ry, rw, rh, rad);
+                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.05 * p);
                 cairo_fill_preserve(cr);
-                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.25 * p);
+                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.24 * p);
                 double dashes[] = { 6.0, 4.0 };
                 cairo_set_dash(cr, dashes, 2, 0.0);
                 cairo_set_line_width(cr, 1.5);
@@ -1340,14 +1448,12 @@ void mission_control_render(aurade_mission_control_t *mc) {
         }
     }
 
-    // Spaces bar at top — Control Center glass panel style
-    mc_bar_t bar;
-    mc_bar_layout(mc, &bar, p);
-
+    // Spaces bar at top
+    mc_bar_geom_t bar;
+    mc_compute_bar_geom(mc, &bar, p);
     if (mc->spaces_bar_dirty || !mc->spaces_bar_surf) {
-        render_spaces_bar_surface(mc);
+        mc_render_spaces_bar_surface(mc);
     }
-
     if (mc->spaces_bar_surf) {
         cairo_save(cr);
         cairo_set_source_surface(cr, mc->spaces_bar_surf, bar.bar_x - 24.0, bar.bar_y - 24.0);
@@ -1355,43 +1461,22 @@ void mission_control_render(aurade_mission_control_t *mc) {
         cairo_restore(cr);
     }
 
-
-    double ep = 1.0 - pow(1.0 - p, 3.0);
-
-    // Window frames, hover outlines, app icons, and title badges for current workspace
+    // Window frames, close buttons, app icons, and title pills
     for (int i = 0; i < mc->slot_count; i++) {
         aurade_view_t *view = mc->slots[i].view;
         if (!view) continue;
         if (mc->is_dragging && mc->dragged_view == view) continue;
 
-        double cur_scale = (1.0 - ep) * 1.0 + ep * mc->slots[i].scale;
-        double cx = (1.0 - ep) * mc->slots[i].orig_x + ep * (mc->slots[i].target_x + mc->ws_slide_offset);
-        double cy = (1.0 - ep) * mc->slots[i].orig_y + ep * mc->slots[i].target_y;
-        double cw = mc->slots[i].orig_w * cur_scale;
-        double ch = mc->slots[i].orig_h * cur_scale;
+        int rx = 0, ry = 0, rw = 0, rh = 0;
+        mc_slot_current_rect(mc, i, ep, NULL, &rx, &ry, &rw, &rh, NULL);
+        if (rx + rw < -40 || rx > mc->screen_width + 40) continue;
 
-        bool is_hover = (mc->hovered_view == view);
+        double cx = (double)rx;
+        double cy = (double)ry;
+        double cw = (double)rw;
+        double ch = (double)rh;
 
-        // Frame border
-        if (is_hover) {
-            // Control Center electric blue highlight ring with outer soft glow
-            cairo_set_source_rgba(cr, 0.0, 0.48, 1.0, 0.25 * p);
-            cairo_set_line_width(cr, 6.0);
-            draw_rounded_rect(cr, cx - 1.0, cy - 1.0, cw + 2.0, ch + 2.0, MC_RADIUS + 1.0);
-            cairo_stroke(cr);
-
-            cairo_set_source_rgba(cr, 0.0, 0.48, 1.0, 0.90 * p);
-            cairo_set_line_width(cr, 3.0);
-            draw_rounded_rect(cr, cx, cy, cw, ch, MC_RADIUS);
-            cairo_stroke(cr);
-        } else {
-            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.20 * p);
-            cairo_set_line_width(cr, 1.0);
-            draw_rounded_rect(cr, cx, cy, cw, ch, MC_RADIUS);
-            cairo_stroke(cr);
-        }
-
-        // Top-left close button (macOS-style circular button with 'X')
+        // Top-left circular close button
         double btn_x = cx + 16.0;
         double btn_y = cy + 16.0;
         double btn_r = 12.0;
@@ -1413,7 +1498,6 @@ void mission_control_render(aurade_mission_control_t *mc) {
         cairo_set_line_width(cr, 1.0);
         cairo_stroke(cr);
 
-        // 'X' cross
         double arm = 3.8;
         cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (is_btn_hover ? 1.0 : 0.85) * p);
         cairo_set_line_width(cr, 1.5);
@@ -1426,6 +1510,7 @@ void mission_control_render(aurade_mission_control_t *mc) {
         cairo_stroke(cr);
         cairo_restore(cr);
 
+        // App icon and glass title badge
         const char *display_title = mc->slots[i].display_title;
         desktop_app_t *app = mc->slots[i].app;
         double icon_sz = 34.0;
@@ -1444,11 +1529,10 @@ void mission_control_render(aurade_mission_control_t *mc) {
             icon_cy = badge_y - icon_sz / 2.0 - 2.0;
         }
 
-        draw_mc_app_icon(cr, icon_cx, icon_cy, icon_sz,
+        mc_draw_app_icon(cr, icon_cx, icon_cy, icon_sz,
                          app ? app->name : display_title,
                          app ? app->icon_surface : NULL, p);
 
-        // Control Center style glass card title pill
         draw_drop_shadow(cr, badge_x, badge_y, badge_w, 22.0, 11.0, 8.0, 0.35 * p);
         draw_glass_panel(cr, badge_x, badge_y, badge_w, 22.0, 11.0,
                          theme.panel_top.r, theme.panel_top.g, theme.panel_top.b, 0.88 * p);
@@ -1457,17 +1541,32 @@ void mission_control_render(aurade_mission_control_t *mc) {
                   badge_x + badge_w / 2.0, badge_y + 11.0, true, true);
     }
 
-    if (mc->slot_count == 0) {
+    int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
+    for (int ws = 0; ws < num_ws; ws++) {
+        bool has_slots = false;
+        for (int i = 0; i < mc->slot_count; i++) {
+            if (mc->slots[i].workspace == ws) {
+                has_slots = true;
+                break;
+            }
+        }
+        if (has_slots) continue;
+
+        double ws_cx = mc->screen_width / 2.0 +
+                       (double)(ws - mc->server->current_workspace) * mc->screen_width +
+                       mc->ws_slide_offset;
         double pill_w = 220.0;
         double pill_h = 44.0;
-        double pill_x = (mc->screen_width - pill_w) / 2.0;
+        double pill_x = ws_cx - pill_w / 2.0;
         double pill_y = (mc->screen_height - pill_h) / 2.0;
+        if (pill_x + pill_w < -20.0 || pill_x > mc->screen_width + 20.0) continue;
+
         draw_drop_shadow(cr, pill_x, pill_y, pill_w, pill_h, 22.0, 14.0, 0.35 * p);
         draw_glass_panel(cr, pill_x, pill_y, pill_w, pill_h, 22.0,
                          theme.panel_top.r, theme.panel_top.g, theme.panel_top.b, 0.88 * p);
         draw_text(cr, "No Windows Open", MC_FONT, 14.0, true,
                   theme.text.r, theme.text.g, theme.text.b, 0.85 * p,
-                  mc->screen_width / 2.0, mc->screen_height / 2.0, true, true);
+                  ws_cx, mc->screen_height / 2.0, true, true);
     }
 
     cairo_buffer_apply_to_scene(mc->buffer, mc->scene_buffer);

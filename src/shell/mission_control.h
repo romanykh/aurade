@@ -4,10 +4,15 @@
 #include "../server.h"
 #include "../render/cairo_buffer.h"
 
+#define MC_MAX_SLOTS 128
+
 typedef struct {
     aurade_view_t *view;
-    double orig_x, orig_y, orig_w, orig_h;
-    double target_x, target_y, target_w, target_h;
+    int workspace;
+    double orig_x, orig_y;
+    double orig_w, orig_h;
+    double target_x, target_y;
+    double target_w, target_h;
     double scale;
     char display_title[160];
     double title_width;
@@ -20,31 +25,34 @@ typedef struct aurade_mission_control {
     cairo_buffer_t *buffer;
     struct wlr_scene_buffer *scene_buffer;
 
-    int screen_width, screen_height;
+    int screen_width;
+    int screen_height;
     bool active;
-    double progress; // 0.0 (closed) to 1.0 (fully open)
+    double progress;
     bool needs_render;
+
     cairo_surface_t *wallpaper_thumb;
     cairo_surface_t *spaces_bar_surf;
     bool spaces_bar_dirty;
 
-    mc_window_slot_t slots[32];
+    mc_window_slot_t slots[MC_MAX_SLOTS];
     int slot_count;
+
     aurade_view_t *hovered_view;
     aurade_view_t *hovered_close_view;
-    int hovered_workspace; // -1 if none, 0..NUM_WORKSPACES-1
+    int hovered_workspace;
 
-    // Drag-and-drop to workspace state
+    bool mouse_pressed;
     bool is_dragging;
     int drag_slot;
     aurade_view_t *dragged_view;
     double drag_start_x, drag_start_y;
     double drag_offset_x, drag_offset_y;
-    int drag_target_workspace; // -1 if not hovering workspace thumbnail, 0..NUM_WORKSPACES-1
-    bool mouse_pressed;
+    int drag_target_workspace;
 
-    // Workspace swiping & scrolling
     bool ws_animating;
+    bool ws_gesture_active;
+    double ws_gesture_base_offset;
     spring_simulation_t ws_spring;
     double ws_slide_offset;
     double scroll_accum_x;
@@ -61,6 +69,9 @@ bool mission_control_handle_press(aurade_mission_control_t *mc, double x, double
 bool mission_control_handle_release(aurade_mission_control_t *mc, double x, double y);
 void mission_control_handle_motion(aurade_mission_control_t *mc, double x, double y);
 void mission_control_switch_workspace(aurade_mission_control_t *mc, int new_workspace);
+void mission_control_ws_gesture_begin(aurade_mission_control_t *mc);
+void mission_control_ws_gesture_update(aurade_mission_control_t *mc, double delta_x);
+void mission_control_ws_gesture_end(aurade_mission_control_t *mc, bool cancelled, double velocity_x);
 void mission_control_handle_axis(aurade_mission_control_t *mc, enum wl_pointer_axis orientation,
                                  double delta, int32_t delta_discrete);
 void mission_control_tick(aurade_mission_control_t *mc, double dt);

@@ -80,9 +80,11 @@ void server_update_workspace_positions(aurade_server_t *server) {
         int diff = i - server->current_workspace;
         double pos_x = (diff * screen_w) + server->workspace_offset;
 
-        wlr_scene_node_set_position(&server->workspace_trees[i]->node, (int)pos_x, 0);
-        // Only enable visible workspaces (current and neighbors)
-        bool visible = (fabs(pos_x) < screen_w * 1.5);
+        wlr_scene_node_set_position(&server->workspace_trees[i]->node, (int)round(pos_x), 0);
+        // Only enable neighbor workspaces while actively sliding/animating between workspaces
+        bool visible = (fabs(server->workspace_offset) < 0.5)
+                       ? (i == server->current_workspace)
+                       : (fabs(pos_x) < screen_w * 1.5);
         wlr_scene_node_set_enabled(&server->workspace_trees[i]->node, visible);
     }
 }
