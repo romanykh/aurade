@@ -209,6 +209,9 @@ typedef struct aurade_server {
     struct wl_listener request_cursor;
     struct wl_listener request_set_selection;
     struct wl_listener request_set_primary_selection;
+    struct wl_listener request_start_drag;
+    struct wl_listener start_drag;
+    struct wl_listener drag_destroy;
     struct wlr_cursor_shape_manager_v1 *cursor_shape_mgr;
     struct wl_listener request_set_shape;
 
@@ -258,6 +261,7 @@ typedef struct aurade_server {
     struct wlr_scene_tree *overlay_tree;
     struct wlr_scene_tree *dock_tree;
     struct wlr_scene_tree *popup_tree;
+    struct wlr_scene_tree *drag_tree;
 
     // Shell components
     struct aurade_wallpaper *wallpaper;

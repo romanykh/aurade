@@ -619,6 +619,14 @@ static void update_snap_preview(aurade_server_t *server, snap_action_t action) {
     }
 }
 
+static void drag_icons_update_position(aurade_server_t *server) {
+    if (!server || !server->drag_tree) return;
+    struct wlr_scene_node *node;
+    wl_list_for_each(node, &server->drag_tree->children, link) {
+        wlr_scene_node_set_position(node, (int)server->cursor->x, (int)server->cursor->y);
+    }
+}
+
 static void cursor_motion(struct wl_listener *listener, void *data) {
     aurade_server_t *server = wl_container_of(listener, server, cursor_motion);
     struct wlr_pointer_motion_event *event = data;
@@ -851,6 +859,22 @@ static void cursor_motion(struct wl_listener *listener, void *data) {
     double sx, sy;
     aurade_view_t *view = server_view_at(server, lx, ly, &surface, &sx, &sy);
 
+    // If a Wayland Drag-and-Drop session is active, route motion and enter/leave
+    // across whichever surface is under the cursor, and update drag icon position.
+    if (server->seat->drag) {
+        if (!surface) {
+            wlr_seat_pointer_clear_focus(server->seat);
+            server_set_pointer_constraint(server, NULL);
+        } else {
+            if (server->seat->pointer_state.focused_surface != surface) {
+                wlr_seat_pointer_notify_enter(server->seat, surface, sx, sy);
+            }
+            wlr_seat_pointer_notify_motion(server->seat, event->time_msec, sx, sy);
+        }
+        drag_icons_update_position(server);
+        return;
+    }
+
     // If mouse buttons are held down on a client surface (e.g. text selection or client drag),
     // maintain implicit pointer grab on that surface so dragging past window edges doesn't
     // lose focus or abort selection.
@@ -865,6 +889,7 @@ static void cursor_motion(struct wl_listener *listener, void *data) {
             }
             wlr_seat_pointer_notify_motion(server->seat, event->time_msec, sx, sy);
         }
+        drag_icons_update_position(server);
         return;
     }
 
@@ -881,6 +906,7 @@ static void cursor_motion(struct wl_listener *listener, void *data) {
                                    resize_cursor_name(resize_edges));
             wlr_seat_pointer_clear_focus(server->seat);
             server_set_pointer_constraint(server, NULL);
+            drag_icons_update_position(server);
             return;
         }
     }
@@ -899,10 +925,12 @@ static void cursor_motion(struct wl_listener *listener, void *data) {
         server_set_pointer_constraint(server, constraint);
         if (server->active_constraint &&
             server->active_constraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED) {
+            drag_icons_update_position(server);
             return;
         }
         wlr_seat_pointer_notify_motion(server->seat, event->time_msec, sx, sy);
     }
+    drag_icons_update_position(server);
 }
 
 static void cursor_motion_absolute(struct wl_listener *listener, void *data) {
@@ -922,6 +950,7 @@ static void cursor_motion_absolute(struct wl_listener *listener, void *data) {
         .unaccel_dy = 0,
     };
     cursor_motion(&server->cursor_motion, &fake_event);
+    drag_icons_update_position(server);
 }
 
 // Animate the current overlay back to closed. Used by Escape, outside clicks,
@@ -1081,7 +1110,7 @@ static void cursor_button(struct wl_listener *listener, void *data) {
             }
         }
 
-        if (forwarded) {
+        if (forwarded || server->seat->drag) {
             wlr_seat_pointer_notify_button(server->seat, event->time_msec,
                                            event->button, event->state);
             wlr_seat_pointer_notify_frame(server->seat);
@@ -1418,13 +1447,12 @@ static void seat_request_cursor(struct wl_listener *listener, void *data) {
     aurade_server_t *server = wl_container_of(listener, server, request_cursor);
     struct wlr_seat_pointer_request_set_cursor_event *event = data;
     struct wlr_seat_client *focused = server->seat->pointer_state.focused_client;
-    if (focused && focused == event->seat_client) {
+    if ((focused && focused == event->seat_client) ||
+        (server->seat->drag && server->seat->drag->seat_client == event->seat_client)) {
         if (!event->surface) {
             wlr_cursor_set_surface(server->cursor, NULL, 0, 0);
         } else {
-            // Force server's cursor theme (Aura-Circle circular dot) so client-side
-            // fallback cursors can never override the system cursor theme.
-            wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "default");
+            wlr_cursor_set_surface(server->cursor, event->surface, event->hotspot_x, event->hotspot_y);
         }
     }
 }
@@ -1433,7 +1461,8 @@ static void seat_request_set_shape(struct wl_listener *listener, void *data) {
     aurade_server_t *server = wl_container_of(listener, server, request_set_shape);
     struct wlr_cursor_shape_manager_v1_request_set_shape_event *event = data;
     struct wlr_seat_client *focused = server->seat->pointer_state.focused_client;
-    if (focused && focused == event->seat_client) {
+    if ((focused && focused == event->seat_client) ||
+        (server->seat->drag && server->seat->drag->seat_client == event->seat_client)) {
         const char *name = wlr_cursor_shape_v1_name(event->shape);
         wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, name ? name : "default");
     }
@@ -1449,6 +1478,66 @@ static void seat_request_set_primary_selection(struct wl_listener *listener, voi
     aurade_server_t *server = wl_container_of(listener, server, request_set_primary_selection);
     struct wlr_seat_request_set_primary_selection_event *event = data;
     wlr_seat_set_primary_selection(server->seat, event->source, event->serial);
+}
+
+static void seat_request_start_drag(struct wl_listener *listener, void *data) {
+    aurade_server_t *server = wl_container_of(listener, server, request_start_drag);
+    struct wlr_seat_request_start_drag_event *event = data;
+
+    if (wlr_seat_validate_pointer_grab_serial(server->seat, event->origin, event->serial)) {
+        wlr_seat_start_pointer_drag(server->seat, event->drag, event->serial);
+        return;
+    }
+
+    struct wlr_touch_point *point = NULL;
+    if (wlr_seat_validate_touch_grab_serial(server->seat, event->origin, event->serial, &point)) {
+        wlr_seat_start_touch_drag(server->seat, event->drag, event->serial, point);
+        return;
+    }
+
+    // Fallback: if a mouse button is currently forwarded/held, permit the drag
+    if (server->pointer_buttons_forwarded != 0) {
+        wlr_seat_start_pointer_drag(server->seat, event->drag, event->serial);
+        return;
+    }
+
+    if (event->drag && event->drag->source) {
+        wlr_data_source_destroy(event->drag->source);
+    }
+}
+
+static void handle_drag_destroy(struct wl_listener *listener, void *data) {
+    aurade_server_t *server = wl_container_of(listener, server, drag_destroy);
+    (void)data;
+    wl_list_remove(&server->drag_destroy.link);
+
+    // Recheck surface under cursor so normal pointer focus is restored immediately
+    struct wlr_surface *surface = NULL;
+    double sx, sy;
+    aurade_view_t *view = server_view_at(server, server->cursor->x, server->cursor->y, &surface, &sx, &sy);
+    (void)view;
+    if (surface) {
+        wlr_seat_pointer_notify_enter(server->seat, surface, sx, sy);
+    } else {
+        wlr_seat_pointer_clear_focus(server->seat);
+        wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "default");
+    }
+}
+
+static void seat_handle_start_drag(struct wl_listener *listener, void *data) {
+    aurade_server_t *server = wl_container_of(listener, server, start_drag);
+    struct wlr_drag *drag = data;
+    if (!drag) return;
+
+    server->drag_destroy.notify = handle_drag_destroy;
+    wl_signal_add(&drag->events.destroy, &server->drag_destroy);
+
+    if (drag->icon && server->drag_tree) {
+        struct wlr_scene_tree *tree = wlr_scene_drag_icon_create(server->drag_tree, drag->icon);
+        if (tree) {
+            wlr_scene_node_set_position(&tree->node, (int)server->cursor->x, (int)server->cursor->y);
+        }
+    }
 }
 
 static void handle_request_activate(struct wl_listener *listener, void *data) {
@@ -3019,6 +3108,8 @@ int main(int argc, char *argv[]) {
     server.dock_tree = wlr_scene_tree_create(&server.scene->tree);
     // Client popups (context menus, dropdowns) sit above all desktop chrome.
     server.popup_tree = wlr_scene_tree_create(&server.scene->tree);
+    // Drag-and-drop icons render on top of popups and chrome.
+    server.drag_tree = wlr_scene_tree_create(&server.scene->tree);
 
     server_init_xdg_shell(&server);
 
@@ -3076,6 +3167,12 @@ int main(int argc, char *argv[]) {
 
     server.request_set_primary_selection.notify = seat_request_set_primary_selection;
     wl_signal_add(&server.seat->events.request_set_primary_selection, &server.request_set_primary_selection);
+
+    server.request_start_drag.notify = seat_request_start_drag;
+    wl_signal_add(&server.seat->events.request_start_drag, &server.request_start_drag);
+
+    server.start_drag.notify = seat_handle_start_drag;
+    wl_signal_add(&server.seat->events.start_drag, &server.start_drag);
 
     // Initialize Xwayland
     server_init_xwayland(&server);
