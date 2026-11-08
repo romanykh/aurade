@@ -14,6 +14,7 @@
 #include "shell/music_pill.h"
 #include "gestures/gesture_engine.h"
 #include <scenefx/render/fx_renderer/fx_renderer.h>
+#include <json-c/json.h>
 
 #include <xkbcommon/xkbcommon.h>
 #include <wlr/backend/libinput.h>
@@ -84,6 +85,50 @@ void server_update_blur_config(aurade_server_t *server) {
     if (server->topbar && server->topbar->blur_node) {
         wlr_scene_node_set_enabled(&server->topbar->blur_node->node, server->config.blur_topbar);
     }
+    if (server->views.next && server->views.prev) {
+        aurade_view_t *view_it;
+        wl_list_for_each(view_it, &server->views, link) {
+            view_update_blur(view_it);
+        }
+    }
+}
+
+void server_export_running_windows(aurade_server_t *server) {
+    if (!server) return;
+    const char *tmp_path = "/tmp/aurade-windows.json";
+    const char *tmp_new = "/tmp/aurade-windows.json.tmp";
+
+    struct json_object *arr = json_object_new_array();
+    aurade_view_t *view;
+    wl_list_for_each(view, &server->views, link) {
+        bool mapped = false;
+        if (view->xdg_toplevel && view->xdg_toplevel->base && view->xdg_toplevel->base->surface) {
+            mapped = view->xdg_toplevel->base->surface->mapped;
+        } else if (view->xwayland_surface && view->xwayland_surface->surface) {
+            mapped = view->xwayland_surface->surface->mapped;
+        }
+        if (!mapped) continue;
+
+        const char *app_id = view_get_app_id(view);
+        const char *title = view_get_title(view);
+        if (!app_id && !title) continue;
+
+        struct json_object *obj = json_object_new_object();
+        json_object_object_add(obj, "app_id", json_object_new_string(app_id ? app_id : ""));
+        json_object_object_add(obj, "title", json_object_new_string(title ? title : ""));
+        json_object_object_add(obj, "workspace", json_object_new_int(view->workspace));
+        json_object_object_add(obj, "minimized", json_object_new_boolean(view->minimized));
+
+        float alpha = view_get_target_opacity(view);
+        json_object_object_add(obj, "opacity", json_object_new_double(alpha));
+
+        json_object_array_add(arr, obj);
+    }
+
+    if (json_object_to_file_ext(tmp_new, arr, JSON_C_TO_STRING_PRETTY) == 0) {
+        rename(tmp_new, tmp_path);
+    }
+    json_object_put(arr);
 }
 
 static int config_inotify_handler(int fd, uint32_t mask, void *data) {
@@ -141,7 +186,13 @@ static int config_inotify_handler(int fd, uint32_t mask, void *data) {
     if (server->mission_control) mission_control_render(server->mission_control);
     if (server->control_center) control_center_render(server->control_center);
     if (server->music_pill) music_pill_update(server->music_pill);
+    aurade_view_t *view_it;
+    wl_list_for_each(view_it, &server->views, link) {
+        view_update_workspace_clip(view_it);
+    }
+    server_export_running_windows(server);
     server_update_touchpad_settings(server);
+    schedule_all_outputs(server);
     return 0;
 }
 
@@ -657,6 +708,7 @@ static void cursor_motion(struct wl_listener *listener, void *data) {
         server->grabbed_view->y = target_y;
         wlr_scene_node_set_position(&server->grabbed_view->scene_tree->node,
                                     server->grabbed_view->x, server->grabbed_view->y);
+        view_update_workspace_clip(server->grabbed_view);
         if (server->dock) {
             dock_update_visibility(server->dock);
         }
@@ -721,6 +773,7 @@ static void cursor_motion(struct wl_listener *listener, void *data) {
         view->height = new_h;
         view->maximized = false;
         wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
+        view_update_workspace_clip(view);
         schedule_all_outputs(server);
         if (view->xdg_toplevel && view->xdg_toplevel->base->initialized) {
             view->last_configure_ms = now_ms();
@@ -1240,6 +1293,7 @@ static void cursor_button(struct wl_listener *listener, void *data) {
                     wlr_xwayland_surface_configure(view->xwayland_surface, new_x, new_y, restored_w, restored_h);
                 }
                 wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
+                view_update_workspace_clip(view);
             }
             server->grabbed_view = view;
             server->cursor_mode = CURSOR_MOVE;
@@ -2223,6 +2277,7 @@ void server_handle_gesture_update(aurade_server_t *server, double delta_x, doubl
                     double offset_x = dir_x * server->screen_width * 0.7 * p;
                     double offset_y = dir_y * server->screen_height * 0.7 * p;
                     wlr_scene_node_set_position(&view->scene_tree->node, view->x + offset_x, view->y + offset_y);
+                    view_update_workspace_clip(view);
                 }
             }
             break;
@@ -2320,7 +2375,10 @@ void server_handle_gesture_end(aurade_server_t *server, bool cancelled, double v
         // Hand the spring the velocity the carousel actually had on screen.
         double offset_velocity = velocity_x * eff_sens * WORKSPACE_GESTURE_GAIN * ref_to_screen;
 
-        spring_simulation_start(&server->workspace_spring, &server->config.spring,
+        spring_config_t ws_cfg = server->config.spring;
+        ws_cfg.position_threshold = 0.5;
+        ws_cfg.velocity_threshold = 1.0;
+        spring_simulation_start(&server->workspace_spring, &ws_cfg,
                                 new_offset, 0.0, offset_velocity);
         server->workspace_animating = true;
         server->gesture_base_offset = 0.0;
@@ -2885,6 +2943,9 @@ int main(int argc, char *argv[]) {
     }
 
     aurade_server_t server = {0};
+    wl_list_init(&server.views);
+    wl_list_init(&server.outputs);
+    wl_list_init(&server.input_devices);
     config_load(&server.config, NULL);
 
     // Build + effective tuning in the session log. This is the quickest way to
@@ -2958,10 +3019,6 @@ int main(int argc, char *argv[]) {
     server.dock_tree = wlr_scene_tree_create(&server.scene->tree);
     // Client popups (context menus, dropdowns) sit above all desktop chrome.
     server.popup_tree = wlr_scene_tree_create(&server.scene->tree);
-
-    wl_list_init(&server.views);
-    wl_list_init(&server.outputs);
-    wl_list_init(&server.input_devices);
 
     server_init_xdg_shell(&server);
 
@@ -3101,6 +3158,9 @@ if (server.config_inotify_fd >= 0) {
     system("systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP 2>/dev/null &");
     printf("[AuraDE] Running on WAYLAND_DISPLAY=%s\n", socket_name);
     printf("[AuraDE] macOS Gestures Active: Swipe Up (Mission Control), Down (Exposé), Horizontal (Spaces), Pinch In (Launchpad), Spread (Show Desktop)\n");
+    fflush(stdout);
+
+    server_export_running_windows(&server);
 
     wl_display_run(server.wl_display);
 

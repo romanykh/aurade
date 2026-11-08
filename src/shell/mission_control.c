@@ -425,8 +425,8 @@ static void mc_restore_slots_to_desktop(aurade_mission_control_t *mc) {
         view->y = (int)round(mc->slots[i].orig_y);
         view->width = (int)round(mc->slots[i].orig_w);
         view->height = (int)round(mc->slots[i].orig_h);
-        view_set_scale(view, 1.0, 1.0);
         wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
+        view_set_scale(view, 1.0, 1.0);
     }
     if (mc->server) {
         mc->server->workspace_offset = 0.0;
@@ -526,9 +526,9 @@ void mission_control_begin(aurade_mission_control_t *mc) {
     wl_list_for_each(v, &mc->server->views, link) {
         if (!v->minimized && v->anim_type != VIEW_ANIM_NONE) {
             v->anim_type = VIEW_ANIM_NONE;
+            wlr_scene_node_set_position(&v->scene_tree->node, v->x, v->y);
             view_set_scale(v, 1.0, 1.0);
             view_set_opacity(v, 1.0f);
-            wlr_scene_node_set_position(&v->scene_tree->node, v->x, v->y);
         }
     }
 

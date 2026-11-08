@@ -80,6 +80,7 @@ typedef struct aurade_view {
     struct wlr_xwayland_surface *xwayland_surface;
     struct wlr_scene_tree *scene_tree;
     struct wlr_scene_tree *content_tree; // xdg surface, aligned to the window rect
+    struct wlr_scene_blur *blur_node;
     struct wlr_xdg_toplevel_decoration_v1 *decoration;
     int workspace;
 
@@ -318,8 +319,14 @@ void view_restore(aurade_view_t *view);
 void view_close(aurade_view_t *view);
 void view_set_scale(aurade_view_t *view, double scale_x, double scale_y);
 void view_set_opacity(aurade_view_t *view, float opacity);
+void view_update_workspace_clip(aurade_view_t *view);
+void view_update_blur(aurade_view_t *view);
 void view_anim_settle(aurade_view_t *view);
 const char *view_get_app_id(aurade_view_t *view);
+const char *view_get_title(aurade_view_t *view);
+float view_get_target_opacity(aurade_view_t *view);
+float view_effective_alpha(aurade_view_t *view);
+void server_export_running_windows(aurade_server_t *server);
 void server_tick_view_animations(aurade_server_t *server, double dt);
 aurade_view_t *server_view_at(aurade_server_t *server, double lx, double ly,
                               struct wlr_surface **surface, double *sx, double *sy);

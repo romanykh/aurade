@@ -62,6 +62,7 @@ typedef struct {
 
 #define DOCK_THEME_MODERN "modern"
 #define DOCK_THEME_TABLE_3D "table_3d"
+#define DOCK_THEME_PLANK "plank"
 
     // Dock
     bool dock_enabled;
@@ -71,7 +72,8 @@ typedef struct {
     bool dock_magnification;
     double dock_max_scale;
     double dock_mag_radius;
-    char dock_theme[32];            // "modern" or "table_3d" (classic OS X 3D glass shelf)
+    char dock_theme[32];            // "modern", "table_3d", "plank"
+    double dock_opacity;            // 0.0 (transparent) to 1.0 (solid)
     int dock_pinned_count;
     struct {
         char name[64];
@@ -82,6 +84,13 @@ typedef struct {
     bool dark_mode;
     char wallpaper_path[512];
     char accent_color[32];
+    double window_opacity;          // 0.1 to 1.0 (default 1.0)
+    int window_rules_count;
+    struct {
+        char app_id[128];
+        char title[256];
+        double opacity;
+    } window_rules[64];
 
     // Music Pill / Dynamic Island
     bool music_pill_enabled;
@@ -96,6 +105,7 @@ typedef struct {
     bool blur_topbar;
     bool blur_launchpad;
     bool blur_workspace_overview;
+    bool blur_windows;
     double blur_strength;
 
     // Topbar Widgets

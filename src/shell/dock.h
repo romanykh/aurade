@@ -31,6 +31,7 @@ typedef enum {
     DOCK_MENU_ACT_KEEP_IN_DOCK,
     DOCK_MENU_ACT_QUIT,
     DOCK_MENU_ACT_LAUNCHPAD,
+    DOCK_MENU_ACT_CYCLE_THEME,
 } dock_menu_action_t;
 
 typedef struct {

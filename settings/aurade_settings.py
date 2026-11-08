@@ -29,7 +29,7 @@ import time
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk, GLib, Pango
 
 CONFIG_PATH = os.path.expanduser("~/.config/aurade/config.json")
 SOCKET_PATH = "/tmp/aurade-gesture.sock"
@@ -73,6 +73,7 @@ DEFAULTS = {
         "max_scale": 1.5,
         "mag_radius": 130.0,
         "theme": "modern",
+        "opacity": 0.85,
         "pinned": [
             {"name": "Launchpad", "exec": ""},
         ],
@@ -81,6 +82,7 @@ DEFAULTS = {
         "dark_mode": True,
         "wallpaper_path": "",
         "accent_color": "#007AFF",
+        "window_opacity": 1.0,
     },
     "workspaces": {
         "count": 4,
@@ -91,6 +93,7 @@ DEFAULTS = {
         "topbar": True,
         "launchpad": True,
         "workspace_overview": True,
+        "windows": True,
         "strength": 1.0,
     },
     "music_pill": {
@@ -2347,12 +2350,265 @@ class AuraSettings(Gtk.Application):
         # Frosted Glass & Blur Effects
         card_blur = self.card(box, "Frosted Glass & Blur Effects")
         self.add_row(card_blur, "Blur Strength", "Adjust the intensity and diffusion radius of the frosted glass blur.", self.scale("blur", "strength", 0.2, 2.5, 0.1, 1), icon_name="preferences-desktop-theme-symbolic", badge_class="badge-appearance")
+        self.add_row(card_blur, "Window Blur", "Frosted glass background blur under translucent application windows.", self.switch("blur", "windows"), icon_name="preferences-system-windows-symbolic", badge_class="badge-workspaces")
         self.add_row(card_blur, "Dock Blur", "Frosted glass background blur under the application dock.", self.switch("blur", "dock"), icon_name="view-paged-symbolic", badge_class="badge-dock")
         self.add_row(card_blur, "Top Bar Blur", "Frosted glass background blur under the top menu bar.", self.switch("blur", "topbar"), icon_name="preferences-desktop-display-symbolic", badge_class="badge-appearance")
         self.add_row(card_blur, "Launchpad Blur", "Frosted glass wallpaper blur when Launchpad is open.", self.switch("blur", "launchpad"), icon_name="view-grid-symbolic", badge_class="badge-workspaces")
         self.add_row(card_blur, "Workspace Overview Blur", "Frosted glass wallpaper blur in Mission Control.", self.switch("blur", "workspace_overview"), icon_name="preferences-system-windows-symbolic", badge_class="badge-gestures")
 
+        # Transparency & Opacity
+        card_opacity = self.card(box, "Transparency & Opacity")
+        self.add_row(card_opacity, "Dock Opacity", "Adjust background transparency of the dock (0.0 = clear glass, 1.0 = solid).", self.scale("dock", "opacity", 0.0, 1.0, 0.05, 2), icon_name="view-paged-symbolic", badge_class="badge-dock")
+        self.add_row(card_opacity, "Global Window Opacity", "Base opacity applied to all windows unless customized below.", self.scale("appearance", "window_opacity", 0.2, 1.0, 0.05, 2), icon_name="preferences-system-windows-symbolic", badge_class="badge-workspaces")
+
+        self.build_window_opacity_section(box)
+
         return box
+
+    def build_window_opacity_section(self, box):
+        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        header_box.set_hexpand(True)
+        lbl = Gtk.Label(label="RUNNING WINDOWS OPACITY", xalign=0)
+        lbl.add_css_class("section")
+        lbl.set_hexpand(True)
+        header_box.append(lbl)
+
+        btn_refresh = Gtk.Button(label="Refresh")
+        btn_refresh.set_icon_name("view-refresh-symbolic")
+        btn_refresh.add_css_class("btn-secondary")
+        btn_refresh.connect("clicked", lambda _: self.populate_running_windows())
+        header_box.append(btn_refresh)
+        box.append(header_box)
+
+        self.win_opacity_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.win_opacity_card.add_css_class("card")
+        box.append(self.win_opacity_card)
+
+        self.populate_running_windows()
+
+    def populate_running_windows(self):
+        while child := self.win_opacity_card.get_first_child():
+            self.win_opacity_card.remove(child)
+
+        appr = self.cfg.setdefault("appearance", {})
+        win_opacities = appr.setdefault("window_opacities", {})
+        default_opacity = float(appr.get("window_opacity", 1.0))
+
+        windows = []
+        if os.path.exists("/tmp/aurade-windows.json"):
+            try:
+                with open("/tmp/aurade-windows.json", "r") as f:
+                    windows = json.load(f)
+            except Exception:
+                windows = []
+
+        seen_apps = set()
+
+        if not windows and not win_opacities:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            row.add_css_class("row")
+            badge = make_badge("preferences-system-windows-symbolic", "badge-workspaces", "row-badge")
+            row.append(badge)
+
+            lbl_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            lbl_box.set_valign(Gtk.Align.CENTER)
+            lbl_box.set_hexpand(True)
+            t = Gtk.Label(label="No Open Windows Detected", xalign=0)
+            t.add_css_class("title")
+            lbl_box.append(t)
+            s = Gtk.Label(label="Open applications will appear here to adjust individual opacity.", xalign=0)
+            s.add_css_class("subtitle")
+            lbl_box.append(s)
+            row.append(lbl_box)
+            self.win_opacity_card.append(row)
+            return
+
+        display = Gdk.Display.get_default()
+        theme = Gtk.IconTheme.get_for_display(display) if display else None
+
+        for w in windows:
+            app_id = w.get("app_id", "") or "unknown"
+            title = w.get("title", "")
+            workspace = w.get("workspace", 0)
+            minimized = w.get("minimized", False)
+            seen_apps.add(app_id)
+
+            icon_name = "preferences-system-windows-symbolic"
+            if theme and app_id:
+                for candidate in [app_id, app_id.lower(), app_id.split(".")[-1].lower()]:
+                    if theme.has_icon(candidate):
+                        icon_name = candidate
+                        break
+
+            cur_op = win_opacities.get(app_id, default_opacity)
+
+            if self.win_opacity_card.get_first_child() is not None:
+                sep = Gtk.Box()
+                sep.add_css_class("mac-sep")
+                self.win_opacity_card.append(sep)
+
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            row.add_css_class("row")
+
+            badge = make_badge(icon_name, "badge-workspaces", "row-badge")
+            row.append(badge)
+
+            label_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            label_box.set_valign(Gtk.Align.CENTER)
+            label_box.set_hexpand(True)
+
+            display_title = title if title else app_id.capitalize()
+            t = Gtk.Label(label=display_title, xalign=0)
+            t.add_css_class("title")
+            t.set_ellipsize(Pango.EllipsizeMode.END)
+            t.set_max_width_chars(32)
+            label_box.append(t)
+
+            status_str = f"Space {workspace + 1}"
+            if minimized:
+                status_str += " • Minimized"
+            if app_id and app_id != display_title:
+                status_str = f"{app_id} • {status_str}"
+            s = Gtk.Label(label=status_str, xalign=0)
+            s.add_css_class("subtitle")
+            label_box.append(s)
+            row.append(label_box)
+
+            ctrl_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            ctrl_box.set_valign(Gtk.Align.CENTER)
+
+            sc = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.20, 1.0, 0.05)
+            sc.set_digits(2)
+            sc.set_draw_value(False)
+            sc.set_size_request(160, -1)
+            sc.set_value(float(cur_op))
+
+            pct_lbl = Gtk.Label(label=f"{int(round(float(cur_op) * 100))}%")
+            pct_lbl.add_css_class("mono")
+            pct_lbl.set_size_request(45, -1)
+            pct_lbl.set_xalign(1.0)
+
+            btn_reset = Gtk.Button(label="Default")
+            btn_reset.set_tooltip_text("Reset to global window opacity")
+            btn_reset.add_css_class("btn-secondary")
+
+            def on_slider_change(scale, aid=app_id, pl=pct_lbl):
+                val = round(scale.get_value(), 2)
+                pl.set_text(f"{int(round(val * 100))}%")
+                self.cfg["appearance"].setdefault("window_opacities", {})[aid] = val
+                rules = self.cfg["appearance"].setdefault("window_rules", [])
+                found = False
+                for r in rules:
+                    if r.get("app_id") == aid and not r.get("title"):
+                        r["opacity"] = val
+                        found = True
+                        break
+                if not found:
+                    rules.append({"app_id": aid, "title": "", "opacity": val})
+                self.changed()
+
+            def on_reset_clicked(_btn, aid=app_id, scale=sc, pl=pct_lbl):
+                def_op = float(self.cfg["appearance"].get("window_opacity", 1.0))
+                scale.set_value(def_op)
+                pl.set_text(f"{int(round(def_op * 100))}%")
+                if aid in self.cfg["appearance"].get("window_opacities", {}):
+                    del self.cfg["appearance"]["window_opacities"][aid]
+                rules = self.cfg["appearance"].get("window_rules", [])
+                self.cfg["appearance"]["window_rules"] = [
+                    r for r in rules if r.get("app_id") != aid or r.get("title")
+                ]
+                self.changed()
+
+            sc.connect("value-changed", on_slider_change)
+            btn_reset.connect("clicked", on_reset_clicked)
+
+            ctrl_box.append(sc)
+            ctrl_box.append(pct_lbl)
+            ctrl_box.append(btn_reset)
+            row.append(ctrl_box)
+
+            self.win_opacity_card.append(row)
+
+        for saved_app, saved_op in list(win_opacities.items()):
+            if saved_app in seen_apps:
+                continue
+
+            if self.win_opacity_card.get_first_child() is not None:
+                sep = Gtk.Box()
+                sep.add_css_class("mac-sep")
+                self.win_opacity_card.append(sep)
+
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            row.add_css_class("row")
+
+            badge = make_badge("preferences-system-windows-symbolic", "badge-dock", "row-badge")
+            row.append(badge)
+
+            label_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            label_box.set_valign(Gtk.Align.CENTER)
+            label_box.set_hexpand(True)
+
+            t = Gtk.Label(label=saved_app.capitalize(), xalign=0)
+            t.add_css_class("title")
+            label_box.append(t)
+
+            s = Gtk.Label(label=f"{saved_app} • (Not currently running)", xalign=0)
+            s.add_css_class("subtitle")
+            label_box.append(s)
+            row.append(label_box)
+
+            ctrl_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            ctrl_box.set_valign(Gtk.Align.CENTER)
+
+            sc = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.20, 1.0, 0.05)
+            sc.set_digits(2)
+            sc.set_draw_value(False)
+            sc.set_size_request(160, -1)
+            sc.set_value(float(saved_op))
+
+            pct_lbl = Gtk.Label(label=f"{int(round(float(saved_op) * 100))}%")
+            pct_lbl.add_css_class("mono")
+            pct_lbl.set_size_request(45, -1)
+            pct_lbl.set_xalign(1.0)
+
+            btn_reset = Gtk.Button(label="Remove")
+            btn_reset.set_tooltip_text("Remove custom opacity override")
+            btn_reset.add_css_class("btn-secondary")
+
+            def on_saved_slider_change(scale, aid=saved_app, pl=pct_lbl):
+                val = round(scale.get_value(), 2)
+                pl.set_text(f"{int(round(val * 100))}%")
+                self.cfg["appearance"].setdefault("window_opacities", {})[aid] = val
+                rules = self.cfg["appearance"].setdefault("window_rules", [])
+                found = False
+                for r in rules:
+                    if r.get("app_id") == aid and not r.get("title"):
+                        r["opacity"] = val
+                        found = True
+                        break
+                if not found:
+                    rules.append({"app_id": aid, "title": "", "opacity": val})
+                self.changed()
+
+            def on_saved_remove_clicked(_btn, aid=saved_app):
+                if aid in self.cfg["appearance"].get("window_opacities", {}):
+                    del self.cfg["appearance"]["window_opacities"][aid]
+                rules = self.cfg["appearance"].get("window_rules", [])
+                self.cfg["appearance"]["window_rules"] = [
+                    r for r in rules if r.get("app_id") != aid or r.get("title")
+                ]
+                self.changed()
+                self.populate_running_windows()
+
+            sc.connect("value-changed", on_saved_slider_change)
+            btn_reset.connect("clicked", on_saved_remove_clicked)
+
+            ctrl_box.append(sc)
+            ctrl_box.append(pct_lbl)
+            ctrl_box.append(btn_reset)
+            row.append(ctrl_box)
+
+            self.win_opacity_card.append(row)
 
     def on_dark_mode_switch(self, sw, _param):
         active = sw.get_active()
@@ -2408,14 +2664,15 @@ class AuraSettings(Gtk.Application):
         box = self.page("Dock", "Autohide, intellihide, icon sizing, and magnification.")
 
         card_theme = self.card(box, "Theme & Style")
-        dock_theme_labels = ["Modern Floating Glass Pill", "Classic 3D Glass Shelf (OS X Table)"]
-        dock_theme_values = ["modern", "table_3d"]
+        dock_theme_labels = ["Modern Floating Glass Pill", "Classic 3D Glass Shelf (OS X Table)", "Plank Base Shelf"]
+        dock_theme_values = ["modern", "table_3d", "plank"]
         cur_dock_theme = self.cfg.get("dock", {}).get("theme", "modern")
         dock_theme_idx = dock_theme_values.index(cur_dock_theme) if cur_dock_theme in dock_theme_values else 0
         dock_theme_dd = Gtk.DropDown.new_from_strings(dock_theme_labels)
         dock_theme_dd.set_selected(dock_theme_idx)
         dock_theme_dd.connect("notify::selected", lambda dd, _: self.on_dock_theme(dock_theme_values[dd.get_selected()]))
-        self.add_row(card_theme, "Dock Theme", "Choose between modern floating pill or classic OS X 3D glass table shelf.", dock_theme_dd, icon_name="preferences-desktop-theme-symbolic", badge_class="badge-appearance")
+        self.add_row(card_theme, "Dock Theme", "Choose between modern floating pill, classic OS X 3D glass table shelf, or Plank shelf.", dock_theme_dd, icon_name="preferences-desktop-theme-symbolic", badge_class="badge-appearance")
+        self.add_row(card_theme, "Dock Opacity", "Adjust background transparency of the dock (0.0 = clear glass, 1.0 = solid).", self.scale("dock", "opacity", 0.0, 1.0, 0.05, 2), icon_name="preferences-color-symbolic", badge_class="badge-appearance")
 
         card = self.card(box, "Behaviour")
         self.add_row(card, "Show the Dock", "Display the application dock along the bottom edge.", self.switch("dock", "enabled"), icon_name="view-paged-symbolic", badge_class="badge-dock")

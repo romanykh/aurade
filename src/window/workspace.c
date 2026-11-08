@@ -79,13 +79,23 @@ void server_update_workspace_positions(aurade_server_t *server) {
         }
         int diff = i - server->current_workspace;
         double pos_x = (diff * screen_w) + server->workspace_offset;
+        int ipx = (int)round(pos_x);
 
-        wlr_scene_node_set_position(&server->workspace_trees[i]->node, (int)round(pos_x), 0);
-        // Only enable neighbor workspaces while actively sliding/animating between workspaces
+        wlr_scene_node_set_position(&server->workspace_trees[i]->node, ipx, 0);
+        // Only enable a workspace tree if its [0, screen_w] zone actually overlaps [0, screen_w] on screen
         bool visible = (fabs(server->workspace_offset) < 0.5)
                        ? (i == server->current_workspace)
-                       : (fabs(pos_x) < screen_w * 1.5);
+                       : (abs(ipx) < screen_w);
         wlr_scene_node_set_enabled(&server->workspace_trees[i]->node, visible);
+    }
+
+    if (server->views.next && server->views.prev) {
+        aurade_view_t *view;
+        wl_list_for_each(view, &server->views, link) {
+            if (!view->minimized) {
+                view_update_workspace_clip(view);
+            }
+        }
     }
 }
 

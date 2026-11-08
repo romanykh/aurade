@@ -70,6 +70,9 @@ static void xwayland_surface_associate(struct wl_listener *listener, void *data)
             safe_remove_listener(&view->content_tree_destroy);
             view->content_tree_destroy.notify = handle_content_tree_destroy;
             wl_signal_add(&view->content_tree->node.events.destroy, &view->content_tree_destroy);
+            if (view->blur_node) {
+                wlr_scene_node_place_below(&view->blur_node->node, &view->content_tree->node);
+            }
         }
     }
 }
@@ -146,6 +149,7 @@ static void xwayland_surface_map(struct wl_listener *listener, void *data) {
     if (view->scene_tree) {
         wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
         wlr_scene_node_set_enabled(&view->scene_tree->node, true);
+        view_update_workspace_clip(view);
     }
 
     wlr_xwayland_surface_configure(xsurface, view->x, view->y, view->width, view->height);
@@ -179,6 +183,7 @@ static void xwayland_surface_map(struct wl_listener *listener, void *data) {
     }
 
     dock_refresh(server);
+    server_export_running_windows(server);
 }
 
 static void xwayland_surface_unmap(struct wl_listener *listener, void *data) {
@@ -224,6 +229,7 @@ static void xwayland_surface_unmap(struct wl_listener *listener, void *data) {
             server_set_pointer_constraint(server, NULL);
         }
         dock_refresh(server);
+        server_export_running_windows(server);
     }
 }
 
@@ -279,6 +285,7 @@ static void xwayland_surface_destroy(struct wl_listener *listener, void *data) {
     if (view->scene_tree) {
         wlr_scene_node_destroy(&view->scene_tree->node);
         view->scene_tree = NULL;
+        view->blur_node = NULL;
     }
 
     if (server->focused_view == view) {
@@ -298,6 +305,7 @@ static void xwayland_surface_destroy(struct wl_listener *listener, void *data) {
 
     free(view);
     dock_refresh(server);
+    server_export_running_windows(server);
 }
 
 static void xwayland_surface_request_configure(struct wl_listener *listener, void *data) {
@@ -310,6 +318,7 @@ static void xwayland_surface_request_configure(struct wl_listener *listener, voi
         wlr_xwayland_surface_configure(xsurface, ev->x, ev->y, ev->width, ev->height);
         if (view->scene_tree) {
             wlr_scene_node_set_position(&view->scene_tree->node, ev->x, ev->y);
+            view_update_workspace_clip(view);
         }
         return;
     }
@@ -330,6 +339,7 @@ static void xwayland_surface_request_configure(struct wl_listener *listener, voi
     wlr_xwayland_surface_configure(xsurface, ev->x, ev->y, ev->width, ev->height);
     if (view->scene_tree) {
         wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
+        view_update_workspace_clip(view);
     }
 }
 
@@ -364,6 +374,7 @@ static void xwayland_surface_request_move(struct wl_listener *listener, void *da
             wlr_xwayland_surface_set_maximized(view->xwayland_surface, false, false);
             wlr_xwayland_surface_configure(view->xwayland_surface, new_x, new_y, restored_w, restored_h);
             wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
+            view_update_workspace_clip(view);
         }
 
         server->grabbed_view = view;
@@ -438,6 +449,7 @@ static void xwayland_surface_set_title(struct wl_listener *listener, void *data)
         if (title) topbar_set_active_app(server->topbar, title);
     }
     dock_refresh(server);
+    server_export_running_windows(server);
 }
 
 static void xwayland_surface_set_class(struct wl_listener *listener, void *data) {
@@ -445,6 +457,7 @@ static void xwayland_surface_set_class(struct wl_listener *listener, void *data)
     aurade_view_t *view = wl_container_of(listener, view, xwayland_set_class);
     if (view && view->server) {
         dock_refresh(view->server);
+        server_export_running_windows(view->server);
     }
 }
 
@@ -492,6 +505,13 @@ static void handle_xwayland_new_surface(struct wl_listener *listener, void *data
     view->scene_tree = wlr_scene_tree_create(parent_tree);
     view->scene_tree->node.data = view;
     wlr_scene_node_set_enabled(&view->scene_tree->node, false);
+
+    view->blur_node = wlr_scene_blur_create(view->scene_tree, 100, 100);
+    if (view->blur_node) {
+        wlr_scene_node_set_position(&view->blur_node->node, 0, 0);
+        wlr_scene_blur_set_corner_radius(view->blur_node, 12);
+        wlr_scene_node_set_enabled(&view->blur_node->node, false);
+    }
 
     view->xwayland_associate.notify = xwayland_surface_associate;
     wl_signal_add(&xsurface->events.associate, &view->xwayland_associate);

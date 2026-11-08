@@ -88,6 +88,7 @@ aurade_config_t config_get_defaults(void) {
         .dock_max_scale = 1.5,
         .dock_mag_radius = 130.0,
         .dock_theme = DOCK_THEME_MODERN,
+        .dock_opacity = 0.85,
         .dock_pinned_count = 1,
         .dock_pinned = {
             { "Launchpad", "" },
@@ -97,6 +98,8 @@ aurade_config_t config_get_defaults(void) {
         .dark_mode = true,
         .wallpaper_path = "",
         .accent_color = "#007AFF",
+        .window_opacity = 1.0,
+        .window_rules_count = 0,
 
         // Music Pill / Dynamic Island
         .music_pill_enabled = true,
@@ -111,6 +114,7 @@ aurade_config_t config_get_defaults(void) {
         .blur_topbar = true,
         .blur_launchpad = true,
         .blur_workspace_overview = true,
+        .blur_windows = true,
         .blur_strength = 1.0,
 
         // Topbar
@@ -232,6 +236,12 @@ bool config_load(aurade_config_t *cfg, const char *path) {
         if (json_object_object_get_ex(dock, "theme", &v)) {
             snprintf(cfg->dock_theme, sizeof(cfg->dock_theme), "%s", json_object_get_string(v));
         }
+        if (json_object_object_get_ex(dock, "opacity", &v)) {
+            double op = json_object_get_double(v);
+            if (op < 0.0) op = 0.0;
+            if (op > 1.0) op = 1.0;
+            cfg->dock_opacity = op;
+        }
 
         struct json_object *pinned = NULL;
         if (json_object_object_get_ex(dock, "pinned", &pinned) &&
@@ -265,6 +275,68 @@ bool config_load(aurade_config_t *cfg, const char *path) {
         if (json_object_object_get_ex(appr, "dark_mode", &v)) cfg->dark_mode = json_object_get_boolean(v);
         if (json_object_object_get_ex(appr, "wallpaper_path", &v)) strncpy(cfg->wallpaper_path, json_object_get_string(v), sizeof(cfg->wallpaper_path) - 1);
         if (json_object_object_get_ex(appr, "accent_color", &v)) strncpy(cfg->accent_color, json_object_get_string(v), sizeof(cfg->accent_color) - 1);
+        if (json_object_object_get_ex(appr, "window_opacity", &v)) {
+            double op = json_object_get_double(v);
+            if (op < 0.1) op = 0.1;
+            if (op > 1.0) op = 1.0;
+            cfg->window_opacity = op;
+        } else if (json_object_object_get_ex(appr, "opacity", &v)) {
+            double op = json_object_get_double(v);
+            if (op < 0.1) op = 0.1;
+            if (op > 1.0) op = 1.0;
+            cfg->window_opacity = op;
+        }
+
+        cfg->window_rules_count = 0;
+        struct json_object *wr = NULL;
+        if (json_object_object_get_ex(appr, "window_rules", &wr) && json_object_is_type(wr, json_type_array)) {
+            size_t n = json_object_array_length(wr);
+            if (n > 64) n = 64;
+            for (size_t i = 0; i < n; i++) {
+                struct json_object *item = json_object_array_get_idx(wr, i);
+                if (!json_object_is_type(item, json_type_object)) continue;
+                struct json_object *a_obj = NULL, *t_obj = NULL, *o_obj = NULL;
+                json_object_object_get_ex(item, "app_id", &a_obj);
+                json_object_object_get_ex(item, "title", &t_obj);
+                json_object_object_get_ex(item, "opacity", &o_obj);
+                const char *a_str = a_obj ? json_object_get_string(a_obj) : "";
+                const char *t_str = t_obj ? json_object_get_string(t_obj) : "";
+                double op = o_obj ? json_object_get_double(o_obj) : 1.0;
+                if (op < 0.10) op = 0.10;
+                if (op > 1.0) op = 1.0;
+
+                snprintf(cfg->window_rules[cfg->window_rules_count].app_id,
+                         sizeof(cfg->window_rules[0].app_id), "%s", a_str ? a_str : "");
+                snprintf(cfg->window_rules[cfg->window_rules_count].title,
+                         sizeof(cfg->window_rules[0].title), "%s", t_str ? t_str : "");
+                cfg->window_rules[cfg->window_rules_count].opacity = op;
+                cfg->window_rules_count++;
+            }
+        }
+        struct json_object *wo = NULL;
+        if (json_object_object_get_ex(appr, "window_opacities", &wo) && json_object_is_type(wo, json_type_object)) {
+            json_object_object_foreach(wo, key, val) {
+                if (cfg->window_rules_count >= 64) break;
+                double op = json_object_get_double(val);
+                if (op < 0.10) op = 0.10;
+                if (op > 1.0) op = 1.0;
+                bool found = false;
+                for (int i = 0; i < cfg->window_rules_count; i++) {
+                    if (strcmp(cfg->window_rules[i].app_id, key) == 0 && cfg->window_rules[i].title[0] == '\0') {
+                        cfg->window_rules[i].opacity = op;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    snprintf(cfg->window_rules[cfg->window_rules_count].app_id,
+                             sizeof(cfg->window_rules[0].app_id), "%s", key);
+                    cfg->window_rules[cfg->window_rules_count].title[0] = '\0';
+                    cfg->window_rules[cfg->window_rules_count].opacity = op;
+                    cfg->window_rules_count++;
+                }
+            }
+        }
     }
 
     struct json_object *ws = NULL;
@@ -293,6 +365,8 @@ bool config_load(aurade_config_t *cfg, const char *path) {
         if (json_object_object_get_ex(blur, "topbar", &v)) cfg->blur_topbar = json_object_get_boolean(v);
         if (json_object_object_get_ex(blur, "launchpad", &v)) cfg->blur_launchpad = json_object_get_boolean(v);
         if (json_object_object_get_ex(blur, "workspace_overview", &v)) cfg->blur_workspace_overview = json_object_get_boolean(v);
+        if (json_object_object_get_ex(blur, "windows", &v)) cfg->blur_windows = json_object_get_boolean(v);
+        else if (json_object_object_get_ex(blur, "window", &v)) cfg->blur_windows = json_object_get_boolean(v);
         if (json_object_object_get_ex(blur, "strength", &v)) {
             double s = json_object_get_double(v);
             if (s >= 0.1 && s <= 3.0) cfg->blur_strength = s;
@@ -370,6 +444,7 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     json_object_object_add(dock, "max_scale", json_object_new_double(cfg->dock_max_scale));
     json_object_object_add(dock, "mag_radius", json_object_new_double(cfg->dock_mag_radius));
     json_object_object_add(dock, "theme", json_object_new_string(cfg->dock_theme));
+    json_object_object_add(dock, "opacity", json_object_new_double(cfg->dock_opacity));
     if (cfg->dock_pinned_count > 0) {
         struct json_object *pinned = json_object_new_array();
         for (int i = 0; i < cfg->dock_pinned_count; i++) {
@@ -386,6 +461,27 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     json_object_object_add(appr, "dark_mode", json_object_new_boolean(cfg->dark_mode));
     json_object_object_add(appr, "wallpaper_path", json_object_new_string(cfg->wallpaper_path));
     json_object_object_add(appr, "accent_color", json_object_new_string(cfg->accent_color));
+    json_object_object_add(appr, "window_opacity", json_object_new_double(cfg->window_opacity));
+    if (cfg->window_rules_count > 0) {
+        struct json_object *rules_arr = json_object_new_array();
+        struct json_object *op_obj = json_object_new_object();
+        for (int i = 0; i < cfg->window_rules_count; i++) {
+            struct json_object *rentry = json_object_new_object();
+            json_object_object_add(rentry, "app_id", json_object_new_string(cfg->window_rules[i].app_id));
+            if (cfg->window_rules[i].title[0]) {
+                json_object_object_add(rentry, "title", json_object_new_string(cfg->window_rules[i].title));
+            }
+            json_object_object_add(rentry, "opacity", json_object_new_double(cfg->window_rules[i].opacity));
+            json_object_array_add(rules_arr, rentry);
+
+            if (cfg->window_rules[i].app_id[0] && !cfg->window_rules[i].title[0]) {
+                json_object_object_add(op_obj, cfg->window_rules[i].app_id,
+                                       json_object_new_double(cfg->window_rules[i].opacity));
+            }
+        }
+        json_object_object_add(appr, "window_rules", rules_arr);
+        json_object_object_add(appr, "window_opacities", op_obj);
+    }
     json_object_object_add(root, "appearance", appr);
 
     struct json_object *ws = json_object_new_object();
@@ -403,6 +499,7 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     json_object_object_add(blur, "topbar", json_object_new_boolean(cfg->blur_topbar));
     json_object_object_add(blur, "launchpad", json_object_new_boolean(cfg->blur_launchpad));
     json_object_object_add(blur, "workspace_overview", json_object_new_boolean(cfg->blur_workspace_overview));
+    json_object_object_add(blur, "windows", json_object_new_boolean(cfg->blur_windows));
     json_object_object_add(blur, "strength", json_object_new_double(cfg->blur_strength > 0.05 ? cfg->blur_strength : 1.0));
     json_object_object_add(root, "blur", blur);
 
