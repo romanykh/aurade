@@ -3,11 +3,13 @@
 #include "launchpad.h"
 #include "music_pill.h"
 #include "wallpaper.h"
+#include "control_center.h"
 #include "../util/apps.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <ctype.h>
 #include <time.h>
 
 #ifndef M_PI
@@ -32,11 +34,12 @@
 typedef struct { double r, g, b; } rgb_t;
 
 static rgb_t icon_color(const char *name) {
-    if (strcmp(name, "Finder") == 0)     return (rgb_t){0.16, 0.52, 0.96};
-    if (strcmp(name, "Launchpad") == 0)  return (rgb_t){0.42, 0.44, 0.50};
-    if (strcmp(name, "Terminal") == 0)   return (rgb_t){0.11, 0.12, 0.16};
-    if (strcmp(name, "Browser") == 0)    return (rgb_t){0.10, 0.45, 0.92};
-    if (strcmp(name, "Settings") == 0)   return (rgb_t){0.52, 0.55, 0.60};
+    if (!name || !*name) return (rgb_t){0.42, 0.44, 0.50};
+    if (strcasestr(name, "finder") || strcasestr(name, "nautilus") || strcasestr(name, "thunar")) return (rgb_t){0.16, 0.52, 0.96};
+    if (strcasestr(name, "launchpad")) return (rgb_t){0.42, 0.44, 0.50};
+    if (strcasestr(name, "terminal") || strcasestr(name, "alacritty") || strcasestr(name, "kitty") || strcasestr(name, "foot")) return (rgb_t){0.11, 0.12, 0.16};
+    if (strcasestr(name, "browser") || strcasestr(name, "firefox") || strcasestr(name, "chrome")) return (rgb_t){0.10, 0.45, 0.92};
+    if (strcasestr(name, "settings") || strcasestr(name, "preferences") || strcasestr(name, "control-center")) return (rgb_t){0.52, 0.55, 0.60};
 
     // Stable, pleasant hue for unknown apps.
     unsigned hash = 2166136261u;
@@ -101,7 +104,8 @@ static void draw_dock_icon(cairo_t *cr, double cx, double cy, double size, const
     double half = size / 2.0;
     double corner = size * 0.235;
     rgb_t c = icon_color(name);
-    bool finder = (strcmp(name, "Finder") == 0);
+    bool finder = (strcasecmp(name, "Finder") == 0 || strcasestr(name, "finder") != NULL ||
+                   strcasestr(name, "nautilus") != NULL || strcasestr(name, "thunar") != NULL);
 
     draw_drop_shadow(cr, cx - half, cy - half, size, size, corner, size * 0.10, 0.42);
     draw_squircle_base(cr, cx, cy, size, corner, c, finder);
@@ -117,7 +121,7 @@ static void draw_dock_icon(cairo_t *cr, double cx, double cy, double size, const
         cairo_fill(cr);
         cairo_arc(cr, cx + size * 0.17, cy - size * 0.12, size * 0.037, 0, 2 * M_PI);
         cairo_fill(cr);
-    } else if (strcmp(name, "Launchpad") == 0) {
+    } else if (strcasecmp(name, "Launchpad") == 0 || strcasestr(name, "launchpad") != NULL) {
         cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.94);
         double dot_r = size * 0.045;
         double sp = size * 0.16;
@@ -127,7 +131,9 @@ static void draw_dock_icon(cairo_t *cr, double cx, double cy, double size, const
                 cairo_fill(cr);
             }
         }
-    } else if (strcmp(name, "Terminal") == 0) {
+    } else if (strcasecmp(name, "Terminal") == 0 || strcasestr(name, "terminal") != NULL ||
+               strcasestr(name, "alacritty") != NULL || strcasestr(name, "kitty") != NULL ||
+               strcasestr(name, "foot") != NULL || strcasestr(name, "xterm") != NULL) {
         cairo_set_source_rgba(cr, 0.25, 0.95, 0.45, 0.96);
         cairo_set_line_width(cr, size * 0.065);
         cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
@@ -139,7 +145,9 @@ static void draw_dock_icon(cairo_t *cr, double cx, double cy, double size, const
         cairo_move_to(cr, cx + size * 0.02, cy + size * 0.16);
         cairo_line_to(cr, cx + size * 0.25, cy + size * 0.16);
         cairo_stroke(cr);
-    } else if (strcmp(name, "Browser") == 0) {
+    } else if (strcasecmp(name, "Browser") == 0 || strcasestr(name, "browser") != NULL ||
+               strcasestr(name, "firefox") != NULL || strcasestr(name, "chrome") != NULL ||
+               strcasestr(name, "zen") != NULL) {
         cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.95);
         cairo_set_line_width(cr, size * 0.045);
         cairo_arc(cr, cx, cy, size * 0.27, 0, 2 * M_PI);
@@ -154,7 +162,8 @@ static void draw_dock_icon(cairo_t *cr, double cx, double cy, double size, const
         cairo_set_line_width(cr, size * 0.045);
         cairo_arc(cr, cx, cy, size * 0.05, 0, 2 * M_PI);
         cairo_fill(cr);
-    } else if (strcmp(name, "Settings") == 0) {
+    } else if (strcasecmp(name, "Settings") == 0 || strcasestr(name, "settings") != NULL ||
+               strcasestr(name, "preferences") != NULL || strcasestr(name, "control-center") != NULL) {
         cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.95);
         cairo_set_line_width(cr, size * 0.055);
         cairo_arc(cr, cx, cy, size * 0.15, 0, 2 * M_PI);
@@ -166,14 +175,70 @@ static void draw_dock_icon(cairo_t *cr, double cx, double cy, double size, const
             cairo_stroke(cr);
         }
     } else {
-        char letter[2] = { name[0] ? name[0] : 'A', '\0' };
+        char letter[2] = { name[0] ? (char)toupper((unsigned char)name[0]) : 'A', '\0' };
         draw_text(cr, letter, DOCK_FONT, size * 0.46, true,
                   1.0, 1.0, 1.0, 0.96, cx, cy - size * 0.02, true, true);
     }
 }
 
-static void draw_dock_item_icon(cairo_t *cr, double cx, double cy, double size, dock_item_t *item) {
+static void draw_stacked_icon_card(cairo_t *cr, double cx, double cy, double size, dock_item_t *item,
+                                   double shadow_alpha, double overlay_dim, double border_alpha) {
+    double half = size / 2.0;
+    double corner = size * 0.235;
+    draw_drop_shadow(cr, cx - half, cy - half, size, size, corner, size * 0.09, shadow_alpha);
+
+    cairo_save(cr);
+    draw_rounded_rect(cr, cx - half, cy - half, size, size, corner);
+    cairo_clip(cr);
+
     if (item->icon_surface) {
+        int iw = cairo_image_surface_get_width(item->icon_surface);
+        int ih = cairo_image_surface_get_height(item->icon_surface);
+        if (iw > 0 && ih > 0) {
+            cairo_save(cr);
+            cairo_translate(cr, cx - half, cy - half);
+            cairo_scale(cr, size / iw, size / ih);
+            cairo_set_source_surface(cr, item->icon_surface, 0, 0);
+            cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
+            cairo_paint(cr);
+            cairo_restore(cr);
+
+            if (overlay_dim > 0.0) {
+                cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, overlay_dim);
+                cairo_paint(cr);
+            }
+        }
+    } else {
+        cairo_set_source_rgba(cr, 0.22, 0.24, 0.30, 0.92);
+        cairo_paint(cr);
+    }
+    cairo_restore(cr);
+
+    // Specular border highlight around the stacked layer
+    cairo_save(cr);
+    draw_rounded_rect(cr, cx - half + 0.5, cy - half + 0.5, size - 1.0, size - 1.0, corner);
+    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, border_alpha);
+    cairo_set_line_width(cr, 1.0);
+    cairo_stroke(cr);
+    cairo_restore(cr);
+}
+
+static void draw_dock_item_icon(cairo_t *cr, double cx, double cy, double size, dock_item_t *item) {
+    if (item->window_count >= 2) {
+        double sc = item->current_scale > 0.1 ? item->current_scale : 1.0;
+        if (item->window_count >= 3) {
+            double s3 = size * 0.93;
+            double dx3 = 4.2 * sc;
+            double dy3 = -4.5 * sc;
+            draw_stacked_icon_card(cr, cx + dx3, cy + dy3, s3, item, 0.32, 0.32, 0.26);
+        }
+        double s2 = size * 0.965;
+        double dx2 = -3.5 * sc;
+        double dy2 = -2.8 * sc;
+        draw_stacked_icon_card(cr, cx + dx2, cy + dy2, s2, item, 0.38, 0.18, 0.34);
+    }
+
+    if (item->icon_surface && cairo_surface_status(item->icon_surface) == CAIRO_STATUS_SUCCESS) {
         int isize = (int)lround(size);
         int iw = cairo_image_surface_get_width(item->icon_surface);
         int ih = cairo_image_surface_get_height(item->icon_surface);
@@ -238,7 +303,9 @@ static uint64_t dock_now_ms(void) {
  * enough for the pill to clear the bottom edge. */
 static double dock_slide_distance(aurade_dock_t *dock) {
     if (!dock->autohide && !dock->intellihide) return 0.0;
-    double slide = dock->pill_height + DOCK_BOTTOM_MARGIN;
+    bool is_3d = (dock->server && strcmp(dock->server->config.dock_theme, DOCK_THEME_TABLE_3D) == 0);
+    double margin = is_3d ? 0.0 : DOCK_BOTTOM_MARGIN;
+    double slide = dock->pill_height + margin;
     return slide > 1.0 ? slide : 1.0;
 }
 
@@ -258,7 +325,10 @@ static double dock_headroom(aurade_dock_t *dock) {
 
 /* Bottom edge of the icons (icons are square and sit on this baseline). */
 static double dock_icon_bottom(aurade_dock_t *dock) {
-    return dock_pill_top(dock) + dock->pill_height - 10.0;
+    bool is_3d = (dock->server && strcmp(dock->server->config.dock_theme, DOCK_THEME_TABLE_3D) == 0);
+    double front_rim_h = is_3d ? 10.0 : 0.0;
+    double off = is_3d ? (front_rim_h + 4.0) : 10.0;
+    return dock_pill_top(dock) + dock->pill_height - off;
 }
 
 /* Whether the point is over something the dock actually paints: the pill or
@@ -301,8 +371,20 @@ void dock_apply_slide(aurade_dock_t *dock) {
     int y = (int)lround(dock->screen_height - dock->buffer_height + offset);
     wlr_scene_node_set_position(&dock->scene_buffer->node, 0, y);
     // A hidden or disabled dock must not take part in scene hit-testing.
-    wlr_scene_node_set_enabled(&dock->scene_buffer->node,
-                               dock->enabled && dock->hide_progress < 0.999);
+    bool visible = dock->enabled && dock->hide_progress < 0.999;
+    wlr_scene_node_set_enabled(&dock->scene_buffer->node, visible);
+    if (dock->blur_node) {
+        int bx = (int)round(dock->pill_x);
+        int by = y + (int)round(dock->pill_local_y);
+        wlr_scene_node_set_position(&dock->blur_node->node, bx, by);
+        bool pause_blur = dock->server && (
+            dock->server->gesture_mode != GESTURE_MODE_IDLE ||
+            dock->server->gesture_in_progress ||
+            dock->server->gesture_animating
+        );
+        wlr_scene_node_set_enabled(&dock->blur_node->node,
+                                   visible && dock->server && dock->server->config.blur_dock && !pause_blur);
+    }
 }
 
 static int dock_anim_tick(void *data) {
@@ -502,6 +584,9 @@ bool dock_pin_app(aurade_dock_t *dock, const char *name, const char *exec,
             dock_update_running_state(dock);
             dock_render(dock);
             dock_save_pinned(dock);
+            if (dock->server && dock->server->launchpad) {
+                launchpad_refresh(dock->server->launchpad);
+            }
             return true;
         }
     }
@@ -532,7 +617,74 @@ bool dock_pin_app(aurade_dock_t *dock, const char *name, const char *exec,
     dock_update_running_state(dock);
     dock_render(dock);
     dock_save_pinned(dock);
+    if (dock->server && dock->server->launchpad) {
+        launchpad_refresh(dock->server->launchpad);
+    }
     return true;
+}
+
+static void extract_exec_binary(const char *exec, char *out, size_t out_sz) {
+    if (!exec || !*exec || out_sz < 2) return;
+    out[0] = '\0';
+    const char *cmd_flag = strstr(exec, "--command=");
+    if (cmd_flag) {
+        cmd_flag += 10;
+        size_t len = 0;
+        while (cmd_flag[len] && !isspace((unsigned char)cmd_flag[len])) len++;
+        if (len > 0 && len < out_sz) {
+            strncpy(out, cmd_flag, len);
+            out[len] = '\0';
+            return;
+        }
+    }
+    while (*exec && isspace((unsigned char)*exec)) exec++;
+    const char *end = exec;
+    while (*end && !isspace((unsigned char)*end)) end++;
+    const char *slash = NULL;
+    for (const char *p = exec; p < end; p++) {
+        if (*p == '/') slash = p;
+    }
+    const char *start = slash ? slash + 1 : exec;
+    size_t len = end - start;
+    if (len >= out_sz) len = out_sz - 1;
+    strncpy(out, start, len);
+    out[len] = '\0';
+}
+
+bool dock_has_app(aurade_dock_t *dock, const desktop_app_t *app) {
+    if (!dock || !app) return false;
+    for (int i = 0; i < dock->item_count; i++) {
+        dock_item_t *item = &dock->items[i];
+        if (strcasecmp(item->name, "Launchpad") == 0) continue;
+
+        // 1. Exact match on name
+        if (strcasecmp(item->name, app->name) == 0) return true;
+
+        // 2. Exact match on exec
+        if (item->exec[0] && app->exec[0] && strcasecmp(item->exec, app->exec) == 0) return true;
+
+        // 3. Exec binary match (e.g. "nautilus --new-window" vs "nautilus %U")
+        if (item->exec[0] && app->exec[0]) {
+            char bin1[64] = {0}, bin2[64] = {0};
+            extract_exec_binary(item->exec, bin1, sizeof(bin1));
+            extract_exec_binary(app->exec, bin2, sizeof(bin2));
+            if (bin1[0] && bin2[0] && strcasecmp(bin1, bin2) == 0) return true;
+        }
+
+        // 4. Exact match on icon name
+        if (item->icon_name[0] && app->icon_name[0] &&
+            strcasecmp(item->icon_name, app->icon_name) == 0) {
+            return true;
+        }
+
+        // 5. Dock item name matches binary
+        if (item->name[0] && app->exec[0]) {
+            char bin[64] = {0};
+            extract_exec_binary(app->exec, bin, sizeof(bin));
+            if (bin[0] && strcasecmp(item->name, bin) == 0) return true;
+        }
+    }
+    return false;
 }
 
 aurade_dock_t *dock_create(aurade_server_t *server) {
@@ -548,7 +700,6 @@ aurade_dock_t *dock_create(aurade_server_t *server) {
     bool should_hide = dock->autohide || (dock->intellihide && dock_intersects_window(dock));
     dock->hide_progress = should_hide ? 1.0 : 0.0;
     dock->hide_target = should_hide;
-    dock->blur_dirty = true;
 
     dock->item_count = 0;
     if (server->config.dock_pinned_count > 0) {
@@ -572,9 +723,15 @@ aurade_dock_t *dock_create(aurade_server_t *server) {
         dock->items[0] = (dock_item_t){ .name = "Launchpad", .exec = "", .current_scale = 1.0, .is_pinned = true };
     }
 
+    struct wlr_scene_tree *dock_tree = server->dock_tree ? server->dock_tree : server->shell_tree;
     dock->buffer = cairo_buffer_create(dock->screen_width, dock->buffer_height);
-    dock->scene_buffer = wlr_scene_buffer_create(server->dock_tree ? server->dock_tree : server->shell_tree,
-                                                 &dock->buffer->base);
+    dock->scene_buffer = wlr_scene_buffer_create(dock_tree, &dock->buffer->base);
+
+    dock->blur_node = wlr_scene_blur_create(dock_tree, 200, 60);
+    if (dock->blur_node) {
+        wlr_scene_node_place_below(&dock->blur_node->node, &dock->scene_buffer->node);
+        wlr_scene_node_set_enabled(&dock->blur_node->node, false);
+    }
 
     dock->drag_candidate_index = -1;
     dock->drag_index = -1;
@@ -605,20 +762,58 @@ void dock_resize(aurade_dock_t *dock, int screen_w, int screen_h) {
 
 static bool app_id_matches(const char *app_id, const char *name) {
     if (!app_id || !*app_id || !name || !*name) return false;
-    if (strcasestr(app_id, name)) return true;
+    if (strcasecmp(app_id, name) == 0) return true;
+    if (strcasestr(app_id, name) != NULL || strcasestr(name, app_id) != NULL) return true;
+
     if (strcasecmp(name, "Steam") == 0 && strcasestr(app_id, "steam")) return true;
-    if (strcmp(name, "Finder") == 0 &&
-        (strcasestr(app_id, "nautilus") || strcasestr(app_id, "org.gnome.Nautilus") ||
-         strcasestr(app_id, "thunar") || strcasestr(app_id, "dolphin"))) return true;
-    if (strcmp(name, "Terminal") == 0 &&
-        (strcasestr(app_id, "foot") || strcasestr(app_id, "kitty") ||
-         strcasestr(app_id, "terminal") || strcasestr(app_id, "alacritty"))) return true;
-    if (strcmp(name, "Browser") == 0 &&
-        (strcasestr(app_id, "firefox") || strcasestr(app_id, "chrom") ||
-         strcasestr(app_id, "epiphany") || strcasestr(app_id, "zen"))) return true;
-    if (strcmp(name, "Settings") == 0 &&
-        (strcasestr(app_id, "aurade") || strcasestr(app_id, "settings") ||
-         strcasestr(app_id, "control-center"))) return true;
+
+    // File managers (Files, Finder, Nautilus, Nemo, Thunar, Dolphin, Caja, etc.)
+    if ((strcasecmp(name, "Files") == 0 || strcasecmp(name, "Finder") == 0 ||
+         strcasestr(name, "nautilus") != NULL || strcasestr(name, "file") != NULL) &&
+        (strcasestr(app_id, "nautilus") != NULL || strcasestr(app_id, "org.gnome.Nautilus") != NULL ||
+         strcasestr(app_id, "thunar") != NULL || strcasestr(app_id, "dolphin") != NULL ||
+         strcasestr(app_id, "pcmanfm") != NULL || strcasestr(app_id, "nemo") != NULL ||
+         strcasestr(app_id, "caja") != NULL || strcasestr(app_id, "files") != NULL)) {
+        return true;
+    }
+
+    // Terminals (Terminal, Foot, Kitty, Alacritty, WezTerm, Konsole, etc.)
+    if ((strcasecmp(name, "Terminal") == 0 || strcasestr(name, "terminal") != NULL ||
+         strcasecmp(name, "Console") == 0) &&
+        (strcasestr(app_id, "foot") != NULL || strcasestr(app_id, "kitty") != NULL ||
+         strcasestr(app_id, "terminal") != NULL || strcasestr(app_id, "alacritty") != NULL ||
+         strcasestr(app_id, "wezterm") != NULL || strcasestr(app_id, "konsole") != NULL ||
+         strcasestr(app_id, "xterm") != NULL)) {
+        return true;
+    }
+
+    // Browsers (Browser, Web, Firefox, Chrome, Chromium, Brave, Zen, Epiphany, etc.)
+    if ((strcasecmp(name, "Browser") == 0 || strcasecmp(name, "Web") == 0 ||
+         strcasecmp(name, "Safari") == 0 || strcasestr(name, "browser") != NULL) &&
+        (strcasestr(app_id, "firefox") != NULL || strcasestr(app_id, "chrom") != NULL ||
+         strcasestr(app_id, "brave") != NULL || strcasestr(app_id, "epiphany") != NULL ||
+         strcasestr(app_id, "zen") != NULL || strcasestr(app_id, "opera") != NULL ||
+         strcasestr(app_id, "edge") != NULL)) {
+        return true;
+    }
+
+    // Settings (Settings, Preferences, Control Center, Aurade)
+    if ((strcasecmp(name, "Settings") == 0 || strcasecmp(name, "Preferences") == 0 ||
+         strcasestr(name, "settings") != NULL || strcasestr(name, "control-center") != NULL) &&
+        (strcasestr(app_id, "aurade") != NULL || strcasestr(app_id, "settings") != NULL ||
+         strcasestr(app_id, "control-center") != NULL || strcasestr(app_id, "preferences") != NULL)) {
+        return true;
+    }
+
+    // Text editors / IDEs
+    if ((strcasecmp(name, "Editor") == 0 || strcasecmp(name, "Text") == 0 ||
+         strcasestr(name, "editor") != NULL) &&
+        (strcasestr(app_id, "gedit") != NULL || strcasestr(app_id, "kate") != NULL ||
+         strcasestr(app_id, "code") != NULL || strcasestr(app_id, "texteditor") != NULL ||
+         strcasestr(app_id, "sublime") != NULL || strcasestr(app_id, "cursor") != NULL)) {
+        return true;
+    }
+
     return false;
 }
 
@@ -638,40 +833,109 @@ const char *view_get_app_id(aurade_view_t *view) {
     return NULL;
 }
 
-static aurade_view_t *find_running_view(aurade_dock_t *dock, const char *name) {
+static bool view_matches_dock_item(aurade_view_t *view, dock_item_t *item) {
+    if (!view || !item) return false;
+    const char *app_id = view_get_app_id(view);
+    if (!app_id || !*app_id) return false;
+
+    // 1. Direct match on item name
+    if (app_id_matches(app_id, item->name)) return true;
+
+    // 2. Direct match on item icon_name
+    if (item->icon_name[0]) {
+        if (strcasecmp(app_id, item->icon_name) == 0) return true;
+        if (strcasestr(app_id, item->icon_name) != NULL || strcasestr(item->icon_name, app_id) != NULL) return true;
+        if (app_id_matches(app_id, item->icon_name)) return true;
+    }
+
+    // 3. Match against item exec binary
+    if (item->exec[0]) {
+        char bin[64] = {0};
+        extract_exec_binary(item->exec, bin, sizeof(bin));
+        if (bin[0]) {
+            if (strcasecmp(app_id, bin) == 0) return true;
+            if (strcasestr(app_id, bin) != NULL || strcasestr(bin, app_id) != NULL) return true;
+            if (app_id_matches(app_id, bin)) return true;
+        }
+    }
+
+    return false;
+}
+
+static int find_running_views(aurade_dock_t *dock, dock_item_t *item, aurade_view_t *out_views[], int max_views) {
+    if (!dock || !item || !dock->server || max_views <= 0) return 0;
+    int count = 0;
     aurade_view_t *view;
     wl_list_for_each(view, &dock->server->views, link) {
-        const char *app_id = view_get_app_id(view);
-        if (!app_id) continue;
-        if (app_id_matches(app_id, name)) return view;
+        if (view->xdg_toplevel) {
+            if (!view->xdg_toplevel->base || !view->xdg_toplevel->base->surface ||
+                !view->xdg_toplevel->base->surface->mapped) continue;
+        } else if (view->xwayland_surface) {
+            if (!view->xwayland_surface->surface ||
+                !view->xwayland_surface->surface->mapped) continue;
+        } else {
+            continue;
+        }
+        if (view_matches_dock_item(view, item)) {
+            if (count < max_views) {
+                out_views[count++] = view;
+            }
+        }
     }
-    return NULL;
+    return count;
 }
+
 
 void dock_update_running_state(aurade_dock_t *dock) {
     if (!dock) return;
 
+    // Cleanly separate and compact pinned items to [0 .. pinned_count - 1]
     int pinned_count = 0;
+    dock_item_t pinned_items[24];
     for (int i = 0; i < dock->item_count; i++) {
-        if (dock->items[i].is_pinned) pinned_count++;
+        if (dock->items[i].is_pinned) {
+            pinned_items[pinned_count++] = dock->items[i];
+        } else {
+            if (dock->items[i].icon_surface) {
+                cairo_surface_destroy(dock->items[i].icon_surface);
+                dock->items[i].icon_surface = NULL;
+            }
+            if (dock->items[i].cached_base_surface) {
+                cairo_surface_destroy(dock->items[i].cached_base_surface);
+                dock->items[i].cached_base_surface = NULL;
+            }
+        }
     }
 
-    // Drop dynamic entries and reset running state for pinned ones.
-    dock->item_count = pinned_count;
     for (int i = 0; i < pinned_count; i++) {
+        dock->items[i] = pinned_items[i];
         dock->items[i].is_running = false;
+        dock->items[i].window_count = 0;
         dock->items[i].demands_attention = false;
     }
+    dock->item_count = pinned_count;
 
     aurade_view_t *view;
     wl_list_for_each(view, &dock->server->views, link) {
+        if (view->xdg_toplevel) {
+            if (!view->xdg_toplevel->base || !view->xdg_toplevel->base->surface ||
+                !view->xdg_toplevel->base->surface->mapped) continue;
+        } else if (view->xwayland_surface) {
+            if (!view->xwayland_surface->surface ||
+                !view->xwayland_surface->surface->mapped) continue;
+        } else {
+            continue;
+        }
+
         const char *app_id = view_get_app_id(view);
         if (!app_id) continue;
         bool matched = false;
 
+        // 1. Check pinned items
         for (int i = 0; i < pinned_count; i++) {
-            if (app_id_matches(app_id, dock->items[i].name)) {
+            if (view_matches_dock_item(view, &dock->items[i])) {
                 dock->items[i].is_running = true;
+                dock->items[i].window_count++;
                 if (view->demands_attention) dock->items[i].demands_attention = true;
                 matched = true;
                 break;
@@ -679,10 +943,11 @@ void dock_update_running_state(aurade_dock_t *dock) {
         }
         if (matched) continue;
 
-        // Already represented by another dynamic entry?
+        // 2. Already represented by an unpinned dynamic item?
         for (int i = pinned_count; i < dock->item_count; i++) {
-            if (strcasecmp(dock->items[i].name, app_id) == 0) {
+            if (view_matches_dock_item(view, &dock->items[i])) {
                 dock->items[i].is_running = true;
+                dock->items[i].window_count++;
                 if (view->demands_attention) dock->items[i].demands_attention = true;
                 matched = true;
                 break;
@@ -690,13 +955,65 @@ void dock_update_running_state(aurade_dock_t *dock) {
         }
         if (matched) continue;
 
+        // 3. New dynamic item
         if (dock->item_count < 24) {
             dock_item_t *dyn = &dock->items[dock->item_count];
             memset(dyn, 0, sizeof(*dyn));
-            snprintf(dyn->name, sizeof(dyn->name), "%.*s",
-                     (int)sizeof(dyn->name) - 1, app_id);
-            dyn->exec[0] = '\0';
+
+            desktop_app_t *app = NULL;
+            if (dock->server && dock->server->apps) {
+                app = apps_find(dock->server->apps, app_id);
+                if (!app && strchr(app_id, '.')) {
+                    const char *dot = strrchr(app_id, '.');
+                    if (dot && *(dot + 1)) {
+                        app = apps_find(dock->server->apps, dot + 1);
+                    }
+                }
+                if (!app) {
+                    for (int a = 0; a < dock->server->apps->count; a++) {
+                        desktop_app_t *cand = &dock->server->apps->apps[a];
+                        if (strcasecmp(cand->name, app_id) == 0 ||
+                            strcasestr(app_id, cand->name) != NULL ||
+                            (cand->exec[0] && strcasestr(app_id, cand->exec) != NULL)) {
+                            app = cand;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (app) {
+                snprintf(dyn->name, sizeof(dyn->name), "%.*s",
+                         (int)sizeof(dyn->name) - 1, app->name);
+                snprintf(dyn->exec, sizeof(dyn->exec), "%.*s",
+                         (int)sizeof(dyn->exec) - 1, app->exec);
+                snprintf(dyn->icon_name, sizeof(dyn->icon_name), "%.*s",
+                         (int)sizeof(dyn->icon_name) - 1, app->icon_name);
+                if (app->icon_surface) {
+                    dyn->icon_surface = cairo_surface_reference(app->icon_surface);
+                }
+            } else {
+                snprintf(dyn->name, sizeof(dyn->name), "%.*s",
+                         (int)sizeof(dyn->name) - 1, app_id);
+            }
+
+            if (!dyn->icon_surface) {
+                if (dyn->icon_name[0]) {
+                    dyn->icon_surface = apps_load_icon(dyn->icon_name);
+                }
+                if (!dyn->icon_surface) {
+                    dyn->icon_surface = apps_load_icon(app_id);
+                }
+                if (!dyn->icon_surface && strchr(app_id, '.')) {
+                    const char *dot = strrchr(app_id, '.');
+                    if (dot && *(dot + 1)) {
+                        dyn->icon_surface = apps_load_icon(dot + 1);
+                    }
+                }
+            }
+
             dyn->is_running = true;
+            dyn->window_count = 1;
             dyn->demands_attention = view->demands_attention;
             dyn->is_pinned = false;
             dyn->current_scale = 1.0;
@@ -796,7 +1113,6 @@ void dock_tick_bounce(aurade_dock_t *dock, double dt) {
 
 void dock_refresh(aurade_server_t *server) {
     if (!server || !server->dock) return;
-    server->dock->blur_dirty = true;
     dock_update_running_state(server->dock);
     dock_render(server->dock);
     dock_update_visibility(server->dock);
@@ -817,6 +1133,15 @@ static void draw_tooltip(aurade_dock_t *dock, cairo_t *cr, const char *label,
 
     draw_drop_shadow(cr, bx, by, bw, bh, bh / 2.0, 8.0, 0.35);
     draw_glass_panel(cr, bx, by, bw, bh, bh / 2.0, 0.10, 0.11, 0.14, 0.82);
+
+    // Callout tip pointing to the icon
+    cairo_move_to(cr, cx - 4.5, by + bh);
+    cairo_line_to(cr, cx, by + bh + 4.0);
+    cairo_line_to(cr, cx + 4.5, by + bh);
+    cairo_close_path(cr);
+    cairo_set_source_rgba(cr, 0.10, 0.11, 0.14, 0.82);
+    cairo_fill(cr);
+
     draw_text(cr, label, DOCK_FONT, 12.0, true,
               1.0, 1.0, 1.0, 0.96, bx + bw / 2.0, by + bh / 2.0, true, true);
 }
@@ -897,15 +1222,42 @@ void dock_render(aurade_dock_t *dock) {
         used += mp_w + DOCK_GAP + 12.0;
     }
 
-    double pill_h = base + 18.0;
+    bool is_3d = (dock->server && strcmp(dock->server->config.dock_theme, DOCK_THEME_TABLE_3D) == 0);
+    bool dark = !dock->server || dock->server->config.dark_mode;
+    if (dock->server && dock->server->control_center && dock->server->control_center->dark_mode_available) {
+        dark = dock->server->control_center->dark_mode;
+    }
+    double front_rim_h = 5.0;
+    double shelf_depth = 14.0;
+    double table_h = front_rim_h + shelf_depth;
+
+    double pill_h = is_3d ? (base + table_h + 2.0) : (base + 18.0);
     double pill_x = (dock->screen_width - used) / 2.0;
-    double pill_local_y = dock->buffer_height - pill_h - DOCK_BOTTOM_MARGIN;
+    double bottom_margin = is_3d ? 0.0 : DOCK_BOTTOM_MARGIN;
+    double pill_local_y = dock->buffer_height - pill_h - bottom_margin;
+
+    double rim_overhang = 44.0;
+    double table_bottom_w = used + rim_overhang * 2.0;
+    double table_bottom_x = pill_x - rim_overhang;
+    double perspective_slant = 34.0;
+    double table_top_x = table_bottom_x + perspective_slant;
+    double table_top_w = table_bottom_w - perspective_slant * 2.0;
+    double shelf_top_y = pill_local_y + pill_h - front_rim_h - shelf_depth;
+    double shelf_rim_y = pill_local_y + pill_h - front_rim_h;
 
     // Screen-space rect for input handling. The scene node is bottom-aligned.
-    dock->pill_x = pill_x;
-    dock->pill_y = dock->screen_height - pill_h - DOCK_BOTTOM_MARGIN;
-    dock->pill_width = used;
-    dock->pill_height = pill_h;
+    if (is_3d) {
+        dock->pill_x = table_bottom_x;
+        dock->pill_y = dock->screen_height - pill_h - bottom_margin;
+        dock->pill_width = table_bottom_w;
+        dock->pill_height = pill_h;
+    } else {
+        dock->pill_x = pill_x;
+        dock->pill_y = dock->screen_height - pill_h - bottom_margin;
+        dock->pill_width = used;
+        dock->pill_height = pill_h;
+    }
+    dock->pill_local_y = pill_local_y;
 
     // Recompute the final icon centres. (Magnification widths intentionally use
     // the previous frame's centres, exactly like the classic macOS dock hump.)
@@ -939,89 +1291,293 @@ void dock_render(aurade_dock_t *dock) {
         mp_draw_x = cur_x;
     }
 
-    // Panel shadow + frosted-glass rounded rectangle (not a full capsule).
-    double pill_r = 22.0;
-    if (pill_r > pill_h / 2.0) pill_r = pill_h / 2.0;
-    draw_drop_shadow(cr, pill_x, pill_local_y, used, pill_h, pill_r, 18.0, 0.5);
+    if (dock->blur_node) {
+        double offset = dock->hide_progress * dock_slide_distance(dock);
+        int y = (int)lround(dock->screen_height - dock->buffer_height + offset);
+        int bx = is_3d ? (int)round(table_bottom_x) : (int)round(pill_x);
+        int by = is_3d ? (y + (int)round(shelf_top_y)) : (y + (int)round(pill_local_y));
+        int bw = is_3d ? (int)round(table_bottom_w) : (int)round(used);
+        int bh = is_3d ? (int)round(table_h) : (int)round(pill_h);
+        int br = is_3d ? 6 : 22;
+        wlr_scene_blur_set_size(dock->blur_node, bw, bh);
+        wlr_scene_blur_set_corner_radius(dock->blur_node, br);
+        wlr_scene_node_set_position(&dock->blur_node->node, bx, by);
+        bool pause_blur = dock->server && (
+            dock->server->gesture_mode != GESTURE_MODE_IDLE ||
+            dock->server->gesture_in_progress ||
+            dock->server->gesture_animating
+        );
+        wlr_scene_node_set_enabled(&dock->blur_node->node,
+                                   dock->enabled && dock->hide_progress < 0.999 &&
+                                   dock->server && dock->server->config.blur_dock &&
+                                   !pause_blur);
+    }
 
-    double dock_screen_y = dock->screen_height - dock->buffer_height;
-    if (dock->server->config.blur_dock && dock->server->wallpaper) {
-        if (!dock->blur_cache || dock->blur_dirty) {
-            dock->blur_dirty = false;
-            dock->last_blur_y = pill_local_y;
-            dock->last_blur_h = pill_h;
-            wallpaper_update_dock_blur(dock->server->wallpaper,
-                                       &dock->blur_cache,
-                                       dock->screen_width,
-                                       dock_screen_y,
-                                       dock->buffer_height);
+    if (is_3d) {
+        // --- CLASSIC OS X 3D GLASS TABLE / SHELF ---
+
+        double r_top = 5.0;
+        double r_btm = 3.0;
+        double r_rim_btm = 2.5;
+
+        // Slanted edge unit vectors
+        double dx_l = table_top_x - table_bottom_x;
+        double dy_l = shelf_top_y - shelf_rim_y;
+        double len_l = hypot(dx_l, dy_l);
+        double ux_l = dx_l / (len_l > 0.0 ? len_l : 1.0);
+        double uy_l = dy_l / (len_l > 0.0 ? len_l : 1.0);
+
+        double dx_r = (table_bottom_x + table_bottom_w) - (table_top_x + table_top_w);
+        double dy_r = shelf_rim_y - shelf_top_y;
+        double len_r = hypot(dx_r, dy_r);
+        double ux_r = dx_r / (len_r > 0.0 ? len_r : 1.0);
+        double uy_r = dy_r / (len_r > 0.0 ? len_r : 1.0);
+
+        // Top-left corner control points
+        double tl_in_x = table_top_x - r_top * ux_l;
+        double tl_in_y = shelf_top_y - r_top * uy_l;
+        double tl_out_x = table_top_x + r_top;
+        double tl_out_y = shelf_top_y;
+        double tl_cp1_x = (tl_in_x + 2.0 * table_top_x) / 3.0;
+        double tl_cp1_y = (tl_in_y + 2.0 * shelf_top_y) / 3.0;
+        double tl_cp2_x = (tl_out_x + 2.0 * table_top_x) / 3.0;
+        double tl_cp2_y = (tl_out_y + 2.0 * shelf_top_y) / 3.0;
+
+        // Top-right corner control points
+        double tr_in_x = table_top_x + table_top_w - r_top;
+        double tr_in_y = shelf_top_y;
+        double tr_out_x = table_top_x + table_top_w + r_top * ux_r;
+        double tr_out_y = shelf_top_y + r_top * uy_r;
+        double tr_cp1_x = (tr_in_x + 2.0 * (table_top_x + table_top_w)) / 3.0;
+        double tr_cp1_y = (tr_in_y + 2.0 * shelf_top_y) / 3.0;
+        double tr_cp2_x = (tr_out_x + 2.0 * (table_top_x + table_top_w)) / 3.0;
+        double tr_cp2_y = (tr_out_y + 2.0 * shelf_top_y) / 3.0;
+
+        // Bottom-right corner control points
+        double br_in_x = (table_bottom_x + table_bottom_w) - r_btm * ux_r;
+        double br_in_y = shelf_rim_y - r_btm * uy_r;
+        double br_out_x = (table_bottom_x + table_bottom_w) - r_btm;
+        double br_out_y = shelf_rim_y;
+        double br_cp1_x = (br_in_x + 2.0 * (table_bottom_x + table_bottom_w)) / 3.0;
+        double br_cp1_y = (br_in_y + 2.0 * shelf_rim_y) / 3.0;
+        double br_cp2_x = (br_out_x + 2.0 * (table_bottom_x + table_bottom_w)) / 3.0;
+        double br_cp2_y = (br_out_y + 2.0 * shelf_rim_y) / 3.0;
+
+        // Bottom-left corner control points
+        double bl_in_x = table_bottom_x + r_btm;
+        double bl_in_y = shelf_rim_y;
+        double bl_out_x = table_bottom_x + r_btm * ux_l;
+        double bl_out_y = shelf_rim_y + r_btm * uy_l;
+        double bl_cp1_x = (bl_in_x + 2.0 * table_bottom_x) / 3.0;
+        double bl_cp1_y = (bl_in_y + 2.0 * shelf_rim_y) / 3.0;
+        double bl_cp2_x = (bl_out_x + 2.0 * table_bottom_x) / 3.0;
+        double bl_cp2_y = (bl_out_y + 2.0 * shelf_rim_y) / 3.0;
+
+        // 1. Drop shadow beneath the shelf
+        cairo_save(cr);
+        cairo_pattern_t *sh = cairo_pattern_create_linear(0, shelf_rim_y, 0, shelf_rim_y + front_rim_h + 8.0);
+        cairo_pattern_add_color_stop_rgba(sh, 0.0, 0, 0, 0, dark ? 0.35 : 0.20);
+        cairo_pattern_add_color_stop_rgba(sh, 1.0, 0, 0, 0, 0.0);
+        draw_rounded_rect(cr, table_bottom_x - 6.0, shelf_rim_y, table_bottom_w + 12.0, front_rim_h + 8.0, 4.0);
+        cairo_set_source(cr, sh);
+        cairo_fill(cr);
+        cairo_pattern_destroy(sh);
+        cairo_restore(cr);
+
+        // 2. The 3D Slanted Shelf Tabletop (Frosted Smoked / Light Glass with rounded corners)
+        cairo_save(cr);
+        cairo_new_path(cr);
+        cairo_move_to(cr, tl_out_x, tl_out_y);
+        cairo_line_to(cr, tr_in_x, tr_in_y);
+        cairo_curve_to(cr, tr_cp1_x, tr_cp1_y, tr_cp2_x, tr_cp2_y, tr_out_x, tr_out_y);
+        cairo_line_to(cr, br_in_x, br_in_y);
+        cairo_curve_to(cr, br_cp1_x, br_cp1_y, br_cp2_x, br_cp2_y, br_out_x, br_out_y);
+        cairo_line_to(cr, bl_in_x, bl_in_y);
+        cairo_curve_to(cr, bl_cp1_x, bl_cp1_y, bl_cp2_x, bl_cp2_y, bl_out_x, bl_out_y);
+        cairo_line_to(cr, tl_in_x, tl_in_y);
+        cairo_curve_to(cr, tl_cp1_x, tl_cp1_y, tl_cp2_x, tl_cp2_y, tl_out_x, tl_out_y);
+        cairo_close_path(cr);
+
+        cairo_pattern_t *pat = cairo_pattern_create_linear(0, shelf_top_y, 0, shelf_rim_y);
+        if (dark) {
+            cairo_pattern_add_color_stop_rgba(pat, 0.0,  0.22, 0.25, 0.30, 0.52);
+            cairo_pattern_add_color_stop_rgba(pat, 0.35, 0.14, 0.16, 0.20, 0.70);
+            cairo_pattern_add_color_stop_rgba(pat, 0.75, 0.09, 0.10, 0.14, 0.82);
+            cairo_pattern_add_color_stop_rgba(pat, 1.0,  0.06, 0.07, 0.10, 0.90);
+        } else {
+            cairo_pattern_add_color_stop_rgba(pat, 0.0, 0.88, 0.92, 0.98, 0.52);
+            cairo_pattern_add_color_stop_rgba(pat, 0.35, 0.76, 0.80, 0.88, 0.60);
+            cairo_pattern_add_color_stop_rgba(pat, 0.80, 0.65, 0.70, 0.78, 0.68);
+            cairo_pattern_add_color_stop_rgba(pat, 1.0, 0.58, 0.63, 0.72, 0.78);
         }
+        cairo_set_source(cr, pat);
+        cairo_fill_preserve(cr);
+        cairo_pattern_destroy(pat);
 
-        if (dock->blur_cache) {
-            int bw = cairo_image_surface_get_width(dock->blur_cache);
-            int bh = cairo_image_surface_get_height(dock->blur_cache);
+        // Top back edge highlight: follows the top curve and top edge smoothly
+        cairo_new_path(cr);
+        cairo_move_to(cr, tl_in_x, tl_in_y + 0.5);
+        cairo_curve_to(cr, tl_cp1_x, tl_cp1_y + 0.5, tl_cp2_x, tl_cp2_y + 0.5, tl_out_x, tl_out_y + 0.5);
+        cairo_line_to(cr, tr_in_x, tr_in_y + 0.5);
+        cairo_curve_to(cr, tr_cp1_x, tr_cp1_y + 0.5, tr_cp2_x, tr_cp2_y + 0.5, tr_out_x, tr_out_y + 0.5);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, dark ? 0.38 : 0.90);
+        cairo_set_line_width(cr, dark ? 1.0 : 1.2);
+        cairo_stroke(cr);
 
+        // Angled side bevels
+        cairo_new_path(cr);
+        cairo_move_to(cr, tl_in_x, tl_in_y);
+        cairo_line_to(cr, bl_out_x, bl_out_y);
+        cairo_move_to(cr, tr_out_x, tr_out_y);
+        cairo_line_to(cr, br_in_x, br_in_y);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, dark ? 0.22 : 0.55);
+        cairo_set_line_width(cr, dark ? 0.9 : 1.2);
+        cairo_stroke(cr);
+        cairo_restore(cr);
+
+        // 3. The Front Vertical Rim / Lip (with rounded bottom corners)
+        cairo_save(cr);
+        cairo_new_path(cr);
+        cairo_move_to(cr, table_bottom_x, shelf_rim_y);
+        cairo_line_to(cr, table_bottom_x + table_bottom_w, shelf_rim_y);
+        cairo_line_to(cr, table_bottom_x + table_bottom_w, shelf_rim_y + front_rim_h - r_rim_btm);
+        cairo_curve_to(cr, table_bottom_x + table_bottom_w, shelf_rim_y + front_rim_h,
+                           table_bottom_x + table_bottom_w, shelf_rim_y + front_rim_h,
+                           table_bottom_x + table_bottom_w - r_rim_btm, shelf_rim_y + front_rim_h);
+        cairo_line_to(cr, table_bottom_x + r_rim_btm, shelf_rim_y + front_rim_h);
+        cairo_curve_to(cr, table_bottom_x, shelf_rim_y + front_rim_h,
+                           table_bottom_x, shelf_rim_y + front_rim_h,
+                           table_bottom_x, shelf_rim_y + front_rim_h - r_rim_btm);
+        cairo_close_path(cr);
+
+        cairo_pattern_t *rim_pat = cairo_pattern_create_linear(0, shelf_rim_y, 0, shelf_rim_y + front_rim_h);
+        if (dark) {
+            cairo_pattern_add_color_stop_rgba(rim_pat, 0.0,  0.18, 0.20, 0.25, 0.92);
+            cairo_pattern_add_color_stop_rgba(rim_pat, 0.40, 0.11, 0.12, 0.16, 0.96);
+            cairo_pattern_add_color_stop_rgba(rim_pat, 1.0,  0.05, 0.06, 0.08, 0.98);
+        } else {
+            cairo_pattern_add_color_stop_rgba(rim_pat, 0.0, 0.42, 0.46, 0.52, 0.85);
+            cairo_pattern_add_color_stop_rgba(rim_pat, 0.25, 0.25, 0.28, 0.33, 0.92);
+            cairo_pattern_add_color_stop_rgba(rim_pat, 1.0, 0.14, 0.16, 0.20, 0.98);
+        }
+        cairo_set_source(cr, rim_pat);
+        cairo_fill(cr);
+        cairo_pattern_destroy(rim_pat);
+
+        // Shelf rim highlight (bright line separating tabletop and front rim)
+        cairo_new_path(cr);
+        cairo_move_to(cr, table_bottom_x + 1.0, shelf_rim_y + 0.5);
+        cairo_line_to(cr, table_bottom_x + table_bottom_w - 1.0, shelf_rim_y + 0.5);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, dark ? 0.45 : 0.95);
+        cairo_set_line_width(cr, 1.0);
+        cairo_stroke(cr);
+
+        // Bottom dark edge of front rim, following the rounded bottom corners
+        cairo_new_path(cr);
+        cairo_move_to(cr, table_bottom_x + 0.5, shelf_rim_y + front_rim_h - r_rim_btm);
+        cairo_curve_to(cr, table_bottom_x + 0.5, shelf_rim_y + front_rim_h - 0.5,
+                           table_bottom_x + 0.5, shelf_rim_y + front_rim_h - 0.5,
+                           table_bottom_x + r_rim_btm, shelf_rim_y + front_rim_h - 0.5);
+        cairo_line_to(cr, table_bottom_x + table_bottom_w - r_rim_btm, shelf_rim_y + front_rim_h - 0.5);
+        cairo_curve_to(cr, table_bottom_x + table_bottom_w - 0.5, shelf_rim_y + front_rim_h - 0.5,
+                           table_bottom_x + table_bottom_w - 0.5, shelf_rim_y + front_rim_h - 0.5,
+                           table_bottom_x + table_bottom_w - 0.5, shelf_rim_y + front_rim_h - r_rim_btm);
+        cairo_set_source_rgba(cr, 0.02, 0.03, 0.04, 0.90);
+        cairo_set_line_width(cr, 1.0);
+        cairo_stroke(cr);
+
+        // Outer side edges of front rim
+        cairo_new_path(cr);
+        cairo_move_to(cr, table_bottom_x + 0.5, shelf_rim_y);
+        cairo_line_to(cr, table_bottom_x + 0.5, shelf_rim_y + front_rim_h - r_rim_btm);
+        cairo_move_to(cr, table_bottom_x + table_bottom_w - 0.5, shelf_rim_y);
+        cairo_line_to(cr, table_bottom_x + table_bottom_w - 0.5, shelf_rim_y + front_rim_h - r_rim_btm);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, dark ? 0.20 : 0.40);
+        cairo_set_line_width(cr, 1.0);
+        cairo_stroke(cr);
+        cairo_restore(cr);
+
+        // 4. 3D Separator (Slanted glass divider plaque on shelf)
+        if (pinned_sep_x >= 0.0) {
             cairo_save(cr);
-            draw_rounded_rect(cr, pill_x, pill_local_y, used, pill_h, pill_r);
-            cairo_clip(cr);
+            double sep_ratio = (pinned_sep_x - table_bottom_x) / table_bottom_w;
+            double top_sep_x = table_top_x + sep_ratio * table_top_w;
+            double btm_sep_x = pinned_sep_x;
 
-            cairo_scale(cr, (double)dock->screen_width / bw, (double)dock->buffer_height / bh);
-            cairo_set_source_surface(cr, dock->blur_cache, 0, 0);
-            cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
-            cairo_pattern_set_extend(cairo_get_source(cr), CAIRO_EXTEND_PAD);
-            cairo_paint(cr);
+            cairo_move_to(cr, btm_sep_x - 1.2, shelf_rim_y - 0.5);
+            cairo_line_to(cr, top_sep_x - 1.2, shelf_top_y + 1.5);
+            cairo_line_to(cr, top_sep_x + 1.2, shelf_top_y + 1.5);
+            cairo_line_to(cr, btm_sep_x + 1.2, shelf_rim_y - 0.5);
+            cairo_close_path(cr);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, dark ? 0.08 : 0.25);
+            cairo_fill_preserve(cr);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, dark ? 0.28 : 0.65);
+            cairo_set_line_width(cr, 0.8);
+            cairo_stroke(cr);
+
+            // Front rim notch for separator
+            cairo_move_to(cr, btm_sep_x, shelf_rim_y);
+            cairo_line_to(cr, btm_sep_x, shelf_rim_y + front_rim_h);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, dark ? 0.15 : 0.35);
+            cairo_set_line_width(cr, 1.0);
+            cairo_stroke(cr);
             cairo_restore(cr);
+        }
+    } else {
+        // --- MODERN FLOATING GLASS PILL ---
+        double pill_r = 22.0;
+        if (pill_r > pill_h / 2.0) pill_r = pill_h / 2.0;
+        dock->pill_r = pill_r;
+        draw_drop_shadow(cr, pill_x, pill_local_y, used, pill_h, pill_r, 18.0, 0.5);
 
+        if (dock->server && dock->server->config.blur_dock) {
             // Dark frosted glass tint overlay
             cairo_save(cr);
             draw_rounded_rect(cr, pill_x, pill_local_y, used, pill_h, pill_r);
-            cairo_set_source_rgba(cr, 0.08, 0.09, 0.12, 0.55);
+            cairo_set_source_rgba(cr, 0.10, 0.11, 0.15, 0.42);
             cairo_fill(cr);
             cairo_restore(cr);
 
             // Subtle outer border & specular top highlight
             cairo_save(cr);
             draw_rounded_rect(cr, pill_x, pill_local_y, used, pill_h, pill_r);
-            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.18);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.22);
             cairo_set_line_width(cr, 1.0);
             cairo_stroke(cr);
 
             cairo_new_path(cr);
             cairo_move_to(cr, pill_x + pill_r, pill_local_y + 0.5);
             cairo_line_to(cr, pill_x + used - pill_r, pill_local_y + 0.5);
-            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.32);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.38);
             cairo_set_line_width(cr, 1.0);
             cairo_stroke(cr);
             cairo_restore(cr);
         } else {
             draw_glass_panel(cr, pill_x, pill_local_y, used, pill_h, pill_r,
-                             0.10, 0.11, 0.14, 0.60);
+                             0.10, 0.11, 0.14, 0.75);
         }
-    } else {
-        draw_glass_panel(cr, pill_x, pill_local_y, used, pill_h, pill_r,
-                         0.10, 0.11, 0.14, 0.60);
-    }
 
-    // Separators drawn crisply over frosted glass
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.18);
-    if (left_sep_x >= 0.0) {
-        cairo_rectangle(cr, left_sep_x, pill_local_y + 14.0, 1.0, pill_h - 28.0);
-        cairo_fill(cr);
-    }
-    if (pinned_sep_x >= 0.0) {
-        cairo_rectangle(cr, pinned_sep_x, pill_local_y + 14.0, 1.0, pill_h - 28.0);
-        cairo_fill(cr);
-    }
-    if (right_sep_x >= 0.0) {
-        cairo_rectangle(cr, right_sep_x, pill_local_y + 14.0, 1.0, pill_h - 28.0);
-        cairo_fill(cr);
+        // Separators drawn crisply over frosted glass
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.18);
+        if (left_sep_x >= 0.0) {
+            cairo_rectangle(cr, left_sep_x, pill_local_y + 14.0, 1.0, pill_h - 28.0);
+            cairo_fill(cr);
+        }
+        if (pinned_sep_x >= 0.0) {
+            cairo_rectangle(cr, pinned_sep_x, pill_local_y + 14.0, 1.0, pill_h - 28.0);
+            cairo_fill(cr);
+        }
+        if (right_sep_x >= 0.0) {
+            cairo_rectangle(cr, right_sep_x, pill_local_y + 14.0, 1.0, pill_h - 28.0);
+            cairo_fill(cr);
+        }
     }
 
     if (has_mp_dock && mp_draw_x >= 0.0) {
-        double mp_h = pill_h - 12.0;
-        double mp_y = pill_local_y + 6.0;
+        double mp_h = is_3d ? (base * 0.72) : (pill_h - 12.0);
+        double mp_y = is_3d ? (shelf_rim_y - mp_h - 4.0) : (pill_local_y + 6.0);
         dock->server->music_pill->dock_pill_x = mp_draw_x;
-        dock->server->music_pill->dock_pill_y = dock->pill_y + 6.0;
+        dock->server->music_pill->dock_pill_y = dock->pill_y + (is_3d ? (shelf_rim_y - pill_local_y - mp_h - 4.0) : 6.0);
         dock->server->music_pill->dock_pill_w = mp_w;
         dock->server->music_pill->dock_pill_h = mp_h;
         music_pill_render_dock(dock->server->music_pill, cr, mp_draw_x, mp_y, mp_w, mp_h);
@@ -1030,7 +1586,7 @@ void dock_render(aurade_dock_t *dock) {
     dock->hovered_index = -1;
     double best_scale = 1.0;
 
-    double icon_bottom = pill_local_y + pill_h - 10.0;
+    double icon_bottom = is_3d ? (shelf_rim_y - 1.0) : (pill_local_y + pill_h - 10.0);
     int drag_draw_idx = -1;
 
     for (int i = 0; i < count; i++) {
@@ -1042,17 +1598,120 @@ void dock_render(aurade_dock_t *dock) {
         double cx = dock->items[i].center_x;
         double cy = icon_bottom - w / 2.0 + dock->items[i].bounce_offset;
 
+        // In 3D Table mode, render subtle icon reflection on the glass tabletop
+        if (is_3d && dock->items[i].icon_surface) {
+            cairo_surface_t *surf = dock->items[i].cached_base_surface ?
+                                    dock->items[i].cached_base_surface : dock->items[i].icon_surface;
+            int iw = cairo_image_surface_get_width(surf);
+            int ih = cairo_image_surface_get_height(surf);
+            if (iw > 0 && ih > 0) {
+                cairo_save(cr);
+                cairo_rectangle(cr, cx - w / 2.0 - 4.0, icon_bottom, w + 8.0, shelf_depth + front_rim_h + 4.0);
+                cairo_clip(cr);
+                cairo_translate(cr, cx - w / 2.0, icon_bottom);
+                cairo_scale(cr, w / (double)iw, -0.22 * (w / (double)ih));
+                cairo_set_source_surface(cr, surf, 0, -ih);
+                cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
+                cairo_paint_with_alpha(cr, dark ? 0.18 : 0.28);
+                cairo_restore(cr);
+            }
+        }
+
         draw_dock_item_icon(cr, cx, cy, w, &dock->items[i]);
 
-        if (dock->items[i].demands_attention) {
-            cairo_arc(cr, cx, pill_local_y + pill_h - 5.0, 3.0, 0, 2 * M_PI);
-            cairo_set_source_rgba(cr, 1.0, 0.45, 0.10, 0.98);
-            cairo_fill(cr);
-        } else if (dock->items[i].is_running) {
-            cairo_arc(cr, cx, pill_local_y + pill_h - 5.0, 2.1, 0, 2 * M_PI);
-            cairo_set_source_rgba(cr, dock->items[i].is_pinned ? 1.0 : 0.75,
-                                  1.0, 1.0, 0.86);
-            cairo_fill(cr);
+        if (is_3d) {
+            double led_y = shelf_rim_y + front_rim_h / 2.0;
+            if (dock->items[i].demands_attention) {
+                cairo_pattern_t *glow = cairo_pattern_create_radial(cx, led_y, 0.3, cx, led_y, 3.5);
+                cairo_pattern_add_color_stop_rgba(glow, 0.0, 1.0, 0.7, 0.2, 0.95);
+                cairo_pattern_add_color_stop_rgba(glow, 0.5, 1.0, 0.45, 0.1, 0.50);
+                cairo_pattern_add_color_stop_rgba(glow, 1.0, 1.0, 0.3, 0.0, 0.0);
+                cairo_arc(cr, cx, led_y, 3.5, 0, 2 * M_PI);
+                cairo_set_source(cr, glow);
+                cairo_fill(cr);
+                cairo_pattern_destroy(glow);
+
+                cairo_arc(cr, cx, led_y, 1.3, 0, 2 * M_PI);
+                cairo_set_source_rgba(cr, 1.0, 0.95, 0.85, 0.98);
+                cairo_fill(cr);
+            } else if (dock->items[i].is_running) {
+                int wcount = dock->items[i].window_count;
+                if (wcount <= 1) {
+                    cairo_pattern_t *glow = cairo_pattern_create_radial(cx, led_y, 0.3, cx, led_y, 3.5);
+                    cairo_pattern_add_color_stop_rgba(glow, 0.0, 0.4, 0.85, 1.0, 0.95);
+                    cairo_pattern_add_color_stop_rgba(glow, 0.5, 0.15, 0.55, 0.95, 0.45);
+                    cairo_pattern_add_color_stop_rgba(glow, 1.0, 0.0, 0.3, 0.8, 0.0);
+                    cairo_arc(cr, cx, led_y, 3.5, 0, 2 * M_PI);
+                    cairo_set_source(cr, glow);
+                    cairo_fill(cr);
+                    cairo_pattern_destroy(glow);
+
+                    cairo_arc(cr, cx, led_y, 1.3, 0, 2 * M_PI);
+                    cairo_set_source_rgba(cr, 0.92, 0.97, 1.0, 0.98);
+                    cairo_fill(cr);
+                } else if (wcount == 2) {
+                    double dots[2] = { cx - 3.5, cx + 3.5 };
+                    for (int d = 0; d < 2; d++) {
+                        cairo_pattern_t *glow = cairo_pattern_create_radial(dots[d], led_y, 0.2, dots[d], led_y, 2.8);
+                        cairo_pattern_add_color_stop_rgba(glow, 0.0, 0.4, 0.85, 1.0, 0.95);
+                        cairo_pattern_add_color_stop_rgba(glow, 0.5, 0.15, 0.55, 0.95, 0.45);
+                        cairo_pattern_add_color_stop_rgba(glow, 1.0, 0.0, 0.3, 0.8, 0.0);
+                        cairo_arc(cr, dots[d], led_y, 2.8, 0, 2 * M_PI);
+                        cairo_set_source(cr, glow);
+                        cairo_fill(cr);
+                        cairo_pattern_destroy(glow);
+
+                        cairo_arc(cr, dots[d], led_y, 1.1, 0, 2 * M_PI);
+                        cairo_set_source_rgba(cr, 0.92, 0.97, 1.0, 0.98);
+                        cairo_fill(cr);
+                    }
+                } else {
+                    double dots[3] = { cx - 5.5, cx, cx + 5.5 };
+                    for (int d = 0; d < 3; d++) {
+                        cairo_pattern_t *glow = cairo_pattern_create_radial(dots[d], led_y, 0.2, dots[d], led_y, 2.5);
+                        cairo_pattern_add_color_stop_rgba(glow, 0.0, 0.4, 0.85, 1.0, 0.95);
+                        cairo_pattern_add_color_stop_rgba(glow, 0.5, 0.15, 0.55, 0.95, 0.45);
+                        cairo_pattern_add_color_stop_rgba(glow, 1.0, 0.0, 0.3, 0.8, 0.0);
+                        cairo_arc(cr, dots[d], led_y, 2.5, 0, 2 * M_PI);
+                        cairo_set_source(cr, glow);
+                        cairo_fill(cr);
+                        cairo_pattern_destroy(glow);
+
+                        cairo_arc(cr, dots[d], led_y, 1.0, 0, 2 * M_PI);
+                        cairo_set_source_rgba(cr, 0.92, 0.97, 1.0, 0.98);
+                        cairo_fill(cr);
+                    }
+                }
+            }
+        } else {
+            if (dock->items[i].demands_attention) {
+                cairo_arc(cr, cx, pill_local_y + pill_h - 5.0, 3.0, 0, 2 * M_PI);
+                cairo_set_source_rgba(cr, 1.0, 0.45, 0.10, 0.98);
+                cairo_fill(cr);
+            } else if (dock->items[i].is_running) {
+                int wcount = dock->items[i].window_count;
+                double dot_y = pill_local_y + pill_h - 5.0;
+                double alpha = dock->items[i].is_pinned ? 1.0 : 0.75;
+                if (wcount <= 1) {
+                    cairo_arc(cr, cx, dot_y, 2.1, 0, 2 * M_PI);
+                    cairo_set_source_rgba(cr, alpha, 1.0, 1.0, 0.86);
+                    cairo_fill(cr);
+                } else if (wcount == 2) {
+                    cairo_arc(cr, cx - 3.5, dot_y, 1.8, 0, 2 * M_PI);
+                    cairo_set_source_rgba(cr, alpha, 1.0, 1.0, 0.86);
+                    cairo_fill(cr);
+                    cairo_arc(cr, cx + 3.5, dot_y, 1.8, 0, 2 * M_PI);
+                    cairo_set_source_rgba(cr, alpha, 1.0, 1.0, 0.86);
+                    cairo_fill(cr);
+                } else {
+                    double dots[3] = { cx - 5.5, cx, cx + 5.5 };
+                    for (int d = 0; d < 3; d++) {
+                        cairo_arc(cr, dots[d], dot_y, 1.6, 0, 2 * M_PI);
+                        cairo_set_source_rgba(cr, alpha, 1.0, 1.0, 0.86);
+                        cairo_fill(cr);
+                    }
+                }
+            }
         }
 
         if (!dock->is_dragging && dock->mouse_over_dock && dock->items[i].current_scale > best_scale) {
@@ -1071,22 +1730,43 @@ void dock_render(aurade_dock_t *dock) {
         draw_drop_shadow(cr, cx - w / 2.0, cy - w / 2.0, w, w, w * 0.235, 12.0, 0.55);
         draw_dock_item_icon(cr, cx, cy, w, &dock->items[drag_draw_idx]);
 
-        if (dock->items[drag_draw_idx].demands_attention) {
-            cairo_arc(cr, cx, pill_local_y + pill_h - 5.0, 3.0, 0, 2 * M_PI);
-            cairo_set_source_rgba(cr, 1.0, 0.45, 0.10, 0.98);
-            cairo_fill(cr);
-        } else if (dock->items[drag_draw_idx].is_running) {
-            cairo_arc(cr, cx, pill_local_y + pill_h - 5.0, 2.1, 0, 2 * M_PI);
-            cairo_set_source_rgba(cr, dock->items[drag_draw_idx].is_pinned ? 1.0 : 0.75,
-                                  1.0, 1.0, 0.86);
-            cairo_fill(cr);
+        if (is_3d) {
+            double led_y = shelf_rim_y + front_rim_h / 2.0;
+            if (dock->items[drag_draw_idx].demands_attention) {
+                cairo_arc(cr, cx, led_y, 1.4, 0, 2 * M_PI);
+                cairo_set_source_rgba(cr, 1.0, 0.45, 0.10, 0.98);
+                cairo_fill(cr);
+            } else if (dock->items[drag_draw_idx].is_running) {
+                cairo_arc(cr, cx, led_y, 1.4, 0, 2 * M_PI);
+                cairo_set_source_rgba(cr, 0.7, 0.9, 1.0, 0.95);
+                cairo_fill(cr);
+            }
+        } else {
+            if (dock->items[drag_draw_idx].demands_attention) {
+                cairo_arc(cr, cx, pill_local_y + pill_h - 5.0, 3.0, 0, 2 * M_PI);
+                cairo_set_source_rgba(cr, 1.0, 0.45, 0.10, 0.98);
+                cairo_fill(cr);
+            } else if (dock->items[drag_draw_idx].is_running) {
+                cairo_arc(cr, cx, pill_local_y + pill_h - 5.0, 2.1, 0, 2 * M_PI);
+                cairo_set_source_rgba(cr, dock->items[drag_draw_idx].is_pinned ? 1.0 : 0.75,
+                                      1.0, 1.0, 0.86);
+                cairo_fill(cr);
+            }
         }
     }
 
     // macOS-style app name tooltip above the hovered icon.
     if (!dock->is_dragging && dock->mouse_over_dock && dock->hovered_index >= 0) {
-        draw_tooltip(dock, cr, dock->items[dock->hovered_index].name,
-                     dock->items[dock->hovered_index].center_x, pill_local_y);
+        dock_item_t *hitem = &dock->items[dock->hovered_index];
+        char tip[96];
+        if (hitem->window_count >= 2) {
+            snprintf(tip, sizeof(tip), "%s (%d)", hitem->name, hitem->window_count);
+        } else {
+            snprintf(tip, sizeof(tip), "%s", hitem->name);
+        }
+        draw_tooltip(dock, cr, tip,
+                     hitem->center_x,
+                     is_3d ? (shelf_top_y - 2.0) : pill_local_y);
     }
 
     cairo_buffer_apply_to_scene(dock->buffer, dock->scene_buffer);
@@ -1328,6 +2008,9 @@ bool dock_handle_context_menu_click(aurade_dock_t *dock, double x, double y) {
             dock_save_pinned(dock);
             dock_update_running_state(dock);
             dock_render(dock);
+            if (dock->server && dock->server->launchpad) {
+                launchpad_refresh(dock->server->launchpad);
+            }
             break;
         }
         case DOCK_MENU_ACT_KEEP_IN_DOCK:
@@ -1335,14 +2018,14 @@ bool dock_handle_context_menu_click(aurade_dock_t *dock, double x, double y) {
             dock_save_pinned(dock);
             dock_update_running_state(dock);
             dock_render(dock);
+            if (dock->server && dock->server->launchpad) {
+                launchpad_refresh(dock->server->launchpad);
+            }
             break;
         case DOCK_MENU_ACT_QUIT: {
-            char target_name[64];
-            snprintf(target_name, sizeof(target_name), "%s", item->name);
             aurade_view_t *view, *tmp;
             wl_list_for_each_safe(view, tmp, &dock->server->views, link) {
-                const char *app_id = view_get_app_id(view);
-                if (app_id && app_id_matches(app_id, target_name)) {
+                if (view_matches_dock_item(view, item)) {
                     view_close(view);
                 }
             }
@@ -1487,6 +2170,15 @@ void dock_handle_motion(aurade_dock_t *dock, double mouse_x, double mouse_y) {
     }
 }
 
+static int cmp_views_by_id(const void *a, const void *b) {
+    const aurade_view_t *va = *(const aurade_view_t **)a;
+    const aurade_view_t *vb = *(const aurade_view_t **)b;
+    if (va->id != vb->id) {
+        return (va->id < vb->id) ? -1 : 1;
+    }
+    return (va < vb) ? -1 : (va > vb ? 1 : 0);
+}
+
 static void activate_item(aurade_dock_t *dock, dock_item_t *item) {
     if (strcmp(item->name, "Launchpad") == 0) {
         if (dock->server && dock->server->launchpad && dock->server->launchpad->active) {
@@ -1506,14 +2198,59 @@ static void activate_item(aurade_dock_t *dock, dock_item_t *item) {
     }
 
     // Clicking a running app's icon focuses (or unminimises) it instead of
-    // spawning a duplicate window.
-    aurade_view_t *view = find_running_view(dock, item->name);
-    if (view) {
-        if (view->workspace != dock->server->current_workspace) {
-            server_switch_workspace(dock->server, view->workspace, true);
+    // spawning a duplicate window. If multiple windows exist, cycle through all of them.
+    aurade_view_t *views[24];
+    int count = find_running_views(dock, item, views, 24);
+    if (count > 0) {
+        // Sort views into a stable order by ID so cycling visits every window sequentially.
+        qsort(views, count, sizeof(aurade_view_t *), cmp_views_by_id);
+
+        aurade_view_t *current_focused = dock->server->focused_view;
+        int focused_idx = -1;
+        for (int v = 0; v < count; v++) {
+            if (views[v] == current_focused) {
+                focused_idx = v;
+                break;
+            }
         }
-        if (view->minimized) view_restore(view);
-        view_focus(view);
+
+        int target_idx = 0;
+        if (focused_idx >= 0 && count > 1) {
+            // Already focused on one of this app's windows! Cycle to the next window!
+            target_idx = (focused_idx + 1) % count;
+        } else {
+            // If none of this app's windows are currently focused, pick the most recently
+            // active one among them
+            aurade_view_t *mru_view = NULL;
+            aurade_view_t *v;
+            wl_list_for_each(v, &dock->server->views, link) {
+                for (int i = 0; i < count; i++) {
+                    if (views[i] == v) {
+                        mru_view = v;
+                        break;
+                    }
+                }
+                if (mru_view) break;
+            }
+            if (mru_view) {
+                for (int i = 0; i < count; i++) {
+                    if (views[i] == mru_view) {
+                        target_idx = i;
+                        break;
+                    }
+                }
+            }
+        }
+
+        aurade_view_t *target = views[target_idx];
+        if (target->workspace != dock->server->current_workspace) {
+            server_switch_workspace(dock->server, target->workspace, true);
+        }
+        if (target->minimized) {
+            view_restore(target);
+        }
+        view_focus(target);
+        if (dock->server) schedule_all_outputs(dock->server);
         return;
     }
 
@@ -1639,9 +2376,9 @@ void dock_destroy(aurade_dock_t *dock) {
         wlr_buffer_drop(&dock->menu_buffer->base);
         dock->menu_buffer = NULL;
     }
-    if (dock->blur_cache) {
-        cairo_surface_destroy(dock->blur_cache);
-        dock->blur_cache = NULL;
+    if (dock->blur_node) {
+        wlr_scene_node_destroy(&dock->blur_node->node);
+        dock->blur_node = NULL;
     }
     if (dock->buffer) wlr_buffer_drop(&dock->buffer->base);
     free(dock);

@@ -8,6 +8,7 @@
 #include <math.h>
 #include <ctype.h>
 #include <librsvg/rsvg.h>
+#include <pwd.h>
 
 static void clean_exec_field(char *exec) {
     // Remove %f, %F, %u, %U, etc.
@@ -138,6 +139,11 @@ static cairo_surface_t *search_icon_name(const char *name) {
 
     char full_path[512];
 
+    static const char *hicolor_subdirs[] = {
+        "scalable/apps", "256x256/apps", "128x128/apps", "64x64/apps",
+        "48x48/apps", "32x32/apps", "16x16/apps"
+    };
+
     // If icon name has extension already:
     if (strstr(name, ".png") || strstr(name, ".svg")) {
         for (size_t i = 0; i < sizeof(search_dirs) / sizeof(search_dirs[0]); i++) {
@@ -146,12 +152,11 @@ static cairo_surface_t *search_icon_name(const char *name) {
             if (s) return s;
         }
         if (home && user_local_icons[0]) {
-            snprintf(full_path, sizeof(full_path), "%s/hicolor/scalable/apps/%s", user_local_icons, name);
-            cairo_surface_t *s = try_file(full_path);
-            if (s) return s;
-            snprintf(full_path, sizeof(full_path), "%s/hicolor/128x128/apps/%s", user_local_icons, name);
-            s = try_file(full_path);
-            if (s) return s;
+            for (size_t k = 0; k < sizeof(hicolor_subdirs) / sizeof(hicolor_subdirs[0]); k++) {
+                snprintf(full_path, sizeof(full_path), "%s/hicolor/%s/%s", user_local_icons, hicolor_subdirs[k], name);
+                cairo_surface_t *s = try_file(full_path);
+                if (s) return s;
+            }
         }
     }
 
@@ -167,12 +172,17 @@ static cairo_surface_t *search_icon_name(const char *name) {
     }
 
     if (home && user_local_icons[0]) {
-        snprintf(full_path, sizeof(full_path), "%s/hicolor/scalable/apps/%s.svg", user_local_icons, name);
-        cairo_surface_t *s = try_file(full_path);
-        if (s) return s;
-        snprintf(full_path, sizeof(full_path), "%s/hicolor/128x128/apps/%s.png", user_local_icons, name);
-        s = try_file(full_path);
-        if (s) return s;
+        for (size_t k = 0; k < sizeof(hicolor_subdirs) / sizeof(hicolor_subdirs[0]); k++) {
+            snprintf(full_path, sizeof(full_path), "%s/hicolor/%s/%s.png", user_local_icons, hicolor_subdirs[k], name);
+            cairo_surface_t *s = try_file(full_path);
+            if (s) return s;
+            snprintf(full_path, sizeof(full_path), "%s/hicolor/%s/%s.svg", user_local_icons, hicolor_subdirs[k], name);
+            s = try_file(full_path);
+            if (s) return s;
+            snprintf(full_path, sizeof(full_path), "%s/hicolor/%s/%s", user_local_icons, hicolor_subdirs[k], name);
+            s = try_file(full_path);
+            if (s) return s;
+        }
     }
 
     return NULL;
@@ -194,16 +204,47 @@ static cairo_surface_t *try_load_icon(const char *icon_name) {
         if (s) return s;
     }
 
-    // GNOME prefix stripped fallback (e.g. org.gnome.Terminal -> gnome-terminal or Terminal)
-    if (strncmp(icon_name, "org.gnome.", 10) == 0) {
-        const char *short_name = icon_name + 10;
-        s = search_icon_name(short_name);
-        if (s) return s;
+    // GNOME / Reverse-DNS prefix stripped fallback (e.g. org.gnome.Nautilus -> nautilus, ai.user.aurade.settings -> settings)
+    if (strchr(icon_name, '.')) {
+        const char *dot = strrchr(icon_name, '.');
+        if (dot && *(dot + 1)) {
+            const char *short_name = dot + 1;
+            s = search_icon_name(short_name);
+            if (s) return s;
 
-        char prefixed[256];
-        snprintf(prefixed, sizeof(prefixed), "gnome-%s", short_name);
-        for (char *p = prefixed; *p; p++) *p = (char)tolower((unsigned char)*p);
-        s = search_icon_name(prefixed);
+            char lower_short[128];
+            strncpy(lower_short, short_name, sizeof(lower_short) - 1);
+            lower_short[sizeof(lower_short) - 1] = '\0';
+            for (char *p = lower_short; *p; p++) *p = (char)tolower((unsigned char)*p);
+            s = search_icon_name(lower_short);
+            if (s) return s;
+
+            char prefixed[256];
+            snprintf(prefixed, sizeof(prefixed), "gnome-%s", lower_short);
+            s = search_icon_name(prefixed);
+            if (s) return s;
+        }
+    }
+
+    // Common category fallbacks for system utilities
+    if (strcasestr(icon_name, "settings") || strcasestr(icon_name, "preferences") || strcasestr(icon_name, "control-center")) {
+        s = search_icon_name("preferences-system");
+        if (s) return s;
+        s = search_icon_name("system-settings");
+        if (s) return s;
+        s = search_icon_name("org.gnome.Settings");
+        if (s) return s;
+    }
+    if (strcasestr(icon_name, "terminal") || strcasestr(icon_name, "alacritty") || strcasestr(icon_name, "kitty") || strcasestr(icon_name, "foot")) {
+        s = search_icon_name("utilities-terminal");
+        if (s) return s;
+    }
+    if (strcasestr(icon_name, "files") || strcasestr(icon_name, "nautilus") || strcasestr(icon_name, "thunar")) {
+        s = search_icon_name("system-file-manager");
+        if (s) return s;
+    }
+    if (strcasestr(icon_name, "browser")) {
+        s = search_icon_name("web-browser");
         if (s) return s;
     }
 
@@ -255,56 +296,79 @@ static void parse_desktop_file(const char *filepath, desktop_app_t *app) {
     app->icon_surface = try_load_icon(app->icon_name);
 }
 
+static void scan_desktop_dir(desktop_apps_t *list, const char *dir_path, bool recursive, int depth) {
+    if (!list || !dir_path || depth > 8 || list->count >= MAX_APPS) return;
+    DIR *dir = opendir(dir_path);
+    if (!dir) return;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+        if (list->count >= MAX_APPS) break;
+
+        char full_path[1024];
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
+
+        struct stat st;
+        if (stat(full_path, &st) != 0) continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            if (recursive) {
+                scan_desktop_dir(list, full_path, true, depth + 1);
+            }
+        } else if (S_ISREG(st.st_mode) && strstr(entry->d_name, ".desktop")) {
+            desktop_app_t app = {0};
+            parse_desktop_file(full_path, &app);
+            if (app.name[0] != '\0') {
+                // Check duplicate name or exec
+                bool dup = false;
+                for (int i = 0; i < list->count; i++) {
+                    if (strcmp(list->apps[i].name, app.name) == 0 ||
+                        strcmp(list->apps[i].exec, app.exec) == 0) {
+                        dup = true;
+                        break;
+                    }
+                }
+                if (!dup) {
+                    list->apps[list->count++] = app;
+                } else if (app.icon_surface) {
+                    cairo_surface_destroy(app.icon_surface);
+                }
+            }
+        }
+    }
+    closedir(dir);
+}
+
 desktop_apps_t *apps_scanner_load(void) {
     desktop_apps_t *list = calloc(1, sizeof(*list));
     if (!list) return NULL;
 
     char user_app_dir[512] = {0};
+    char wine_programs_dir[512] = {0};
+
     const char *home = getenv("HOME");
-    if (home) {
-        snprintf(user_app_dir, sizeof(user_app_dir), "%s/.local/share/applications", home);
+    if (!home) {
+        struct passwd *pw = getpwuid(getuid());
+        if (pw) home = pw->pw_dir;
     }
 
-    const char *dirs[] = {
-        "/usr/share/applications",
-        "/usr/local/share/applications",
-        "/var/lib/flatpak/exports/share/applications",
-        user_app_dir[0] ? user_app_dir : NULL,
-    };
+    if (home) {
+        snprintf(user_app_dir, sizeof(user_app_dir), "%s/.local/share/applications", home);
+        snprintf(wine_programs_dir, sizeof(wine_programs_dir), "%s/.local/share/applications/wine/Programs", home);
+    }
 
-    for (size_t d = 0; d < sizeof(dirs) / sizeof(dirs[0]); d++) {
-        if (!dirs[d]) continue;
-        DIR *dir = opendir(dirs[d]);
-        if (!dir) continue;
+    scan_desktop_dir(list, "/usr/share/applications", false, 0);
+    scan_desktop_dir(list, "/usr/local/share/applications", false, 0);
+    scan_desktop_dir(list, "/var/lib/flatpak/exports/share/applications", false, 0);
 
-        struct dirent *entry;
-        while ((entry = readdir(dir)) != NULL) {
-            if (strstr(entry->d_name, ".desktop")) {
-                if (list->count >= MAX_APPS) break;
-                char full_path[512];
-                snprintf(full_path, sizeof(full_path), "%s/%s", dirs[d], entry->d_name);
+    if (user_app_dir[0]) {
+        scan_desktop_dir(list, user_app_dir, false, 0);
+    }
 
-                desktop_app_t app = {0};
-                parse_desktop_file(full_path, &app);
-                if (app.name[0] != '\0') {
-                    // Check duplicate name or exec
-                    bool dup = false;
-                    for (int i = 0; i < list->count; i++) {
-                        if (strcmp(list->apps[i].name, app.name) == 0 ||
-                            strcmp(list->apps[i].exec, app.exec) == 0) {
-                            dup = true;
-                            break;
-                        }
-                    }
-                    if (!dup) {
-                        list->apps[list->count++] = app;
-                    } else if (app.icon_surface) {
-                        cairo_surface_destroy(app.icon_surface);
-                    }
-                }
-            }
-        }
-        closedir(dir);
+    // Scan Wine Programs directory and all its subdirectories recursively
+    if (wine_programs_dir[0]) {
+        scan_desktop_dir(list, wine_programs_dir, true, 0);
     }
 
     return list;

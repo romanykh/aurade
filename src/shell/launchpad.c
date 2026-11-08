@@ -1,6 +1,8 @@
 #include "launchpad.h"
 #include "dock.h"
+#include "topbar.h"
 #include "../shell/wallpaper.h"
+#include "../window/xdg_shell.h"
 #include <xkbcommon/xkbcommon-keysyms.h>
 #include <xkbcommon/xkbcommon.h>
 #include <json-c/json.h>
@@ -35,6 +37,14 @@ typedef struct {
 static void launchpad_render_drag_preview(aurade_launchpad_t *lp, bool over_dock);
 static void filter_items(aurade_launchpad_t *lp);
 
+static void lp_folder_invalidate_preview(lp_folder_t *folder) {
+    if (!folder) return;
+    if (folder->preview_surface) {
+        cairo_surface_destroy(folder->preview_surface);
+        folder->preview_surface = NULL;
+    }
+}
+
 static uint64_t lp_now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -63,15 +73,29 @@ static desktop_app_t *find_app_exact_or_match(desktop_apps_t *list, const char *
             if (strcmp(list->apps[i].exec, exec) == 0) return &list->apps[i];
         }
     }
-    // 3. Fallback to apps_find
-    if (name && *name) {
-        desktop_app_t *a = apps_find(list, name);
-        if (a) return a;
-    }
-    if (exec && *exec) {
-        return apps_find(list, exec);
-    }
     return NULL;
+}
+
+static bool launchpad_has_app(aurade_launchpad_t *lp, desktop_app_t *app) {
+    if (!lp || !app) return false;
+    for (int i = 0; i < lp->item_count; i++) {
+        if (lp->items[i].type == LP_ITEM_APP && lp->items[i].app) {
+            if (lp->items[i].app == app ||
+                strcmp(lp->items[i].app->name, app->name) == 0) {
+                return true;
+            }
+        } else if (lp->items[i].type == LP_ITEM_FOLDER && lp->items[i].folder) {
+            for (int j = 0; j < lp->items[i].folder->app_count; j++) {
+                if (lp->items[i].folder->apps[j]) {
+                    if (lp->items[i].folder->apps[j] == app ||
+                        strcmp(lp->items[i].folder->apps[j]->name, app->name) == 0) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
 }
 
 void launchpad_load_layout(aurade_launchpad_t *lp) {
@@ -122,8 +146,14 @@ void launchpad_load_layout(aurade_launchpad_t *lp) {
                             const char *aexec = aexec_val ? json_object_get_string(aexec_val) : "";
 
                             desktop_app_t *dapp = find_app_exact_or_match(lp->server->apps, aname, aexec);
-                            if (dapp) {
-                                f->apps[f->app_count++] = dapp;
+                            if (dapp && !launchpad_has_app(lp, dapp)) {
+                                bool already_in = false;
+                                for (int k = 0; k < f->app_count; k++) {
+                                    if (f->apps[k] == dapp) { already_in = true; break; }
+                                }
+                                if (!already_in) {
+                                    f->apps[f->app_count++] = dapp;
+                                }
                             }
                         }
                     }
@@ -152,7 +182,7 @@ void launchpad_load_layout(aurade_launchpad_t *lp) {
                     const char *aexec = exec_val ? json_object_get_string(exec_val) : "";
 
                     desktop_app_t *dapp = find_app_exact_or_match(lp->server->apps, aname, aexec);
-                    if (dapp) {
+                    if (dapp && !launchpad_has_app(lp, dapp)) {
                         lp->items[lp->item_count].type = LP_ITEM_APP;
                         lp->items[lp->item_count].app = dapp;
                         lp->items[lp->item_count].folder = NULL;
@@ -167,22 +197,7 @@ void launchpad_load_layout(aurade_launchpad_t *lp) {
     // Now append any system apps that aren't yet in lp->items or any folder
     for (int i = 0; i < lp->server->apps->count && lp->item_count < LAUNCHPAD_MAX_ITEMS; i++) {
         desktop_app_t *a = &lp->server->apps->apps[i];
-        bool present = false;
-        for (int k = 0; k < lp->item_count; k++) {
-            if (lp->items[k].type == LP_ITEM_APP && lp->items[k].app == a) {
-                present = true;
-                break;
-            } else if (lp->items[k].type == LP_ITEM_FOLDER && lp->items[k].folder) {
-                for (int m = 0; m < lp->items[k].folder->app_count; m++) {
-                    if (lp->items[k].folder->apps[m] == a) {
-                        present = true;
-                        break;
-                    }
-                }
-                if (present) break;
-            }
-        }
-        if (!present) {
+        if (!launchpad_has_app(lp, a)) {
             lp->items[lp->item_count].type = LP_ITEM_APP;
             lp->items[lp->item_count].app = a;
             lp->items[lp->item_count].folder = NULL;
@@ -315,7 +330,26 @@ static void filter_items(aurade_launchpad_t *lp) {
 
     if (lp->search_query[0] == '\0') {
         for (int i = 0; i < lp->item_count && lp->filtered_count < LAUNCHPAD_MAX_FILTERED; i++) {
-            lp->filtered_items[lp->filtered_count++] = lp->items[i];
+            if (lp->items[i].type == LP_ITEM_APP) {
+                if (lp->server && lp->server->dock &&
+                    dock_has_app(lp->server->dock, lp->items[i].app)) {
+                    continue; // Hide icons already in the dock
+                }
+                lp->filtered_items[lp->filtered_count++] = lp->items[i];
+            } else if (lp->items[i].type == LP_ITEM_FOLDER && lp->items[i].folder) {
+                lp_folder_t *f = lp->items[i].folder;
+                bool has_visible = false;
+                for (int j = 0; j < f->app_count; j++) {
+                    if (f->apps[j] &&
+                        !(lp->server && lp->server->dock && dock_has_app(lp->server->dock, f->apps[j]))) {
+                        has_visible = true;
+                        break;
+                    }
+                }
+                if (has_visible || f->app_count == 0) {
+                    lp->filtered_items[lp->filtered_count++] = lp->items[i];
+                }
+            }
         }
     } else {
         for (int i = 0; i < lp->item_count && lp->filtered_count < LAUNCHPAD_MAX_FILTERED; i++) {
@@ -362,23 +396,74 @@ static void filter_items(aurade_launchpad_t *lp) {
     }
 }
 
+static void launchpad_setup_scene(aurade_launchpad_t *lp) {
+    if (!lp || !lp->server) return;
+    int sw = lp->screen_width > 0 ? lp->screen_width : 1920;
+    int sh = lp->screen_height > 0 ? lp->screen_height : 1080;
+
+    struct wlr_buffer *bg_buf = NULL;
+    if (lp->server->wallpaper && lp->server->wallpaper->blurred_buffer) {
+        bg_buf = &lp->server->wallpaper->blurred_buffer->base;
+    }
+    struct wlr_buffer *fg_buf = lp->buffer ? &lp->buffer->base : NULL;
+
+    if (!lp->tree) {
+        lp->tree = wlr_scene_tree_create(lp->server->overlay_tree);
+        wlr_scene_node_set_enabled(&lp->tree->node, false);
+    }
+
+    bool use_bg = lp->server && lp->server->config.blur_launchpad && bg_buf != NULL;
+    if (use_bg) {
+        if (!lp->bg_scene_buffer) {
+            lp->bg_scene_buffer = wlr_scene_buffer_create(lp->tree, bg_buf);
+        } else {
+            wlr_scene_buffer_set_buffer(lp->bg_scene_buffer, bg_buf);
+        }
+        if (lp->bg_scene_buffer) {
+            wlr_scene_node_set_enabled(&lp->bg_scene_buffer->node, true);
+            wlr_scene_buffer_set_dest_size(lp->bg_scene_buffer, sw, sh);
+            wlr_scene_node_set_position(&lp->bg_scene_buffer->node, 0, 0);
+        }
+    } else if (lp->bg_scene_buffer) {
+        wlr_scene_node_set_enabled(&lp->bg_scene_buffer->node, false);
+    }
+
+    if (!lp->fg_scene_buffer && fg_buf) {
+        lp->fg_scene_buffer = wlr_scene_buffer_create(lp->tree, fg_buf);
+    } else if (lp->fg_scene_buffer && fg_buf) {
+        wlr_scene_buffer_set_buffer(lp->fg_scene_buffer, fg_buf);
+    }
+    if (lp->fg_scene_buffer) {
+        wlr_scene_node_set_enabled(&lp->fg_scene_buffer->node, true);
+        wlr_scene_buffer_set_dest_size(lp->fg_scene_buffer, sw, sh);
+        wlr_scene_node_set_position(&lp->fg_scene_buffer->node, 0, 0);
+        wlr_scene_node_raise_to_top(&lp->fg_scene_buffer->node);
+    }
+}
+
 aurade_launchpad_t *launchpad_create(aurade_server_t *server) {
     aurade_launchpad_t *lp = calloc(1, sizeof(*lp));
     lp->server = server;
-    lp->screen_width = 1920;
-    lp->screen_height = 1080;
+    lp->screen_width = server->screen_width > 0 ? server->screen_width : 1920;
+    lp->screen_height = server->screen_height > 0 ? server->screen_height : 1080;
     lp->progress = 0.0;
     lp->active = false;
     lp->hovered_index = -1;
     lp->hovered_folder_app_idx = -1;
     lp->open_folder = NULL;
+    lp->anim_folder = NULL;
+    lp->folder_animating = false;
+    lp->folder_anim_progress = 0.0;
+    lp->folder_anim_target = 0.0;
+    lp->folder_scroll_y = 0.0;
+    lp->folder_target_scroll_y = 0.0;
+    lp->folder_scrollbar_dragging = false;
     lp->folder_renaming = false;
     lp->drop_action = DROP_TARGET_NONE;
     lp->drop_target_idx = -1;
 
     lp->buffer = cairo_buffer_create(lp->screen_width, lp->screen_height);
-    lp->scene_buffer = wlr_scene_buffer_create(server->overlay_tree, &lp->buffer->base);
-    wlr_scene_node_set_enabled(&lp->scene_buffer->node, false);
+    launchpad_setup_scene(lp);
 
     lp->drag_buffer = cairo_buffer_create(220, 180);
     lp->drag_scene_buffer = wlr_scene_buffer_create(server->dock_tree ? server->dock_tree : server->overlay_tree,
@@ -391,10 +476,15 @@ aurade_launchpad_t *launchpad_create(aurade_server_t *server) {
 }
 
 void launchpad_resize(aurade_launchpad_t *lp, int width, int height) {
-    if (!lp) return;
+    if (!lp || width <= 0 || height <= 0) return;
+    if (lp->screen_width == width && lp->screen_height == height) return;
     lp->screen_width = width;
     lp->screen_height = height;
     cairo_buffer_resize(lp->buffer, width, height);
+    launchpad_setup_scene(lp);
+    if (lp->active) {
+        launchpad_render(lp);
+    }
 }
 
 void launchpad_begin(aurade_launchpad_t *lp) {
@@ -408,6 +498,13 @@ void launchpad_begin(aurade_launchpad_t *lp) {
     lp->hovered_index = -1;
     lp->hovered_folder_app_idx = -1;
     lp->open_folder = NULL;
+    lp->anim_folder = NULL;
+    lp->folder_animating = false;
+    lp->folder_anim_progress = 0.0;
+    lp->folder_anim_target = 0.0;
+    lp->folder_scroll_y = 0.0;
+    lp->folder_target_scroll_y = 0.0;
+    lp->folder_scrollbar_dragging = false;
     lp->folder_renaming = false;
     lp->is_dragging = false;
     lp->drag_candidate = NULL;
@@ -425,20 +522,28 @@ void launchpad_begin(aurade_launchpad_t *lp) {
     lp->scroll_accum_x = 0;
     lp->scroll_accum_y = 0;
 
-    if (lp->realtime_blur) {
-        cairo_surface_destroy(lp->realtime_blur);
-        lp->realtime_blur = NULL;
+    if (lp->server) {
+        server_dismiss_popups(lp->server);
+        if (lp->server->dock && dock_context_menu_is_open(lp->server->dock)) {
+            dock_close_context_menu(lp->server->dock);
+        }
+        if (lp->server->popup_tree) {
+            wlr_scene_node_set_enabled(&lp->server->popup_tree->node, false);
+        }
     }
-    if (lp->server && lp->server->config.blur_launchpad) {
-        int bw = lp->screen_width / 16;
-        int bh = lp->screen_height / 16;
-        if (bw < 32) bw = 32;
-        if (bh < 32) bh = 32;
-        lp->realtime_blur = wallpaper_capture_workspace_blur(lp->server, bw, bh);
+
+    if (lp->server && lp->server->topbar && lp->server->topbar->blur_node) {
+        wlr_scene_node_set_enabled(&lp->server->topbar->blur_node->node, false);
+    }
+    if (lp->server && lp->server->dock && lp->server->dock->blur_node) {
+        wlr_scene_node_set_enabled(&lp->server->dock->blur_node->node, false);
     }
 
     filter_items(lp);
-    wlr_scene_node_set_enabled(&lp->scene_buffer->node, true);
+    launchpad_setup_scene(lp);
+    launchpad_render(lp);
+    launchpad_update_progress(lp, 0.001);
+
     if (lp->server && lp->server->dock) {
         dock_update_visibility(lp->server->dock);
     }
@@ -450,20 +555,49 @@ void launchpad_update_progress(aurade_launchpad_t *lp, double progress) {
     lp->progress = progress;
 
     if (progress <= 0.001) {
-        wlr_scene_node_set_enabled(&lp->scene_buffer->node, false);
+        if (lp->tree) {
+            wlr_scene_node_set_enabled(&lp->tree->node, false);
+        }
         if (lp->drag_scene_buffer) {
             wlr_scene_node_set_enabled(&lp->drag_scene_buffer->node, false);
         }
-        if (lp->realtime_blur) {
-            cairo_surface_destroy(lp->realtime_blur);
-            lp->realtime_blur = NULL;
+        if (lp->server && lp->server->popup_tree) {
+            wlr_scene_node_set_enabled(&lp->server->popup_tree->node, true);
         }
         lp->needs_render = false;
         return;
     }
 
-    wlr_scene_node_set_enabled(&lp->scene_buffer->node, true);
-    lp->needs_render = true;
+    if (lp->tree) {
+        wlr_scene_node_set_enabled(&lp->tree->node, true);
+    }
+
+    int sw = lp->screen_width;
+    int sh = lp->screen_height;
+
+    double p = fmin(1.0, fmax(0.0, progress));
+    double ep = 1.0 - pow(1.0 - p, 3.0);
+    float alpha = (float)fmin(1.0, fmax(0.0, ep));
+
+    // Smooth subtle zoom (0.92 to 1.00) centered on screen
+    double scale = 0.92 + 0.08 * ep;
+    int dest_w = (int)round(sw * scale);
+    int dest_h = (int)round(sh * scale);
+    int pos_x = (sw - dest_w) / 2;
+    int pos_y = (sh - dest_h) / 2;
+
+    if (lp->bg_scene_buffer && lp->bg_scene_buffer->node.enabled) {
+        wlr_scene_buffer_set_opacity(lp->bg_scene_buffer, alpha);
+        wlr_scene_node_set_position(&lp->bg_scene_buffer->node, 0, 0);
+        wlr_scene_buffer_set_dest_size(lp->bg_scene_buffer, sw, sh);
+    }
+
+    if (lp->fg_scene_buffer) {
+        wlr_scene_buffer_set_opacity(lp->fg_scene_buffer, alpha);
+        wlr_scene_buffer_set_dest_size(lp->fg_scene_buffer, dest_w, dest_h);
+        wlr_scene_buffer_set_filter_mode(lp->fg_scene_buffer, WLR_SCALE_FILTER_BILINEAR);
+        wlr_scene_node_set_position(&lp->fg_scene_buffer->node, pos_x, pos_y);
+    }
 }
 
 void launchpad_end(aurade_launchpad_t *lp, bool opened) {
@@ -473,9 +607,14 @@ void launchpad_end(aurade_launchpad_t *lp, bool opened) {
         if (lp->drag_scene_buffer) {
             wlr_scene_node_set_enabled(&lp->drag_scene_buffer->node, false);
         }
-        if (lp->realtime_blur) {
-            cairo_surface_destroy(lp->realtime_blur);
-            lp->realtime_blur = NULL;
+        if (lp->server && lp->server->topbar && lp->server->topbar->blur_node) {
+            wlr_scene_node_set_enabled(&lp->server->topbar->blur_node->node, lp->server->config.blur_topbar);
+        }
+        if (lp->server && lp->server->dock && lp->server->dock->blur_node) {
+            wlr_scene_node_set_enabled(&lp->server->dock->blur_node->node, lp->server->config.blur_dock);
+        }
+        if (lp->server && lp->server->popup_tree) {
+            wlr_scene_node_set_enabled(&lp->server->popup_tree->node, true);
         }
         lp->is_dragging = false;
         lp->drag_candidate = NULL;
@@ -484,9 +623,18 @@ void launchpad_end(aurade_launchpad_t *lp, bool opened) {
         lp->dragged_folder = NULL;
         lp->drag_over_dock = false;
         lp->open_folder = NULL;
+        lp->anim_folder = NULL;
+        lp->folder_animating = false;
+        lp->folder_anim_progress = 0.0;
+        lp->folder_anim_target = 0.0;
+        lp->folder_scroll_y = 0.0;
+        lp->folder_target_scroll_y = 0.0;
+        lp->folder_scrollbar_dragging = false;
         lp->folder_renaming = false;
         lp->page_animating = false;
         launchpad_update_progress(lp, 0.0);
+    } else {
+        launchpad_update_progress(lp, 1.0);
     }
     if (lp->server && lp->server->dock) {
         dock_update_visibility(lp->server->dock);
@@ -525,23 +673,151 @@ void launchpad_switch_page(aurade_launchpad_t *lp, int new_page, bool animate) {
     if (lp->server) schedule_all_outputs(lp->server);
 }
 
-void launchpad_tick(aurade_launchpad_t *lp, double dt) {
-    if (!lp || !lp->page_animating) return;
+void launchpad_open_folder(aurade_launchpad_t *lp, lp_folder_t *folder, bool animate) {
+    if (!lp || !folder) return;
+    lp->open_folder = folder;
+    lp->anim_folder = folder;
+    lp->folder_scroll_y = 0.0;
+    lp->folder_target_scroll_y = 0.0;
+    lp->folder_scrollbar_dragging = false;
+    lp->folder_renaming = false;
+    lp->drag_folder_candidate = NULL;
 
-    bool active = spring_simulation_step(&lp->page_spring, dt);
-    lp->page_scroll = lp->page_spring.current_pos;
+    lp->open_folder_item_idx = -1;
+    for (int k = 0; k < lp->item_count; k++) {
+        if (lp->items[k].type == LP_ITEM_FOLDER && lp->items[k].folder == folder) {
+            lp->open_folder_item_idx = k;
+            break;
+        }
+    }
+
+    if (!animate) {
+        lp->folder_anim_progress = 1.0;
+        lp->folder_anim_target = 1.0;
+        lp->folder_animating = false;
+        launchpad_render(lp);
+        if (lp->server) schedule_all_outputs(lp->server);
+        return;
+    }
+
+    spring_config_t spring = {
+        .stiffness = 340.0,
+        .damping = 0.88,
+        .mass = 1.0,
+    };
+    spring_simulation_start(&lp->folder_spring, &spring, 0.0, 1.0, 0.0);
+    lp->folder_anim_progress = 0.0;
+    lp->folder_anim_target = 1.0;
+    lp->folder_animating = true;
     lp->needs_render = true;
+    launchpad_render(lp);
+    if (lp->server) schedule_all_outputs(lp->server);
+}
 
-    if (!active) {
-        lp->page_animating = false;
-        lp->page_scroll = (double)lp->current_page;
+void launchpad_close_folder(aurade_launchpad_t *lp, bool animate) {
+    if (!lp || (!lp->open_folder && !lp->anim_folder)) return;
+    lp->folder_renaming = false;
+    lp->folder_scrollbar_dragging = false;
+
+    if (!animate) {
+        lp->open_folder = NULL;
+        lp->anim_folder = NULL;
+        lp->folder_anim_progress = 0.0;
+        lp->folder_anim_target = 0.0;
+        lp->folder_animating = false;
+        launchpad_render(lp);
+        if (lp->server) schedule_all_outputs(lp->server);
+        return;
+    }
+
+    if (!lp->anim_folder) {
+        lp->anim_folder = lp->open_folder;
+    }
+    lp->open_folder = NULL;
+
+    spring_config_t spring = {
+        .stiffness = 380.0,
+        .damping = 1.0,
+        .mass = 1.0,
+    };
+    double start_pos = lp->folder_anim_progress > 0.05 ? lp->folder_anim_progress : 1.0;
+    spring_simulation_start(&lp->folder_spring, &spring, start_pos, 0.0, 0.0);
+    lp->folder_anim_target = 0.0;
+    lp->folder_animating = true;
+    lp->needs_render = true;
+    if (lp->server) schedule_all_outputs(lp->server);
+}
+
+void launchpad_tick(aurade_launchpad_t *lp, double dt) {
+    if (!lp) return;
+
+    if (lp->page_animating) {
+        bool active = spring_simulation_step(&lp->page_spring, dt);
+        lp->page_scroll = lp->page_spring.current_pos;
+        lp->needs_render = true;
+
+        if (!active) {
+            lp->page_animating = false;
+            lp->page_scroll = (double)lp->current_page;
+        }
+    }
+
+    if (lp->folder_animating) {
+        bool active = spring_simulation_step(&lp->folder_spring, dt);
+        lp->folder_anim_progress = lp->folder_spring.current_pos;
+        if (lp->folder_anim_progress < 0.0) lp->folder_anim_progress = 0.0;
+        if (lp->folder_anim_progress > 1.08) lp->folder_anim_progress = 1.08;
+        lp->needs_render = true;
+
+        if (!active) {
+            lp->folder_animating = false;
+            lp->folder_anim_progress = 0.0;
+            lp->open_folder = NULL;
+            lp->anim_folder = NULL;
+            lp->folder_scroll_y = 0.0;
+        }
+    }
+
+    if (lp->needs_render) {
+        launchpad_render(lp);
+        lp->needs_render = false;
+        if (lp->server) schedule_all_outputs(lp->server);
     }
 }
 
 void launchpad_handle_axis(aurade_launchpad_t *lp, enum wl_pointer_axis orientation,
                            double delta, int32_t delta_discrete) {
-    if (!lp || !lp->active || lp->total_pages <= 1 || lp->open_folder != NULL) return;
-    if (lp->page_animating) return;
+    if (!lp || !lp->active) return;
+
+    // FOLDER VERTICAL SCROLLING
+    if (lp->open_folder != NULL) {
+        lp_folder_layout_t fl;
+        lp_folder_layout(lp, &fl);
+        int total_rows = (lp->open_folder->app_count + fl.cols - 1) / fl.cols;
+        double total_content_h = total_rows * fl.cell_h;
+        double max_scroll = fmax(0.0, total_content_h - fl.grid_h + 16.0);
+        if (max_scroll <= 0.0) return;
+
+        double delta_y = 0.0;
+        if (delta_discrete != 0) {
+            delta_y = (double)delta_discrete * 44.0;
+        } else {
+            delta_y = delta * 1.5;
+        }
+
+        double new_scroll = lp->folder_scroll_y + delta_y;
+        if (new_scroll < 0.0) new_scroll = 0.0;
+        if (new_scroll > max_scroll) new_scroll = max_scroll;
+
+        if (fabs(new_scroll - lp->folder_scroll_y) > 0.01) {
+            lp->folder_scroll_y = new_scroll;
+            lp->needs_render = true;
+            if (lp->server) schedule_all_outputs(lp->server);
+        }
+        return;
+    }
+
+    if (lp->total_pages <= 1 || lp->page_animating) return;
 
     uint64_t now = lp_now_ms();
     if (now - lp->last_scroll_time_ms > 280) {
@@ -603,9 +879,7 @@ bool launchpad_handle_press(aurade_launchpad_t *lp, double x, double y) {
         // Click on close button
         double cdist = hypot(x - fl.close_x, y - fl.close_y);
         if (cdist <= fl.close_r + 8.0) {
-            lp->open_folder = NULL;
-            lp->folder_renaming = false;
-            launchpad_render(lp);
+            launchpad_close_folder(lp, true);
             return true;
         }
 
@@ -613,10 +887,8 @@ bool launchpad_handle_press(aurade_launchpad_t *lp, double x, double y) {
                               y >= fl.win_y && y <= fl.win_y + fl.win_h);
 
         if (!inside_window) {
-            // Click outside folder window closes the folder view
-            lp->open_folder = NULL;
-            lp->folder_renaming = false;
-            launchpad_render(lp);
+            // Click outside folder window closes the folder view with animation
+            launchpad_close_folder(lp, true);
             return true;
         }
 
@@ -642,12 +914,50 @@ bool launchpad_handle_press(aurade_launchpad_t *lp, double x, double y) {
             launchpad_render(lp);
         }
 
+        // Scrollbar hit test
+        int total_rows = (lp->open_folder->app_count + fl.cols - 1) / fl.cols;
+        double total_content_h = total_rows * fl.cell_h;
+        double max_scroll = fmax(0.0, total_content_h - fl.grid_h + 16.0);
+
+        if (max_scroll > 0.0) {
+            double track_x = fl.win_x + fl.win_w - 14.0;
+            double track_y = fl.grid_y + 4.0;
+            double track_w = 12.0;
+            double track_h = fl.grid_h - 8.0;
+
+            if (x >= track_x - 6.0 && x <= track_x + track_w + 6.0 &&
+                y >= track_y && y <= track_y + track_h) {
+                double visible_ratio = fl.grid_h / total_content_h;
+                double thumb_h = fmax(28.0, track_h * visible_ratio);
+                double scroll_ratio = lp->folder_scroll_y / max_scroll;
+                double thumb_y = track_y + scroll_ratio * (track_h - thumb_h);
+
+                lp->folder_scrollbar_dragging = true;
+                lp->folder_drag_start_mouse_y = y;
+                lp->folder_drag_start_scroll_y = lp->folder_scroll_y;
+
+                if (y < thumb_y || y > thumb_y + thumb_h) {
+                    double click_ratio = (y - track_y - thumb_h / 2.0) / (track_h - thumb_h);
+                    if (click_ratio < 0.0) click_ratio = 0.0;
+                    if (click_ratio > 1.0) click_ratio = 1.0;
+                    lp->folder_scroll_y = click_ratio * max_scroll;
+                    lp->folder_drag_start_scroll_y = lp->folder_scroll_y;
+                    launchpad_render(lp);
+                    if (lp->server) schedule_all_outputs(lp->server);
+                }
+                return true;
+            }
+        }
+
         // Click on an app inside the folder
         for (int i = 0; i < lp->open_folder->app_count; i++) {
             int r = i / fl.cols;
             int c = i % fl.cols;
             double cx = fl.grid_x + c * fl.cell_w + fl.cell_w / 2.0;
-            double cy = fl.grid_y + r * fl.cell_h + fl.cell_h / 2.0;
+            double cy = fl.grid_y + r * fl.cell_h + fl.cell_h / 2.0 - lp->folder_scroll_y;
+
+            // Only clickable if within visible folder content area
+            if (cy < fl.grid_y - 4.0 || cy > fl.win_y + fl.win_h - 14.0) continue;
 
             if (fabs(x - cx) < fl.cell_w * 0.46 && fabs(y - cy) < fl.cell_h * 0.46) {
                 lp->drag_candidate = lp->open_folder->apps[i];
@@ -739,6 +1049,11 @@ bool launchpad_handle_press(aurade_launchpad_t *lp, double x, double y) {
 int launchpad_handle_release(aurade_launchpad_t *lp, double x, double y) {
     if (!lp || !lp->active) return 0;
 
+    if (lp->folder_scrollbar_dragging) {
+        lp->folder_scrollbar_dragging = false;
+        return 1;
+    }
+
     // 1. SIMPLE CLICK (NOT DRAGGED)
     if (!lp->is_dragging) {
         if (lp->drag_from_folder && lp->drag_candidate) {
@@ -748,12 +1063,7 @@ int launchpad_handle_release(aurade_launchpad_t *lp, double x, double y) {
             app_launch_command(app->exec);
             return 2; // Close overlay on launch
         } else if (lp->drag_folder_candidate) {
-            lp->open_folder = lp->drag_folder_candidate;
-            lp->open_folder_item_idx = lp->drag_source_idx;
-            lp->folder_renaming = false;
-            lp->drag_folder_candidate = NULL;
-            launchpad_render(lp);
-            if (lp->server) schedule_all_outputs(lp->server);
+            launchpad_open_folder(lp, lp->drag_folder_candidate, true);
             return 1;
         } else if (lp->drag_candidate) {
             desktop_app_t *app = lp->drag_candidate;
@@ -767,7 +1077,50 @@ int launchpad_handle_release(aurade_launchpad_t *lp, double x, double y) {
 
     // 2. DRAGGED ITEMS
     if (lp->drag_over_dock) {
+        if (lp->dragged_app && lp->server && lp->server->dock) {
+            dock_pin_app(lp->server->dock, lp->dragged_app->name, lp->dragged_app->exec,
+                         lp->dragged_app->icon_name, lp->dragged_app->icon_surface);
+        }
+        if (lp->drag_from_folder && lp->open_folder) {
+            int s_idx = lp->drag_source_idx;
+            if (s_idx >= 0 && s_idx < lp->open_folder->app_count) {
+                for (int k = s_idx; k < lp->open_folder->app_count - 1; k++) {
+                    lp->open_folder->apps[k] = lp->open_folder->apps[k + 1];
+                }
+                lp->open_folder->app_count--;
+                lp_folder_invalidate_preview(lp->open_folder);
+            }
+            if (lp->open_folder->app_count <= 1) {
+                int f_item_idx = -1;
+                for (int k = 0; k < lp->item_count; k++) {
+                    if (lp->items[k].type == LP_ITEM_FOLDER && lp->items[k].folder == lp->open_folder) {
+                        f_item_idx = k;
+                        break;
+                    }
+                }
+                if (f_item_idx >= 0) {
+                    if (lp->open_folder->app_count == 1) {
+                        desktop_app_t *last_app = lp->open_folder->apps[0];
+                        lp->items[f_item_idx].type = LP_ITEM_APP;
+                        lp->items[f_item_idx].app = last_app;
+                        lp_folder_invalidate_preview(lp->items[f_item_idx].folder);
+                        free(lp->items[f_item_idx].folder);
+                        lp->items[f_item_idx].folder = NULL;
+                    } else {
+                        lp_folder_invalidate_preview(lp->items[f_item_idx].folder);
+                        free(lp->items[f_item_idx].folder);
+                        for (int k = f_item_idx; k < lp->item_count - 1; k++) {
+                            lp->items[k] = lp->items[k + 1];
+                        }
+                        lp->item_count--;
+                    }
+                }
+                lp->open_folder = NULL;
+            }
+            launchpad_save_layout(lp);
+        }
         launchpad_cancel_drag(lp);
+        launchpad_refresh(lp);
         return 1;
     }
 
@@ -782,13 +1135,25 @@ int launchpad_handle_release(aurade_launchpad_t *lp, double x, double y) {
             desktop_app_t *app = lp->dragged_app;
             if (app) {
                 int s_idx = lp->drag_source_idx;
-                for (int k = s_idx; k < lp->open_folder->app_count - 1; k++) {
-                    lp->open_folder->apps[k] = lp->open_folder->apps[k + 1];
+                if (s_idx >= 0 && s_idx < lp->open_folder->app_count) {
+                    for (int k = s_idx; k < lp->open_folder->app_count - 1; k++) {
+                        lp->open_folder->apps[k] = lp->open_folder->apps[k + 1];
+                    }
+                    lp->open_folder->app_count--;
+                    lp_folder_invalidate_preview(lp->open_folder);
                 }
-                lp->open_folder->app_count--;
 
-                // Insert into main items list
-                if (lp->item_count < LAUNCHPAD_MAX_ITEMS) {
+                // Insert into main items list if not already present
+                bool already_in = false;
+                for (int k = 0; k < lp->item_count; k++) {
+                    if (lp->items[k].type == LP_ITEM_APP &&
+                        (lp->items[k].app == app ||
+                         (lp->items[k].app && strcmp(lp->items[k].app->name, app->name) == 0))) {
+                        already_in = true;
+                        break;
+                    }
+                }
+                if (!already_in && lp->item_count < LAUNCHPAD_MAX_ITEMS) {
                     lp->items[lp->item_count].type = LP_ITEM_APP;
                     lp->items[lp->item_count].app = app;
                     lp->items[lp->item_count].folder = NULL;
@@ -797,19 +1162,29 @@ int launchpad_handle_release(aurade_launchpad_t *lp, double x, double y) {
 
                 // If folder has <= 1 app left, dissolve folder
                 if (lp->open_folder->app_count <= 1) {
-                    int f_item_idx = lp->open_folder_item_idx;
-                    if (lp->open_folder->app_count == 1) {
-                        desktop_app_t *last_app = lp->open_folder->apps[0];
-                        lp->items[f_item_idx].type = LP_ITEM_APP;
-                        lp->items[f_item_idx].app = last_app;
-                        free(lp->items[f_item_idx].folder);
-                        lp->items[f_item_idx].folder = NULL;
-                    } else {
-                        free(lp->items[f_item_idx].folder);
-                        for (int k = f_item_idx; k < lp->item_count - 1; k++) {
-                            lp->items[k] = lp->items[k + 1];
+                    int f_item_idx = -1;
+                    for (int k = 0; k < lp->item_count; k++) {
+                        if (lp->items[k].type == LP_ITEM_FOLDER && lp->items[k].folder == lp->open_folder) {
+                            f_item_idx = k;
+                            break;
                         }
-                        lp->item_count--;
+                    }
+                    if (f_item_idx >= 0) {
+                        if (lp->open_folder->app_count == 1) {
+                            desktop_app_t *last_app = lp->open_folder->apps[0];
+                            lp->items[f_item_idx].type = LP_ITEM_APP;
+                            lp->items[f_item_idx].app = last_app;
+                            lp_folder_invalidate_preview(lp->items[f_item_idx].folder);
+                            free(lp->items[f_item_idx].folder);
+                            lp->items[f_item_idx].folder = NULL;
+                        } else {
+                            lp_folder_invalidate_preview(lp->items[f_item_idx].folder);
+                            free(lp->items[f_item_idx].folder);
+                            for (int k = f_item_idx; k < lp->item_count - 1; k++) {
+                                lp->items[k] = lp->items[k + 1];
+                            }
+                            lp->item_count--;
+                        }
                     }
                     lp->open_folder = NULL;
                 }
@@ -819,6 +1194,7 @@ int launchpad_handle_release(aurade_launchpad_t *lp, double x, double y) {
         } else {
             // Reorder inside folder
             if (lp->drop_target_idx >= 0 && lp->drop_target_idx < lp->open_folder->app_count &&
+                lp->drag_source_idx >= 0 && lp->drag_source_idx < lp->open_folder->app_count &&
                 lp->drop_target_idx != lp->drag_source_idx) {
                 int s = lp->drag_source_idx;
                 int t = lp->drop_target_idx;
@@ -829,6 +1205,7 @@ int launchpad_handle_release(aurade_launchpad_t *lp, double x, double y) {
                     for (int k = s; k > t; k--) lp->open_folder->apps[k] = lp->open_folder->apps[k - 1];
                 }
                 lp->open_folder->apps[t] = tmp;
+                lp_folder_invalidate_preview(lp->open_folder);
                 launchpad_save_layout(lp);
             }
         }
@@ -837,59 +1214,99 @@ int launchpad_handle_release(aurade_launchpad_t *lp, double x, double y) {
         int s = lp->drag_source_idx;
         int t = lp->drop_target_idx;
 
-        if (lp->drop_action == DROP_TARGET_FOLDER_CREATE && lp->dragged_app &&
-            t >= 0 && t < lp->item_count && s != t && lp->items[t].type == LP_ITEM_APP) {
-            // Create a new folder!
-            desktop_app_t *target_app = lp->items[t].app;
-            desktop_app_t *source_app = lp->dragged_app;
-
-            lp_folder_t *f = calloc(1, sizeof(lp_folder_t));
-            snprintf(f->name, sizeof(f->name), "Folder");
-            f->apps[0] = target_app;
-            f->apps[1] = source_app;
-            f->app_count = 2;
-
-            lp->items[t].type = LP_ITEM_FOLDER;
-            lp->items[t].folder = f;
-            lp->items[t].app = NULL;
-
-            // Remove source item
-            for (int k = s; k < lp->item_count - 1; k++) {
-                lp->items[k] = lp->items[k + 1];
-            }
-            lp->item_count--;
-
-            filter_items(lp);
-            launchpad_save_layout(lp);
-        } else if (lp->drop_action == DROP_TARGET_FOLDER_INSERT && lp->dragged_app &&
-                   t >= 0 && t < lp->item_count && s != t && lp->items[t].type == LP_ITEM_FOLDER) {
-            // Insert into existing folder!
-            lp_folder_t *f = lp->items[t].folder;
-            if (f && f->app_count < LAUNCHPAD_MAX_FOLDER_ITEMS) {
-                f->apps[f->app_count++] = lp->dragged_app;
-
-                // Remove source item
-                for (int k = s; k < lp->item_count - 1; k++) {
-                    lp->items[k] = lp->items[k + 1];
+        if (s >= 0 && s < lp->filtered_count && t >= 0 && t < lp->filtered_count && s != t) {
+            // Find actual source index in lp->items
+            int s_idx = -1;
+            for (int k = 0; k < lp->item_count; k++) {
+                if (lp->dragged_app && lp->items[k].type == LP_ITEM_APP && lp->items[k].app == lp->dragged_app) {
+                    s_idx = k;
+                    break;
+                } else if (lp->dragged_folder && lp->items[k].type == LP_ITEM_FOLDER && lp->items[k].folder == lp->dragged_folder) {
+                    s_idx = k;
+                    break;
                 }
-                lp->item_count--;
-
-                filter_items(lp);
-                launchpad_save_layout(lp);
             }
-        } else if (lp->drop_action == DROP_TARGET_REORDER && s >= 0 && s < lp->item_count &&
-                   t >= 0 && t < lp->item_count && s != t) {
-            // Reorder items on grid
-            lp_item_t tmp = lp->items[s];
-            if (s < t) {
-                for (int k = s; k < t; k++) lp->items[k] = lp->items[k + 1];
-            } else {
-                for (int k = s; k > t; k--) lp->items[k] = lp->items[k - 1];
-            }
-            lp->items[t] = tmp;
 
-            filter_items(lp);
-            launchpad_save_layout(lp);
+            // Find actual target index in lp->items
+            lp_item_t *t_filt = &lp->filtered_items[t];
+            int t_idx = -1;
+            for (int k = 0; k < lp->item_count; k++) {
+                if (t_filt->type == LP_ITEM_APP && lp->items[k].type == LP_ITEM_APP && lp->items[k].app == t_filt->app) {
+                    t_idx = k;
+                    break;
+                } else if (t_filt->type == LP_ITEM_FOLDER && lp->items[k].type == LP_ITEM_FOLDER && lp->items[k].folder == t_filt->folder) {
+                    t_idx = k;
+                    break;
+                }
+            }
+
+            if (s_idx >= 0 && t_idx >= 0 && s_idx != t_idx) {
+                if (lp->drop_action == DROP_TARGET_FOLDER_CREATE && lp->dragged_app &&
+                    lp->items[t_idx].type == LP_ITEM_APP) {
+                    // Create a new folder!
+                    desktop_app_t *target_app = lp->items[t_idx].app;
+                    desktop_app_t *source_app = lp->dragged_app;
+
+                    lp_folder_t *f = calloc(1, sizeof(lp_folder_t));
+                    snprintf(f->name, sizeof(f->name), "Folder");
+                    f->apps[0] = target_app;
+                    f->apps[1] = source_app;
+                    f->app_count = 2;
+                    lp_folder_invalidate_preview(f);
+
+                    lp->items[t_idx].type = LP_ITEM_FOLDER;
+                    lp->items[t_idx].folder = f;
+                    lp->items[t_idx].app = NULL;
+
+                    // Remove source item from lp->items so it vanishes from the grid
+                    for (int k = s_idx; k < lp->item_count - 1; k++) {
+                        lp->items[k] = lp->items[k + 1];
+                    }
+                    lp->item_count--;
+
+                    filter_items(lp);
+                    launchpad_save_layout(lp);
+                } else if (lp->drop_action == DROP_TARGET_FOLDER_INSERT && lp->dragged_app &&
+                           lp->items[t_idx].type == LP_ITEM_FOLDER) {
+                    // Insert into existing folder!
+                    lp_folder_t *f = lp->items[t_idx].folder;
+                    if (f && f->app_count < LAUNCHPAD_MAX_FOLDER_ITEMS) {
+                        bool already_in = false;
+                        for (int k = 0; k < f->app_count; k++) {
+                            if (f->apps[k] == lp->dragged_app ||
+                                (f->apps[k] && lp->dragged_app && strcmp(f->apps[k]->name, lp->dragged_app->name) == 0)) {
+                                already_in = true;
+                                break;
+                            }
+                        }
+                        if (!already_in) {
+                            f->apps[f->app_count++] = lp->dragged_app;
+                            lp_folder_invalidate_preview(f);
+                        }
+
+                        // Remove source item from lp->items so it vanishes from the grid!
+                        for (int k = s_idx; k < lp->item_count - 1; k++) {
+                            lp->items[k] = lp->items[k + 1];
+                        }
+                        lp->item_count--;
+
+                        filter_items(lp);
+                        launchpad_save_layout(lp);
+                    }
+                } else if (lp->drop_action == DROP_TARGET_REORDER) {
+                    // Reorder items on grid
+                    lp_item_t tmp = lp->items[s_idx];
+                    if (s_idx < t_idx) {
+                        for (int k = s_idx; k < t_idx; k++) lp->items[k] = lp->items[k + 1];
+                    } else {
+                        for (int k = s_idx; k > t_idx; k--) lp->items[k] = lp->items[k - 1];
+                    }
+                    lp->items[t_idx] = tmp;
+
+                    filter_items(lp);
+                    launchpad_save_layout(lp);
+                }
+            }
         }
     }
 
@@ -908,8 +1325,10 @@ void launchpad_cancel_drag(aurade_launchpad_t *lp) {
     lp->dragged_app = NULL;
     lp->dragged_folder = NULL;
     lp->drag_over_dock = false;
+    lp->drag_from_folder = false;
     lp->drop_action = DROP_TARGET_NONE;
     lp->drop_target_idx = -1;
+    lp->drag_source_idx = -1;
     lp->drag_edge_hover_time_ms = 0;
 
     if (lp->drag_scene_buffer) {
@@ -923,6 +1342,29 @@ void launchpad_cancel_drag(aurade_launchpad_t *lp) {
 
 void launchpad_handle_motion(aurade_launchpad_t *lp, double x, double y) {
     if (!lp || !lp->active || lp->progress < 0.6) return;
+
+    if (lp->folder_scrollbar_dragging && lp->open_folder != NULL) {
+        lp_folder_layout_t fl;
+        lp_folder_layout(lp, &fl);
+        int total_rows = (lp->open_folder->app_count + fl.cols - 1) / fl.cols;
+        double total_content_h = total_rows * fl.cell_h;
+        double max_scroll = fmax(0.0, total_content_h - fl.grid_h + 16.0);
+        double track_h = fl.grid_h - 8.0;
+        double visible_ratio = fl.grid_h / total_content_h;
+        double thumb_h = fmax(28.0, track_h * visible_ratio);
+
+        if (max_scroll > 0.0 && track_h > thumb_h) {
+            double dy = y - lp->folder_drag_start_mouse_y;
+            double scroll_delta = dy * (max_scroll / (track_h - thumb_h));
+            double new_scroll = fmax(0.0, fmin(max_scroll, lp->folder_drag_start_scroll_y + scroll_delta));
+            if (fabs(new_scroll - lp->folder_scroll_y) > 0.1) {
+                lp->folder_scroll_y = new_scroll;
+                lp->needs_render = true;
+                if (lp->server) schedule_all_outputs(lp->server);
+            }
+        }
+        return;
+    }
 
     if (lp->drag_candidate || lp->drag_folder_candidate) {
         double dist = hypot(x - lp->drag_start_x, y - lp->drag_start_y);
@@ -992,10 +1434,12 @@ void launchpad_handle_motion(aurade_launchpad_t *lp, double x, double y) {
                         int r = i / fl.cols;
                         int c = i % fl.cols;
                         double cx = fl.grid_x + c * fl.cell_w + fl.cell_w / 2.0;
-                        double cy = fl.grid_y + r * fl.cell_h + fl.cell_h / 2.0;
-                        if (fabs(x - cx) < fl.cell_w * 0.46 && fabs(y - cy) < fl.cell_h * 0.46) {
-                            lp->drop_target_idx = i;
-                            break;
+                        double cy = fl.grid_y + r * fl.cell_h + fl.cell_h / 2.0 - lp->folder_scroll_y;
+                        if (cy >= fl.grid_y - 4.0 && cy <= fl.win_y + fl.win_h - 14.0) {
+                            if (fabs(x - cx) < fl.cell_w * 0.46 && fabs(y - cy) < fl.cell_h * 0.46) {
+                                lp->drop_target_idx = i;
+                                break;
+                            }
                         }
                     }
                 } else {
@@ -1038,7 +1482,7 @@ void launchpad_handle_motion(aurade_launchpad_t *lp, double x, double y) {
             }
 
             if (just_started || prev_drop_action != lp->drop_action || prev_drop_target != lp->drop_target_idx) {
-                launchpad_render(lp);
+                lp->needs_render = true;
             }
             if (lp->server) schedule_all_outputs(lp->server);
             return;
@@ -1056,14 +1500,17 @@ void launchpad_handle_motion(aurade_launchpad_t *lp, double x, double y) {
             int r = i / fl.cols;
             int c = i % fl.cols;
             double cx = fl.grid_x + c * fl.cell_w + fl.cell_w / 2.0;
-            double cy = fl.grid_y + r * fl.cell_h + fl.cell_h / 2.0;
-            if (fabs(x - cx) < fl.cell_w * 0.46 && fabs(y - cy) < fl.cell_h * 0.46) {
-                lp->hovered_folder_app_idx = i;
-                break;
+            double cy = fl.grid_y + r * fl.cell_h + fl.cell_h / 2.0 - lp->folder_scroll_y;
+            if (cy >= fl.grid_y - 4.0 && cy <= fl.win_y + fl.win_h - 14.0) {
+                if (fabs(x - cx) < fl.cell_w * 0.46 && fabs(y - cy) < fl.cell_h * 0.46) {
+                    lp->hovered_folder_app_idx = i;
+                    break;
+                }
             }
         }
         if (lp->hovered_folder_app_idx != prev_hover) {
-            launchpad_render(lp);
+            lp->needs_render = true;
+            if (lp->server) schedule_all_outputs(lp->server);
         }
         return;
     }
@@ -1091,7 +1538,8 @@ void launchpad_handle_motion(aurade_launchpad_t *lp, double x, double y) {
     }
 
     if (lp->hovered_index != prev_hover) {
-        launchpad_render(lp);
+        lp->needs_render = true;
+        if (lp->server) schedule_all_outputs(lp->server);
     }
 }
 
@@ -1147,8 +1595,7 @@ bool launchpad_handle_key(aurade_launchpad_t *lp, uint32_t keyval, bool pressed)
     // FOLDER OPEN (NOT RENAMING)
     if (lp->open_folder != NULL) {
         if (keyval == XKB_KEY_Escape) {
-            lp->open_folder = NULL;
-            launchpad_render(lp);
+            launchpad_close_folder(lp, true);
             return true;
         } else if (keyval == XKB_KEY_Return || keyval == XKB_KEY_KP_Enter) {
             if (lp->open_folder->app_count > 0) {
@@ -1178,10 +1625,7 @@ bool launchpad_handle_key(aurade_launchpad_t *lp, uint32_t keyval, bool pressed)
                 app_launch_command(app->exec);
                 server_close_overlay(lp->server);
             } else if (lp->filtered_items[0].type == LP_ITEM_FOLDER && lp->filtered_items[0].folder) {
-                lp->open_folder = lp->filtered_items[0].folder;
-                lp->open_folder_item_idx = 0;
-                lp->folder_renaming = false;
-                launchpad_render(lp);
+                launchpad_open_folder(lp, lp->filtered_items[0].folder, true);
             }
         }
         return true;
@@ -1282,36 +1726,55 @@ static void draw_folder_icon(cairo_t *cr, double cx, double cy, double size,
                              lp_folder_t *folder, double alpha) {
     if (!folder) return;
 
-    // Outer frosted squircle container
-    draw_glass_panel(cr, cx - size / 2.0, cy - size / 2.0, size, size, size * 0.23,
-                     0.22, 0.24, 0.32, 0.75 * alpha);
+    int target_res = 128;
+    if (!folder->preview_surface) {
+        folder->preview_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, target_res, target_res);
+        cairo_t *fcr = cairo_create(folder->preview_surface);
 
-    cairo_save(cr);
-    draw_rounded_rect(cr, cx - size / 2.0, cy - size / 2.0, size, size, size * 0.23);
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.26 * alpha);
-    cairo_set_line_width(cr, 1.0);
-    cairo_stroke(cr);
-    cairo_restore(cr);
+        double s = (double)target_res;
+        double radius = s * 0.23;
 
-    int count = folder->app_count;
-    if (count <= 0) return;
+        // Outer frosted squircle container
+        draw_glass_panel(fcr, 0.0, 0.0, s, s, radius,
+                         0.22, 0.24, 0.32, 0.75);
 
-    // 2x2 grid if <= 4 apps, 3x3 if > 4 apps
-    int cols = (count <= 4) ? 2 : 3;
-    int max_draw = cols * cols;
-    double inner_pad = size * 0.14;
-    double inner_w = size - inner_pad * 2.0;
-    double cell_size = inner_w / cols;
-    double mini_size = cell_size * 0.82;
+        cairo_save(fcr);
+        draw_rounded_rect(fcr, 0.0, 0.0, s, s, radius);
+        cairo_set_source_rgba(fcr, 1.0, 1.0, 1.0, 0.26);
+        cairo_set_line_width(fcr, 1.0);
+        cairo_stroke(fcr);
+        cairo_restore(fcr);
 
-    for (int k = 0; k < count && k < max_draw; k++) {
-        desktop_app_t *app = folder->apps[k];
-        if (!app) continue;
-        int r = k / cols;
-        int c = k % cols;
-        double mcx = (cx - size / 2.0) + inner_pad + c * cell_size + cell_size / 2.0;
-        double mcy = (cy - size / 2.0) + inner_pad + r * cell_size + cell_size / 2.0;
-        draw_squircle_icon(cr, mcx, mcy, mini_size, app->name, app->icon_surface, alpha);
+        int count = folder->app_count;
+        if (count > 0) {
+            int cols = (count <= 4) ? 2 : 3;
+            int max_draw = cols * cols;
+            double inner_pad = s * 0.14;
+            double inner_w = s - inner_pad * 2.0;
+            double cell_size = inner_w / cols;
+            double mini_size = cell_size * 0.82;
+
+            for (int k = 0; k < count && k < max_draw; k++) {
+                desktop_app_t *app = folder->apps[k];
+                if (!app) continue;
+                int r = k / cols;
+                int c = k % cols;
+                double mcx = inner_pad + c * cell_size + cell_size / 2.0;
+                double mcy = inner_pad + r * cell_size + cell_size / 2.0;
+                draw_squircle_icon(fcr, mcx, mcy, mini_size, app->name, app->icon_surface, 1.0);
+            }
+        }
+        cairo_destroy(fcr);
+    }
+
+    if (folder->preview_surface) {
+        cairo_save(cr);
+        cairo_translate(cr, cx - size / 2.0, cy - size / 2.0);
+        cairo_scale(cr, size / (double)target_res, size / (double)target_res);
+        cairo_set_source_surface(cr, folder->preview_surface, 0, 0);
+        cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
+        cairo_paint_with_alpha(cr, alpha);
+        cairo_restore(cr);
     }
 }
 
@@ -1383,45 +1846,17 @@ void launchpad_render(aurade_launchpad_t *lp) {
     cairo_t *cr = lp->buffer->cr;
     cairo_buffer_clear(lp->buffer);
 
-    double p_raw = lp->progress;
-    if (p_raw <= 0.0) return;
-    double p = fmin(1.0, fmax(0.0, p_raw));
+    double p = 1.0;
 
-    // Background: Frosted real-time blur, wallpaper blur or translucent dark scrim
-    if (lp->server->config.blur_launchpad && lp->realtime_blur) {
-        int bw = cairo_image_surface_get_width(lp->realtime_blur);
-        int bh = cairo_image_surface_get_height(lp->realtime_blur);
-        if (bw > 0 && bh > 0) {
-            cairo_save(cr);
-            cairo_scale(cr, (double)lp->screen_width / bw, (double)lp->screen_height / bh);
-            cairo_set_source_surface(cr, lp->realtime_blur, 0, 0);
-            cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
-            cairo_pattern_set_extend(cairo_get_source(cr), CAIRO_EXTEND_PAD);
-            cairo_paint_with_alpha(cr, p);
-            cairo_restore(cr);
-
-            cairo_set_source_rgba(cr, 0.02, 0.03, 0.06, 0.65 * p);
-            cairo_paint(cr);
-        }
-    } else if (lp->server->config.blur_launchpad && lp->server->wallpaper) {
-        wallpaper_draw_backdrop(lp->server->wallpaper, cr,
-                                lp->screen_width, lp->screen_height, 0.65, p);
-    } else {
-        cairo_set_source_rgba(cr, 0.04, 0.05, 0.09, 0.82 * p);
+    // If blur is disabled (or no blurred wallpaper), fallback to a dimming scrim.
+    // If blur is enabled, bg_scene_buffer displays the pre-blurred wallpaper on GPU.
+    if (!lp->server || !lp->server->config.blur_launchpad || !lp->server->wallpaper || !lp->server->wallpaper->blurred_buffer) {
+        cairo_set_source_rgba(cr, 0.04, 0.05, 0.09, 0.85);
         cairo_paint(cr);
     }
 
     lp_layout_t l;
     lp_layout(lp, &l);
-
-    // Zoom & convergence transform:
-    // Opening: items start scaled up (1.30) in the 4 corners and converge towards the center (1.0).
-    // Closing: items disperse radially outwards towards the 4 corners (1.0 -> 1.30) and fade out.
-    double zoom = 1.0 + 0.30 * (1.0 - p_raw);
-    cairo_save(cr);
-    cairo_translate(cr, lp->screen_width / 2.0, lp->screen_height / 2.0);
-    cairo_scale(cr, zoom, zoom);
-    cairo_translate(cr, -lp->screen_width / 2.0, -lp->screen_height / 2.0);
 
     // Search bar
     draw_glass_panel(cr, l.search_x, l.search_y, l.search_w, l.search_h, l.search_h / 2.0,
@@ -1507,14 +1942,16 @@ void launchpad_render(aurade_launchpad_t *lp) {
             if (item->type == LP_ITEM_APP && item->app) {
                 draw_squircle_icon(cr, cx, cy, size, item->app->name,
                                    item->app->icon_surface, alpha);
-                draw_text_shadowed(cr, item->app->name, LP_FONT, 12.0, true,
-                                   1.0, 1.0, 1.0, 0.96 * alpha, 0.35 * alpha,
-                                   cx, cy + size / 2.0 + 17.0, true, true);
+                double max_text_w = fmin(l.cell_w - 8.0, 140.0);
+                draw_text_shadowed_wrapped(cr, item->app->name, LP_FONT, 11.5, true,
+                                           1.0, 1.0, 1.0, 0.96 * alpha, 0.35 * alpha,
+                                           cx, cy + size / 2.0 + 8.0, max_text_w, 2);
             } else if (item->type == LP_ITEM_FOLDER && item->folder) {
                 draw_folder_icon(cr, cx, cy, size, item->folder, alpha);
-                draw_text_shadowed(cr, item->folder->name, LP_FONT, 12.0, true,
-                                   1.0, 1.0, 1.0, 0.96 * alpha, 0.35 * alpha,
-                                   cx, cy + size / 2.0 + 17.0, true, true);
+                double max_text_w = fmin(l.cell_w - 8.0, 140.0);
+                draw_text_shadowed_wrapped(cr, item->folder->name, LP_FONT, 11.5, true,
+                                           1.0, 1.0, 1.0, 0.96 * alpha, 0.35 * alpha,
+                                           cx, cy + size / 2.0 + 8.0, max_text_w, 2);
             }
         }
     }
@@ -1546,39 +1983,54 @@ void launchpad_render(aurade_launchpad_t *lp) {
         draw_chevron(cr, dots_start + lp->total_pages * 22.0 + 34.0, dots_y, 16.0, 1, 0.55 * p);
     }
 
-    // OPEN FOLDER MODAL WINDOW (macOS STYLE)
-    if (lp->open_folder != NULL) {
-        // Dim background grid further
-        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.40 * p);
+    // OPEN FOLDER MODAL WINDOW (ANIMATED & SCROLLABLE)
+    lp_folder_t *folder = lp->open_folder ? lp->open_folder : lp->anim_folder;
+    if (folder != NULL && (lp->open_folder != NULL || (lp->folder_animating && lp->folder_anim_progress > 0.005))) {
+        double fp = lp->folder_anim_progress;
+        if (!lp->folder_animating && lp->open_folder != NULL) fp = 1.0;
+        if (fp < 0.0) fp = 0.0;
+        double alpha_fp = fmin(1.0, fp);
+
+        // Dim background grid further with animated fade
+        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.45 * p * alpha_fp);
         cairo_paint(cr);
 
         lp_folder_layout_t fl;
         lp_folder_layout(lp, &fl);
 
+        double win_cx = fl.win_x + fl.win_w / 2.0;
+        double win_cy = fl.win_y + fl.win_h / 2.0;
+        double scale = 0.86 + 0.14 * fp;
+
+        cairo_save(cr);
+        cairo_translate(cr, win_cx, win_cy);
+        cairo_scale(cr, scale, scale);
+        cairo_translate(cr, -win_cx, -win_cy);
+
         // Drop shadow for modal window
-        draw_drop_shadow(cr, fl.win_x, fl.win_y, fl.win_w, fl.win_h, 24.0, 36.0, 0.50 * p);
+        draw_drop_shadow(cr, fl.win_x, fl.win_y, fl.win_w, fl.win_h, 24.0, 36.0, 0.50 * p * alpha_fp);
 
         // Glass panel background
         draw_glass_panel(cr, fl.win_x, fl.win_y, fl.win_w, fl.win_h, 24.0,
-                         0.14, 0.16, 0.22, 0.94 * p);
+                         0.14, 0.16, 0.22, 0.94 * p * alpha_fp);
 
         // Subtle 1px bright border
         cairo_save(cr);
         draw_rounded_rect(cr, fl.win_x, fl.win_y, fl.win_w, fl.win_h, 24.0);
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.22 * p);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.22 * p * alpha_fp);
         cairo_set_line_width(cr, 1.0);
         cairo_stroke(cr);
         cairo_restore(cr);
 
         // Close button (top right)
         cairo_arc(cr, fl.close_x, fl.close_y, fl.close_r, 0, 2 * M_PI);
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.14 * p);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.14 * p * alpha_fp);
         cairo_fill(cr);
         cairo_move_to(cr, fl.close_x - 5.0, fl.close_y - 5.0);
         cairo_line_to(cr, fl.close_x + 5.0, fl.close_y + 5.0);
         cairo_move_to(cr, fl.close_x + 5.0, fl.close_y - 5.0);
         cairo_line_to(cr, fl.close_x - 5.0, fl.close_y + 5.0);
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.75 * p);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.75 * p * alpha_fp);
         cairo_set_line_width(cr, 1.8);
         cairo_stroke(cr);
 
@@ -1586,64 +2038,124 @@ void launchpad_render(aurade_launchpad_t *lp) {
         if (lp->folder_renaming) {
             double tw = fmax(180.0, strlen(lp->folder_rename_buf) * 12.0 + 40.0);
             draw_glass_panel(cr, fl.title_x - tw / 2.0, fl.title_y - 18.0, tw, 36.0, 18.0,
-                             0.25, 0.28, 0.38, 0.90 * p);
+                             0.25, 0.28, 0.38, 0.90 * p * alpha_fp);
 
             char display_buf[80];
             snprintf(display_buf, sizeof(display_buf), "%s|", lp->folder_rename_buf);
             draw_text(cr, display_buf, LP_FONT, 18.0, true,
-                      1.0, 1.0, 1.0, 0.98 * p,
+                      1.0, 1.0, 1.0, 0.98 * p * alpha_fp,
                       fl.title_x, fl.title_y, true, true);
         } else {
-            draw_text_shadowed(cr, lp->open_folder->name, LP_FONT, 20.0, true,
-                               1.0, 1.0, 1.0, 0.98 * p, 0.40 * p,
+            draw_text_shadowed(cr, folder->name, LP_FONT, 20.0, true,
+                               1.0, 1.0, 1.0, 0.98 * p * alpha_fp, 0.40 * p * alpha_fp,
                                fl.title_x, fl.title_y, true, true);
         }
 
+        // Scroll limits
+        int total_rows = (folder->app_count + fl.cols - 1) / fl.cols;
+        double total_content_h = total_rows * fl.cell_h;
+        double max_scroll = fmax(0.0, total_content_h - fl.grid_h + 16.0);
+        if (lp->folder_scroll_y > max_scroll) lp->folder_scroll_y = max_scroll;
+        if (lp->folder_scroll_y < 0.0) lp->folder_scroll_y = 0.0;
+
+        // Clip viewport to the folder content area so icons NEVER overflow outside
+        cairo_save(cr);
+        cairo_rectangle(cr, fl.win_x + 12.0, fl.grid_y - 4.0,
+                        fl.win_w - 24.0, fl.win_h - (fl.grid_y - fl.win_y) - 14.0);
+        cairo_clip(cr);
+
         // Apps inside the folder
-        for (int i = 0; i < lp->open_folder->app_count; i++) {
-            desktop_app_t *app = lp->open_folder->apps[i];
+        for (int i = 0; i < folder->app_count; i++) {
+            desktop_app_t *app = folder->apps[i];
             if (!app) continue;
 
             int r = i / fl.cols;
             int c = i % fl.cols;
             double cx = fl.grid_x + c * fl.cell_w + fl.cell_w / 2.0;
-            double cy = fl.grid_y + r * fl.cell_h + fl.cell_h / 2.0;
+            double cy = fl.grid_y + r * fl.cell_h + fl.cell_h / 2.0 - lp->folder_scroll_y;
+
+            // Frustum culling
+            if (cy + fl.icon_size + 30.0 < fl.grid_y - 4.0 || cy - fl.icon_size > fl.win_y + fl.win_h) {
+                continue;
+            }
 
             bool is_dragged = (lp->is_dragging && lp->drag_from_folder && lp->dragged_app == app);
-            double alpha = is_dragged ? 0.25 * p : p;
+            double alpha = (is_dragged ? 0.25 : 1.0) * p * alpha_fp;
 
             bool hover = (lp->hovered_folder_app_idx == i && !lp->is_dragging);
             double size = fl.icon_size * (hover ? 1.06 : 1.0);
 
             if (hover) {
                 cairo_arc(cr, cx, cy, size * 0.74, 0, 2 * M_PI);
-                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.14 * p);
+                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.14 * p * alpha_fp);
                 cairo_fill(cr);
             }
 
             draw_squircle_icon(cr, cx, cy, size, app->name, app->icon_surface, alpha);
-            draw_text_shadowed(cr, app->name, LP_FONT, 11.5, true,
-                               1.0, 1.0, 1.0, 0.96 * alpha, 0.35 * alpha,
-                               cx, cy + size / 2.0 + 15.0, true, true);
+            double max_text_w = fmin(fl.cell_w - 8.0, 120.0);
+            draw_text_shadowed_wrapped(cr, app->name, LP_FONT, 11.0, true,
+                                       1.0, 1.0, 1.0, 0.96 * alpha, 0.35 * alpha,
+                                       cx, cy + size / 2.0 + 8.0, max_text_w, 2);
         }
+        cairo_restore(cr); // restore icon viewport clip
+
+        // Modern vertical scrollbar
+        if (max_scroll > 0.0) {
+            double track_x = fl.win_x + fl.win_w - 14.0;
+            double track_y = fl.grid_y + 4.0;
+            double track_w = 4.5;
+            double track_h = fl.grid_h - 8.0;
+
+            double visible_ratio = fl.grid_h / total_content_h;
+            double thumb_h = fmax(28.0, track_h * visible_ratio);
+            double scroll_ratio = lp->folder_scroll_y / max_scroll;
+            if (scroll_ratio < 0.0) scroll_ratio = 0.0;
+            if (scroll_ratio > 1.0) scroll_ratio = 1.0;
+            double thumb_y = track_y + scroll_ratio * (track_h - thumb_h);
+
+            // Subtle track
+            draw_rounded_rect(cr, track_x, track_y, track_w, track_h, 2.2);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.08 * p * alpha_fp);
+            cairo_fill(cr);
+
+            // Thumb pill
+            draw_rounded_rect(cr, track_x, thumb_y, track_w, thumb_h, 2.2);
+            double thumb_alpha = (lp->folder_scrollbar_dragging ? 0.70 : 0.40) * p * alpha_fp;
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, thumb_alpha);
+            cairo_fill(cr);
+        }
+
+        cairo_restore(cr); // restore folder window scale transform
     }
 
-    cairo_restore(cr);
+    if (lp->fg_scene_buffer) {
+        cairo_buffer_apply_to_scene(lp->buffer, lp->fg_scene_buffer);
+    }
+}
 
-    cairo_buffer_apply_to_scene(lp->buffer, lp->scene_buffer);
+void launchpad_refresh(aurade_launchpad_t *lp) {
+    if (!lp) return;
+    filter_items(lp);
+    if (lp->active) {
+        launchpad_render(lp);
+        if (lp->server) schedule_all_outputs(lp->server);
+    }
 }
 
 void launchpad_destroy(aurade_launchpad_t *lp) {
     if (!lp) return;
-    if (lp->realtime_blur) {
-        cairo_surface_destroy(lp->realtime_blur);
-        lp->realtime_blur = NULL;
-    }
     for (int i = 0; i < lp->item_count; i++) {
         if (lp->items[i].type == LP_ITEM_FOLDER && lp->items[i].folder) {
+            lp_folder_invalidate_preview(lp->items[i].folder);
             free(lp->items[i].folder);
             lp->items[i].folder = NULL;
         }
+    }
+    if (lp->tree) {
+        wlr_scene_node_destroy(&lp->tree->node);
+    }
+    if (lp->drag_scene_buffer) {
+        wlr_scene_node_destroy(&lp->drag_scene_buffer->node);
     }
     if (lp->drag_buffer) wlr_buffer_drop(&lp->drag_buffer->base);
     if (lp->buffer) wlr_buffer_drop(&lp->buffer->base);

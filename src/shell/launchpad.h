@@ -5,9 +5,9 @@
 #include "../render/cairo_buffer.h"
 #include <wlr/types/wlr_pointer.h>
 
-#define LAUNCHPAD_MAX_FOLDER_ITEMS 36
-#define LAUNCHPAD_MAX_ITEMS 256
-#define LAUNCHPAD_MAX_FILTERED 256
+#define LAUNCHPAD_MAX_FOLDER_ITEMS 128
+#define LAUNCHPAD_MAX_ITEMS 512
+#define LAUNCHPAD_MAX_FILTERED 512
 
 typedef enum {
     LP_ITEM_APP = 0,
@@ -18,6 +18,7 @@ typedef struct lp_folder {
     char name[64];
     desktop_app_t *apps[LAUNCHPAD_MAX_FOLDER_ITEMS];
     int app_count;
+    cairo_surface_t *preview_surface;
 } lp_folder_t;
 
 typedef struct lp_item {
@@ -36,7 +37,11 @@ typedef enum {
 typedef struct aurade_launchpad {
     aurade_server_t *server;
     cairo_buffer_t *buffer;
-    struct wlr_scene_buffer *scene_buffer;
+
+    // Hardware-accelerated GPU zoom & fade animation
+    struct wlr_scene_tree *tree;
+    struct wlr_scene_buffer *bg_scene_buffer;
+    struct wlr_scene_buffer *fg_scene_buffer;
 
     int screen_width, screen_height;
     bool active;
@@ -66,10 +71,24 @@ typedef struct aurade_launchpad {
 
     // Open folder modal view state
     lp_folder_t *open_folder;
+    lp_folder_t *anim_folder;
     int open_folder_item_idx;
     bool folder_renaming;
     char folder_rename_buf[64];
     int hovered_folder_app_idx;
+
+    // Folder vertical scroll state
+    double folder_scroll_y;
+    double folder_target_scroll_y;
+    bool folder_scrollbar_dragging;
+    double folder_drag_start_mouse_y;
+    double folder_drag_start_scroll_y;
+
+    // Folder opening & closing spring animation
+    double folder_anim_progress; // 0.0 (closed) to 1.0 (fully open)
+    double folder_anim_target;   // 0.0 or 1.0
+    bool folder_animating;
+    spring_simulation_t folder_spring;
 
     // Hover state on main grid
     int hovered_index;
@@ -90,7 +109,6 @@ typedef struct aurade_launchpad {
     uint64_t drag_edge_hover_time_ms;
     cairo_buffer_t *drag_buffer;
     struct wlr_scene_buffer *drag_scene_buffer;
-    cairo_surface_t *realtime_blur;
 } aurade_launchpad_t;
 
 aurade_launchpad_t *launchpad_create(aurade_server_t *server);
@@ -109,6 +127,9 @@ bool launchpad_handle_click(aurade_launchpad_t *lp, double x, double y);
 void launchpad_handle_motion(aurade_launchpad_t *lp, double x, double y);
 bool launchpad_handle_key(aurade_launchpad_t *lp, uint32_t keyval, bool pressed);
 void launchpad_render(aurade_launchpad_t *lp);
+void launchpad_refresh(aurade_launchpad_t *lp);
+void launchpad_open_folder(aurade_launchpad_t *lp, lp_folder_t *folder, bool animate);
+void launchpad_close_folder(aurade_launchpad_t *lp, bool animate);
 void launchpad_destroy(aurade_launchpad_t *lp);
 
 void launchpad_load_layout(aurade_launchpad_t *lp);

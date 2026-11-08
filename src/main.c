@@ -13,6 +13,7 @@
 #include "shell/notifications.h"
 #include "shell/music_pill.h"
 #include "gestures/gesture_engine.h"
+#include <scenefx/render/fx_renderer/fx_renderer.h>
 
 #include <xkbcommon/xkbcommon.h>
 #include <wlr/backend/libinput.h>
@@ -60,6 +61,31 @@ static void crash_handler(int sig) {
 }
 
 // Config reload watcher callback
+void server_update_blur_config(aurade_server_t *server) {
+    if (!server || !server->scene) return;
+    double str = server->config.blur_strength > 0.05 ? server->config.blur_strength : 1.0;
+    // Dual-Kawase with 2 passes & radius 3.5 is ideal for integrated GPUs (Intel UHD):
+    // delivers smooth frosted glass while reducing GPU fragment fill rate by ~65%.
+    int passes = (int)round(2.0 * str);
+    if (passes < 1) passes = 1;
+    if (passes > 4) passes = 4;
+    int rad = (int)round(3.5 * str);
+    if (rad < 1) rad = 1;
+    // noise=0, brightness=1, contrast=1, saturation=1 completely bypasses the
+    // expensive fullscreen post-processing effects shader in SceneFX.
+    wlr_scene_set_blur_data(server->scene, passes, rad, 0.0f, 1.0f, 1.0f, 1.0f);
+
+    if (server->dock && server->dock->blur_node) {
+        wlr_scene_node_set_enabled(&server->dock->blur_node->node,
+                                   server->dock->enabled &&
+                                   server->dock->hide_progress < 0.999 &&
+                                   server->config.blur_dock);
+    }
+    if (server->topbar && server->topbar->blur_node) {
+        wlr_scene_node_set_enabled(&server->topbar->blur_node->node, server->config.blur_topbar);
+    }
+}
+
 static int config_inotify_handler(int fd, uint32_t mask, void *data) {
     (void)mask; // Unused
     aurade_server_t *server = data;
@@ -93,6 +119,8 @@ static int config_inotify_handler(int fd, uint32_t mask, void *data) {
             config_get_default_path(),
             server->config.disable_while_typing ? "enabled" : "disabled");
 
+    server_update_blur_config(server);
+
     // Apply live: re-render everything that depends on configuration.
     if (server->config.num_workspaces > 0 && server->config.num_workspaces != server->num_workspaces) {
         server_set_num_workspaces(server, server->config.num_workspaces);
@@ -102,13 +130,11 @@ static int config_inotify_handler(int fd, uint32_t mask, void *data) {
         wallpaper_reload(server->wallpaper);
     }
     if (server->dock) {
-        server->dock->blur_dirty = true;
         dock_update_running_state(server->dock);
         dock_render(server->dock);
         dock_update_visibility(server->dock);
     }
     if (server->topbar) {
-        server->topbar->blur_dirty = true;
         topbar_render(server->topbar);
     }
     if (server->launchpad) launchpad_render(server->launchpad);
@@ -159,7 +185,8 @@ static void output_frame(struct wl_listener *listener, void *data) {
         dock_render(server->dock);
     }
 
-    // Ensure any surface or subsurface commits that arrived before VBlank keep their active scale
+    // Ensure views currently scaled (overview / animations) remain properly scaled
+    // even if the client or any subsurface committed a buffer during the frame.
     aurade_view_t *v;
     wl_list_for_each(v, &server->views, link) {
         if (!v->minimized && v->scene_tree && v->scene_tree->node.enabled &&
@@ -180,12 +207,17 @@ static void output_frame(struct wl_listener *listener, void *data) {
     }
     bool dock_animating = server->dock && (dock_is_bouncing(server->dock) || server->dock->needs_render);
     bool topbar_animating = server->topbar && server->topbar->needs_render;
+    bool launchpad_animating = server->launchpad &&
+        (server->launchpad->page_animating ||
+         server->launchpad->folder_animating ||
+         server->launchpad->needs_render);
 
-    if (view_animating || dock_animating || topbar_animating ||
+    if (view_animating || dock_animating || topbar_animating || launchpad_animating ||
         server->gesture_animating || server->workspace_animating || server->gesture_in_progress ||
-        (server->launchpad && server->launchpad->page_animating) ||
+        (server->mission_control && server->mission_control->ws_animating) ||
         (server->osd && server->osd->visible) ||
-        (server->notifications && server->notifications->count > 0)) {
+        (server->notifications && server->notifications->count > 0) ||
+        wlr_scene_output_needs_frame(output->scene_output)) {
         wlr_output_schedule_frame(output->wlr_output);
     }
 }
@@ -462,6 +494,80 @@ static void handle_new_pointer_constraint(struct wl_listener *listener, void *da
     }
 }
 
+static void update_snap_preview(aurade_server_t *server, snap_action_t action) {
+    if (server->snap_action == action) return;
+    server->snap_action = action;
+
+    if (action == SNAP_NONE) {
+        if (server->snap_preview_scene) {
+            wlr_scene_node_set_enabled(&server->snap_preview_scene->node, false);
+        }
+        return;
+    }
+
+    int screen_w = server->screen_width > 0 ? server->screen_width : 1920;
+    int screen_h = server->screen_height > 0 ? server->screen_height : 1080;
+    bool hide_dock = server->config.dock_autohide ||
+                     server->config.dock_intellihide ||
+                     !server->config.dock_enabled;
+    int bottom_margin = hide_dock ? 8 : 96;
+
+    int target_x = 8;
+    int target_y = TOPBAR_HEIGHT + 8;
+    int target_w = screen_w - 16;
+    int target_h = screen_h - TOPBAR_HEIGHT - bottom_margin - 16;
+
+    if (action == SNAP_LEFT) {
+        target_w = screen_w / 2 - 12;
+    } else if (action == SNAP_RIGHT) {
+        target_x = screen_w / 2 + 4;
+        target_w = screen_w / 2 - 12;
+    }
+
+    if (target_w <= 0 || target_h <= 0) return;
+
+    if (!server->snap_preview_buffer) {
+        server->snap_preview_buffer = cairo_buffer_create(target_w, target_h);
+        if (server->snap_preview_buffer) {
+            server->snap_preview_scene = wlr_scene_buffer_create(
+                server->shell_tree ? server->shell_tree : server->overlay_tree,
+                &server->snap_preview_buffer->base);
+            if (server->topbar && server->topbar->scene_buffer && server->snap_preview_scene) {
+                wlr_scene_node_place_below(&server->snap_preview_scene->node,
+                                           &server->topbar->scene_buffer->node);
+            }
+        }
+    } else {
+        cairo_buffer_resize(server->snap_preview_buffer, target_w, target_h);
+    }
+
+    if (server->snap_preview_buffer && server->snap_preview_scene) {
+        cairo_t *cr = server->snap_preview_buffer->cr;
+        cairo_save(cr);
+        cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+        cairo_paint(cr);
+        cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+
+        // Draw translucent preview card with rounded corners
+        draw_rounded_rect(cr, 0, 0, target_w, target_h, 16.0);
+
+        // Modern macOS accent blue fill
+        cairo_set_source_rgba(cr, 0.0, 0.48, 1.0, 0.20);
+        cairo_fill_preserve(cr);
+
+        // Accent border
+        cairo_set_source_rgba(cr, 0.2, 0.6, 1.0, 0.65);
+        cairo_set_line_width(cr, 2.0);
+        cairo_stroke(cr);
+
+        cairo_restore(cr);
+
+        cairo_buffer_apply_to_scene(server->snap_preview_buffer, server->snap_preview_scene);
+        wlr_scene_node_set_position(&server->snap_preview_scene->node, target_x, target_y);
+        wlr_scene_node_set_enabled(&server->snap_preview_scene->node, true);
+    }
+}
+
 static void cursor_motion(struct wl_listener *listener, void *data) {
     aurade_server_t *server = wl_container_of(listener, server, cursor_motion);
     struct wlr_pointer_motion_event *event = data;
@@ -542,29 +648,30 @@ static void cursor_motion(struct wl_listener *listener, void *data) {
     }
 
     if (server->cursor_mode == CURSOR_MOVE && server->grabbed_view) {
-        server->grabbed_view->x = (int)(lx - server->grab_x);
-        server->grabbed_view->y = (int)(ly - server->grab_y);
+        int target_x = (int)(lx - server->grab_x);
+        int target_y = (int)(ly - server->grab_y);
+        if (target_y < TOPBAR_HEIGHT) {
+            target_y = TOPBAR_HEIGHT;
+        }
+        server->grabbed_view->x = target_x;
+        server->grabbed_view->y = target_y;
         wlr_scene_node_set_position(&server->grabbed_view->scene_tree->node,
                                     server->grabbed_view->x, server->grabbed_view->y);
         if (server->dock) {
             dock_update_visibility(server->dock);
-            if (server->config.blur_dock && server->grabbed_view) {
-                aurade_view_t *gv = server->grabbed_view;
-                if (gv->workspace == server->current_workspace && !gv->minimized &&
-                    gv->y + gv->height > server->dock->pill_y && gv->y < server->dock->pill_y + server->dock->pill_height) {
-                    server->dock->blur_dirty = true;
-                    server->dock->needs_render = true;
-                }
-            }
         }
-        if (server->topbar && server->config.blur_topbar && server->grabbed_view) {
-            aurade_view_t *gv = server->grabbed_view;
-            if (gv->workspace == server->current_workspace && !gv->minimized &&
-                gv->y <= TOPBAR_HEIGHT + 24) {
-                server->topbar->blur_dirty = true;
-                server->topbar->needs_render = true;
-            }
+
+        snap_action_t action = SNAP_NONE;
+        int screen_w = server->screen_width > 0 ? server->screen_width : 1920;
+        if (ly <= TOPBAR_HEIGHT + 6 || (target_y <= TOPBAR_HEIGHT && (ly - server->grab_y) <= TOPBAR_HEIGHT)) {
+            action = SNAP_MAXIMIZE;
+        } else if (lx <= 4) {
+            action = SNAP_LEFT;
+        } else if (lx >= screen_w - 4) {
+            action = SNAP_RIGHT;
         }
+        update_snap_preview(server, action);
+
         schedule_all_outputs(server);
         return;
     }
@@ -587,6 +694,10 @@ static void cursor_motion(struct wl_listener *listener, void *data) {
         if (server->resize_edges & WLR_EDGE_TOP) {
             new_h -= (int)round(dy);
             new_y += (int)round(dy);
+            if (new_y < TOPBAR_HEIGHT) {
+                new_h -= (TOPBAR_HEIGHT - new_y);
+                new_y = TOPBAR_HEIGHT;
+            }
         }
 
         if (new_w < 240) {
@@ -598,9 +709,11 @@ static void cursor_motion(struct wl_listener *listener, void *data) {
         if (new_h < 180) {
             if (server->resize_edges & WLR_EDGE_TOP) {
                 new_y = server->grab_geobox.y + server->grab_geobox.height - 180;
+                if (new_y < TOPBAR_HEIGHT) new_y = TOPBAR_HEIGHT;
             }
             new_h = 180;
         }
+        if (new_y < TOPBAR_HEIGHT) new_y = TOPBAR_HEIGHT;
 
         view->x = new_x;
         view->y = new_y;
@@ -608,20 +721,6 @@ static void cursor_motion(struct wl_listener *listener, void *data) {
         view->height = new_h;
         view->maximized = false;
         wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
-        if (server->dock && server->config.blur_dock) {
-            if (view->workspace == server->current_workspace && !view->minimized &&
-                view->y + view->height > server->dock->pill_y && view->y < server->dock->pill_y + server->dock->pill_height) {
-                server->dock->blur_dirty = true;
-                server->dock->needs_render = true;
-            }
-        }
-        if (server->topbar && server->config.blur_topbar) {
-            if (view->workspace == server->current_workspace && !view->minimized &&
-                view->y <= TOPBAR_HEIGHT + 24) {
-                server->topbar->blur_dirty = true;
-                server->topbar->needs_render = true;
-            }
-        }
         schedule_all_outputs(server);
         if (view->xdg_toplevel && view->xdg_toplevel->base->initialized) {
             view->last_configure_ms = now_ms();
@@ -831,6 +930,33 @@ static void cursor_button(struct wl_listener *listener, void *data) {
         // must not cancel the resize.
         if (server->grab_button == event->button ||
             (server->grab_button == 0 && server->cursor_mode != CURSOR_PASSTHROUGH)) {
+            if (server->cursor_mode == CURSOR_MOVE && server->grabbed_view) {
+                aurade_view_t *v = server->grabbed_view;
+                snap_action_t snap = server->snap_action;
+                if (snap == SNAP_NONE && (ly <= TOPBAR_HEIGHT + 6 || v->y <= TOPBAR_HEIGHT)) {
+                    snap = SNAP_MAXIMIZE;
+                }
+                update_snap_preview(server, SNAP_NONE);
+
+                server->cursor_mode = CURSOR_PASSTHROUGH;
+                server->grabbed_view = NULL;
+                server->grab_button = 0;
+
+                if (snap == SNAP_MAXIMIZE) {
+                    if (!v->maximized) {
+                        view_toggle_maximize(v);
+                    }
+                } else if (snap == SNAP_LEFT) {
+                    view_tile(v, true);
+                } else if (snap == SNAP_RIGHT) {
+                    view_tile(v, false);
+                }
+
+                if (server->dock) dock_update_visibility(server->dock);
+                schedule_all_outputs(server);
+                return;
+            }
+
             if (server->cursor_mode == CURSOR_RESIZE && server->grabbed_view) {
                 if (server->grabbed_view->xdg_toplevel) {
                     wlr_xdg_toplevel_set_resizing(server->grabbed_view->xdg_toplevel, false);
@@ -845,6 +971,7 @@ static void cursor_button(struct wl_listener *listener, void *data) {
                                                   server->grabbed_view->height);
                 }
             }
+            update_snap_preview(server, SNAP_NONE);
             server->cursor_mode = CURSOR_PASSTHROUGH;
             server->grabbed_view = NULL;
             server->grab_button = 0;
@@ -861,7 +988,15 @@ static void cursor_button(struct wl_listener *listener, void *data) {
                 if (server->dock && dock_contains_point(server->dock, lx, ly)) {
                     desktop_app_t *dapp = server->launchpad->dragged_app;
                     dock_pin_app(server->dock, dapp->name, dapp->exec, dapp->icon_name, dapp->icon_surface);
+                    if (server->launchpad->drag_from_folder && server->launchpad->open_folder) {
+                        int s_idx = server->launchpad->drag_source_idx;
+                        for (int k = s_idx; k < server->launchpad->open_folder->app_count - 1; k++) {
+                            server->launchpad->open_folder->apps[k] = server->launchpad->open_folder->apps[k + 1];
+                        }
+                        server->launchpad->open_folder->app_count--;
+                    }
                     launchpad_cancel_drag(server->launchpad);
+                    launchpad_refresh(server->launchpad);
                     return;
                 }
             }
@@ -1076,6 +1211,36 @@ static void cursor_button(struct wl_listener *listener, void *data) {
         // no compositor-drawn titlebar to grab any more.
         if (left && !over_popup && super_is_held(server)) {
             view_focus(view);
+            if (view->maximized) {
+                int screen_w = server->screen_width > 0 ? server->screen_width : 1920;
+                int screen_h = server->screen_height > 0 ? server->screen_height : 1080;
+                int restored_w = (view->prev_w >= 240 && view->prev_w < screen_w) ? view->prev_w : (screen_w * 3 / 4);
+                int restored_h = (view->prev_h >= 180 && view->prev_h < screen_h) ? view->prev_h : ((screen_h - TOPBAR_HEIGHT - 96) * 3 / 4);
+
+                double rel_x = (server->cursor->x - view->x) / (double)(view->width > 0 ? view->width : screen_w);
+                if (rel_x < 0.1) rel_x = 0.1;
+                if (rel_x > 0.9) rel_x = 0.9;
+
+                int new_x = (int)(server->cursor->x - restored_w * rel_x);
+                int new_y = (int)server->cursor->y - 15;
+                if (new_y < TOPBAR_HEIGHT) new_y = TOPBAR_HEIGHT;
+
+                view->maximized = false;
+                view->fullscreen = false;
+                view->x = new_x;
+                view->y = new_y;
+                view->width = restored_w;
+                view->height = restored_h;
+
+                if (view->xdg_toplevel && view->xdg_toplevel->base->initialized) {
+                    wlr_xdg_toplevel_set_maximized(view->xdg_toplevel, false);
+                    wlr_xdg_toplevel_set_size(view->xdg_toplevel, restored_w, restored_h);
+                } else if (view->xwayland_surface) {
+                    wlr_xwayland_surface_set_maximized(view->xwayland_surface, false, false);
+                    wlr_xwayland_surface_configure(view->xwayland_surface, new_x, new_y, restored_w, restored_h);
+                }
+                wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
+            }
             server->grabbed_view = view;
             server->cursor_mode = CURSOR_MOVE;
             server->grab_button = event->button;
@@ -1160,6 +1325,11 @@ static void cursor_axis(struct wl_listener *listener, void *data) {
 
     double delta = event->delta;
     int32_t delta_discrete = event->delta_discrete;
+
+    if (server->mission_control && server->mission_control->active) {
+        mission_control_handle_axis(server->mission_control, event->orientation, delta, delta_discrete);
+        return;
+    }
 
     if (server->launchpad && server->launchpad->active) {
         launchpad_handle_axis(server->launchpad, event->orientation, delta, delta_discrete);
@@ -1436,6 +1606,26 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
         if (sym == XKB_KEY_Escape && server->dock && dock_context_menu_is_open(server->dock)) {
             dock_close_context_menu(server->dock);
             return;
+        }
+
+        // Mission Control keyboard navigation
+        if (server->mission_control && server->mission_control->active) {
+            if (sym == XKB_KEY_Left || sym == XKB_KEY_Page_Up) {
+                mission_control_switch_workspace(server->mission_control, server->current_workspace - 1);
+                return;
+            }
+            if (sym == XKB_KEY_Right || sym == XKB_KEY_Page_Down) {
+                mission_control_switch_workspace(server->mission_control, server->current_workspace + 1);
+                return;
+            }
+            if (sym >= XKB_KEY_1 && sym <= XKB_KEY_4) {
+                mission_control_switch_workspace(server->mission_control, sym - XKB_KEY_1);
+                return;
+            }
+            if (sym == XKB_KEY_Escape) {
+                close_overlay(server);
+                return;
+            }
         }
 
         // Escape dismisses any open overlay (Mission Control, Launchpad, ...).
@@ -1828,13 +2018,25 @@ void server_handle_gesture_begin(aurade_server_t *server, gesture_action_type_t 
     if (server->gesture_mode != GESTURE_MODE_IDLE) {
         gesture_mode_t cur = server->gesture_mode;
 
-        // Swiping while Mission Control is open closes Mission Control!
-        if (cur == GESTURE_MODE_MISSION_CONTROL && (action == ACTION_APP_EXPOSE || action == ACTION_MISSION_CONTROL)) {
-            server->gesture_in_progress = true;
-            server->gesture_animating = false;
-            server->gesture_is_closing = true;
-            server->gesture_start_progress = server->gesture_progress > 0.0 ? server->gesture_progress : 1.0;
-            return;
+        // Swiping while Mission Control is open: swiping down closes, swiping left/right switches workspaces
+        if (cur == GESTURE_MODE_MISSION_CONTROL) {
+            if (action == ACTION_APP_EXPOSE || action == ACTION_MISSION_CONTROL) {
+                server->gesture_in_progress = true;
+                server->gesture_animating = false;
+                server->gesture_is_closing = true;
+                server->gesture_start_progress = server->gesture_progress > 0.0 ? server->gesture_progress : 1.0;
+                return;
+            } else if (action == ACTION_WORKSPACE_NEXT) {
+                if (server->mission_control) {
+                    mission_control_switch_workspace(server->mission_control, server->current_workspace + 1);
+                }
+                return;
+            } else if (action == ACTION_WORKSPACE_PREV) {
+                if (server->mission_control) {
+                    mission_control_switch_workspace(server->mission_control, server->current_workspace - 1);
+                }
+                return;
+            }
         }
 
         // Launchpad gestures: pinching out closes, swiping left/right switches pages
@@ -1886,6 +2088,12 @@ void server_handle_gesture_begin(aurade_server_t *server, gesture_action_type_t 
             break;
         case ACTION_WORKSPACE_NEXT:
         case ACTION_WORKSPACE_PREV:
+            if (server->mission_control && server->mission_control->active) {
+                int target_ws = (action == ACTION_WORKSPACE_NEXT) ?
+                    (server->current_workspace + 1) : (server->current_workspace - 1);
+                mission_control_switch_workspace(server->mission_control, target_ws);
+                return;
+            }
             // A previous swipe may still be settling. Freeze it at its current
             // visual position so the new gesture continues the carousel from
             // there instead of fighting the old spring animation.
@@ -2593,9 +2801,14 @@ void server_tick_animations(aurade_server_t *server, double dt) {
         }
     }
 
-    // 3. Launchpad Page Switch Spring Animation
-    if (server->launchpad && server->launchpad->page_animating) {
+    // 3. Launchpad Spring Animations (page switch & folder open/close)
+    if (server->launchpad && (server->launchpad->page_animating || server->launchpad->folder_animating)) {
         launchpad_tick(server->launchpad, dt);
+    }
+
+    // Mission Control Workspace Switch Spring Animation
+    if (server->mission_control && server->mission_control->ws_animating) {
+        mission_control_tick(server->mission_control, dt);
     }
 
     // 4. OSD HUD Fadeout Animation
@@ -2690,7 +2903,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    server.renderer = wlr_renderer_autocreate(server.backend);
+    server.renderer = fx_renderer_create(server.backend);
+    if (!server.renderer) {
+        fprintf(stderr, "SceneFX renderer creation failed, falling back to autocreate\n");
+        server.renderer = wlr_renderer_autocreate(server.backend);
+    }
     wlr_renderer_init_wl_display(server.renderer, server.wl_display);
     server.allocator = wlr_allocator_autocreate(server.backend, server.renderer);
 
@@ -2722,6 +2939,7 @@ int main(int argc, char *argv[]) {
 
     // Initialize Scene Trees
     server.scene = wlr_scene_create();
+    server_update_blur_config(&server);
     server.output_layout = wlr_output_layout_create(server.wl_display);
     server.xdg_output_manager = wlr_xdg_output_manager_v1_create(server.wl_display,
                                                                   server.output_layout);
@@ -2813,6 +3031,7 @@ int main(int argc, char *argv[]) {
     server.osd = osd_create(&server);
     server.notifications = notifications_create(&server);
     server.music_pill = music_pill_create(&server);
+    server_update_blur_config(&server);
 
 // Config reload watcher setup moved above
 

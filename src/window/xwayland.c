@@ -1,6 +1,7 @@
 #include "xwayland.h"
 #include "../shell/topbar.h"
 #include "../shell/dock.h"
+#include "../shell/mission_control.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,6 +9,21 @@
 
 static void xwayland_surface_map(struct wl_listener *listener, void *data);
 static void xwayland_surface_unmap(struct wl_listener *listener, void *data);
+
+static inline void safe_remove_listener(struct wl_listener *listener) {
+    if (listener->link.prev && listener->link.next) {
+        wl_list_remove(&listener->link);
+        listener->link.prev = NULL;
+        listener->link.next = NULL;
+    }
+}
+
+static void handle_content_tree_destroy(struct wl_listener *listener, void *data) {
+    (void)data;
+    aurade_view_t *view = wl_container_of(listener, view, content_tree_destroy);
+    view->content_tree = NULL;
+    safe_remove_listener(&view->content_tree_destroy);
+}
 
 static void handle_xwayland_ready(struct wl_listener *listener, void *data) {
     (void)data;
@@ -39,6 +55,9 @@ static void xwayland_surface_associate(struct wl_listener *listener, void *data)
     struct wlr_xwayland_surface *xsurface = view->xwayland_surface;
     if (!xsurface || !xsurface->surface) return;
 
+    safe_remove_listener(&view->map);
+    safe_remove_listener(&view->unmap);
+
     view->map.notify = xwayland_surface_map;
     wl_signal_add(&xsurface->surface->events.map, &view->map);
 
@@ -47,15 +66,21 @@ static void xwayland_surface_associate(struct wl_listener *listener, void *data)
 
     if (view->scene_tree && !view->content_tree) {
         view->content_tree = wlr_scene_subsurface_tree_create(view->scene_tree, xsurface->surface);
+        if (view->content_tree) {
+            safe_remove_listener(&view->content_tree_destroy);
+            view->content_tree_destroy.notify = handle_content_tree_destroy;
+            wl_signal_add(&view->content_tree->node.events.destroy, &view->content_tree_destroy);
+        }
     }
 }
 
 static void xwayland_surface_dissociate(struct wl_listener *listener, void *data) {
     (void)data;
     aurade_view_t *view = wl_container_of(listener, view, xwayland_dissociate);
-    wl_list_remove(&view->map.link);
-    wl_list_remove(&view->unmap.link);
+    safe_remove_listener(&view->map);
+    safe_remove_listener(&view->unmap);
     if (view->content_tree) {
+        safe_remove_listener(&view->content_tree_destroy);
         wlr_scene_node_destroy(&view->content_tree->node);
         view->content_tree = NULL;
     }
@@ -108,6 +133,9 @@ static void xwayland_surface_map(struct wl_listener *listener, void *data) {
         y = top_margin + ((screen_h - top_margin - bottom_margin) - h) / 2;
         if (y < top_margin) y = top_margin;
         if (x < 0) x = 0;
+    }
+    if (!xsurface->override_redirect && y < top_margin) {
+        y = top_margin;
     }
 
     view->x = x;
@@ -163,6 +191,15 @@ static void xwayland_surface_unmap(struct wl_listener *listener, void *data) {
         wlr_scene_node_set_enabled(&view->scene_tree->node, false);
     }
 
+    if (server->grabbed_view == view) {
+        server->grabbed_view = NULL;
+        server->cursor_mode = CURSOR_PASSTHROUGH;
+    }
+
+    if (server->mission_control) {
+        mission_control_forget_view(server->mission_control, view);
+    }
+
     if (xsurface && !xsurface->override_redirect) {
         if (!wl_list_empty(&view->link)) {
             wl_list_remove(&view->link);
@@ -200,21 +237,42 @@ static void xwayland_surface_destroy(struct wl_listener *listener, void *data) {
         wl_list_init(&view->link);
     }
 
-    wl_list_remove(&view->destroy.link);
-    wl_list_remove(&view->xwayland_associate.link);
-    wl_list_remove(&view->xwayland_dissociate.link);
-    wl_list_remove(&view->xwayland_request_configure.link);
-    wl_list_remove(&view->request_move.link);
-    wl_list_remove(&view->request_resize.link);
-    wl_list_remove(&view->request_maximize.link);
-    wl_list_remove(&view->request_minimize.link);
-    wl_list_remove(&view->request_fullscreen.link);
-    wl_list_remove(&view->xwayland_request_activate.link);
-    wl_list_remove(&view->set_title.link);
-    wl_list_remove(&view->xwayland_set_class.link);
-    wl_list_remove(&view->xwayland_set_override_redirect.link);
+    if (view->xwayland_surface) {
+        view->xwayland_surface->data = NULL;
+    }
+
+    if (server->grabbed_view == view) {
+        server->grabbed_view = NULL;
+        server->cursor_mode = CURSOR_PASSTHROUGH;
+    }
+
+    if (server->mission_control) {
+        mission_control_forget_view(server->mission_control, view);
+    }
+
+    if (server->active_constraint && view->xwayland_surface &&
+        server->active_constraint->surface == view->xwayland_surface->surface) {
+        server_set_pointer_constraint(server, NULL);
+    }
+
+    safe_remove_listener(&view->map);
+    safe_remove_listener(&view->unmap);
+    safe_remove_listener(&view->destroy);
+    safe_remove_listener(&view->xwayland_associate);
+    safe_remove_listener(&view->xwayland_dissociate);
+    safe_remove_listener(&view->xwayland_request_configure);
+    safe_remove_listener(&view->request_move);
+    safe_remove_listener(&view->request_resize);
+    safe_remove_listener(&view->request_maximize);
+    safe_remove_listener(&view->request_minimize);
+    safe_remove_listener(&view->request_fullscreen);
+    safe_remove_listener(&view->xwayland_request_activate);
+    safe_remove_listener(&view->set_title);
+    safe_remove_listener(&view->xwayland_set_class);
+    safe_remove_listener(&view->xwayland_set_override_redirect);
 
     if (view->content_tree) {
+        safe_remove_listener(&view->content_tree_destroy);
         wlr_scene_node_destroy(&view->content_tree->node);
         view->content_tree = NULL;
     }
@@ -261,6 +319,10 @@ static void xwayland_surface_request_configure(struct wl_listener *listener, voi
         return;
     }
 
+    if (!xsurface->override_redirect && ev->y < TOPBAR_HEIGHT) {
+        ev->y = TOPBAR_HEIGHT;
+    }
+
     view->x = ev->x;
     view->y = ev->y;
     view->width = ev->width;
@@ -278,6 +340,32 @@ static void xwayland_surface_request_move(struct wl_listener *listener, void *da
     if (!server) return;
 
     if (server->cursor_mode == CURSOR_PASSTHROUGH) {
+        if (view->maximized) {
+            int screen_w = server->screen_width > 0 ? server->screen_width : 1920;
+            int screen_h = server->screen_height > 0 ? server->screen_height : 1080;
+            int restored_w = (view->prev_w >= 240 && view->prev_w < screen_w) ? view->prev_w : (screen_w * 3 / 4);
+            int restored_h = (view->prev_h >= 180 && view->prev_h < screen_h) ? view->prev_h : ((screen_h - TOPBAR_HEIGHT - 96) * 3 / 4);
+
+            double rel_x = (server->cursor->x - view->x) / (double)(view->width > 0 ? view->width : screen_w);
+            if (rel_x < 0.1) rel_x = 0.1;
+            if (rel_x > 0.9) rel_x = 0.9;
+
+            int new_x = (int)(server->cursor->x - restored_w * rel_x);
+            int new_y = (int)server->cursor->y - 15;
+            if (new_y < TOPBAR_HEIGHT) new_y = TOPBAR_HEIGHT;
+
+            view->maximized = false;
+            view->fullscreen = false;
+            view->x = new_x;
+            view->y = new_y;
+            view->width = restored_w;
+            view->height = restored_h;
+
+            wlr_xwayland_surface_set_maximized(view->xwayland_surface, false, false);
+            wlr_xwayland_surface_configure(view->xwayland_surface, new_x, new_y, restored_w, restored_h);
+            wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
+        }
+
         server->grabbed_view = view;
         server->cursor_mode = CURSOR_MOVE;
         server->grab_button = 0;
@@ -390,6 +478,7 @@ static void handle_xwayland_new_surface(struct wl_listener *listener, void *data
     if (!view) return;
 
     view->server = server;
+    view->id = ++server->next_view_id;
     view->xwayland_surface = xsurface;
     xsurface->data = view;
     view->workspace = server->current_workspace;

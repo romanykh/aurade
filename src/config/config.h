@@ -60,6 +60,9 @@ typedef struct {
     char kb_model[64];              // e.g. "pc105"
     char kb_options[256];           // e.g. "grp:alt_shift_toggle"
 
+#define DOCK_THEME_MODERN "modern"
+#define DOCK_THEME_TABLE_3D "table_3d"
+
     // Dock
     bool dock_enabled;
     bool dock_autohide;             // hidden until the pointer reaches the bottom edge
@@ -68,6 +71,7 @@ typedef struct {
     bool dock_magnification;
     double dock_max_scale;
     double dock_mag_radius;
+    char dock_theme[32];            // "modern" or "table_3d" (classic OS X 3D glass shelf)
     int dock_pinned_count;
     struct {
         char name[64];

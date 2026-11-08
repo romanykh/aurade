@@ -54,9 +54,7 @@ typedef struct aurade_topbar {
     struct wlr_scene_buffer *power_menu_scene;
 
     bool needs_render;
-    cairo_surface_t *blur_cache;
-    bool blur_dirty;
-    int last_blur_w, last_blur_h;
+    struct wlr_scene_blur *blur_node;
 } aurade_topbar_t;
 
 aurade_topbar_t *topbar_create(aurade_server_t *server);

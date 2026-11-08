@@ -15,7 +15,7 @@
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_output_layout.h>
-#include <wlr/types/wlr_scene.h>
+#include <scenefx/types/wlr_scene.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_pointer_gestures_v1.h>
@@ -35,6 +35,7 @@
 #include "config/config.h"
 #include "gestures/physics.h"
 #include "util/apps.h"
+#include "render/cairo_buffer.h"
 
 #define MAX_WORKSPACES 16
 #define DEFAULT_WORKSPACES 4
@@ -54,6 +55,13 @@ typedef enum {
     GESTURE_MODE_CONTROL_CENTER,
 } gesture_mode_t;
 
+typedef enum {
+    SNAP_NONE = 0,
+    SNAP_MAXIMIZE,
+    SNAP_LEFT,
+    SNAP_RIGHT,
+} snap_action_t;
+
 struct aurade_server;
 
 typedef enum {
@@ -67,6 +75,7 @@ typedef enum {
 typedef struct aurade_view {
     struct wl_list link;
     struct aurade_server *server;
+    uint64_t id;
     struct wlr_xdg_toplevel *xdg_toplevel;
     struct wlr_xwayland_surface *xwayland_surface;
     struct wlr_scene_tree *scene_tree;
@@ -122,6 +131,7 @@ typedef struct aurade_view {
     struct wl_listener xwayland_request_activate;
     struct wl_listener xwayland_set_class;
     struct wl_listener xwayland_set_override_redirect;
+    struct wl_listener content_tree_destroy;
 } aurade_view_t;
 
 typedef struct aurade_output {
@@ -232,6 +242,7 @@ typedef struct aurade_server {
 
     // Views
     struct wl_list views;
+    uint64_t next_view_id;
     aurade_view_t *grabbed_view;
     cursor_mode_t cursor_mode;
     uint32_t pointer_buttons_forwarded;
@@ -289,6 +300,11 @@ typedef struct aurade_server {
     pid_t audio_subscribe_pid;
     int audio_subscribe_fd;
     struct wl_event_source *audio_subscribe_source;
+
+    // Window snapping & maximize preview
+    snap_action_t snap_action;
+    cairo_buffer_t *snap_preview_buffer;
+    struct wlr_scene_buffer *snap_preview_scene;
 } aurade_server_t;
 
 // View operations
@@ -318,6 +334,7 @@ void server_handle_gesture_begin(aurade_server_t *server, gesture_action_type_t 
 void server_handle_gesture_update(aurade_server_t *server, double delta_x, double delta_y, double scale);
 void server_handle_gesture_end(aurade_server_t *server, bool cancelled, double velocity_x, double velocity_y);
 void schedule_all_outputs(aurade_server_t *server);
+void server_update_blur_config(aurade_server_t *server);
 void server_close_overlay(aurade_server_t *server);
 void server_set_pointer_constraint(aurade_server_t *server,
                                   struct wlr_pointer_constraint_v1 *constraint);

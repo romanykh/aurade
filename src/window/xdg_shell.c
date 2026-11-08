@@ -10,7 +10,7 @@
 #include <sys/types.h>
 
 
-#include "../shell/dock.h"
+#include "../shell/launchpad.h"
 
 #include <wlr/types/wlr_subcompositor.h>
 
@@ -18,6 +18,7 @@ static void view_apply_geometry(aurade_view_t *view);
 static void view_apply_decoration_request(aurade_view_t *view);
 
 struct view_scale_data {
+    aurade_view_t *view;
     double scale_x;
     double scale_y;
 };
@@ -28,18 +29,52 @@ static void view_scale_buffer_iterator(struct wlr_scene_buffer *scene_buffer,
     struct view_scale_data *data = user_data;
     if (!scene_buffer) return;
 
+    aurade_view_t *view = data->view;
     struct wlr_scene_surface *scene_surface = wlr_scene_surface_try_from_buffer(scene_buffer);
+    bool is_root_xdg = (view && view->xdg_toplevel && view->xdg_toplevel->base &&
+                        scene_surface && scene_surface->surface == view->xdg_toplevel->base->surface);
+
+    bool is_scaled = (data->scale_x > 0.0 && data->scale_y > 0.0 &&
+                      (fabs(data->scale_x - 1.0) >= 0.001 || fabs(data->scale_y - 1.0) >= 0.001));
+
+    if (is_root_xdg) {
+        struct wlr_box geo = view->xdg_toplevel->base->geometry;
+        if (geo.width <= 0 || geo.height <= 0) {
+            geo.x = 0;
+            geo.y = 0;
+            geo.width = view->width > 0 ? view->width : scene_surface->surface->current.width;
+            geo.height = view->height > 0 ? view->height : scene_surface->surface->current.height;
+        }
+
+        if (is_scaled) {
+            struct wlr_fbox src_box = {
+                .x = (double)geo.x,
+                .y = (double)geo.y,
+                .width = (double)geo.width,
+                .height = (double)geo.height,
+            };
+            wlr_scene_buffer_set_source_box(scene_buffer, &src_box);
+            int dest_w = (int)round(geo.width * data->scale_x);
+            int dest_h = (int)round(geo.height * data->scale_y);
+            if (dest_w < 1) dest_w = 1;
+            if (dest_h < 1) dest_h = 1;
+            wlr_scene_buffer_set_dest_size(scene_buffer, dest_w, dest_h);
+            wlr_scene_buffer_set_filter_mode(scene_buffer, WLR_SCALE_FILTER_BILINEAR);
+        } else {
+            wlr_scene_buffer_set_source_box(scene_buffer, NULL);
+            int orig_w = scene_surface->surface->current.width;
+            int orig_h = scene_surface->surface->current.height;
+            wlr_scene_buffer_set_dest_size(scene_buffer, orig_w, orig_h);
+        }
+        return;
+    }
+
     int orig_w = 0;
     int orig_h = 0;
 
     if (scene_surface && scene_surface->surface) {
-        if (!wlr_box_empty(&scene_surface->WLR_PRIVATE.clip)) {
-            orig_w = scene_surface->WLR_PRIVATE.clip.width;
-            orig_h = scene_surface->WLR_PRIVATE.clip.height;
-        } else {
-            orig_w = scene_surface->surface->current.width;
-            orig_h = scene_surface->surface->current.height;
-        }
+        orig_w = scene_surface->surface->current.width;
+        orig_h = scene_surface->surface->current.height;
 
         // If this surface is a Wayland subsurface, scale its parent scene tree node position
         struct wlr_subsurface *subsurface = wlr_subsurface_try_from_wlr_surface(scene_surface->surface);
@@ -47,59 +82,63 @@ static void view_scale_buffer_iterator(struct wlr_scene_buffer *scene_buffer,
             struct wlr_scene_tree *sub_tree = scene_buffer->node.parent;
             int sub_x = subsurface->current.x;
             int sub_y = subsurface->current.y;
-            if (data->scale_x > 0.0 && fabs(data->scale_x - 1.0) >= 0.001) {
+            if (is_scaled) {
                 sub_x = (int)round(sub_x * data->scale_x);
-            }
-            if (data->scale_y > 0.0 && fabs(data->scale_y - 1.0) >= 0.001) {
                 sub_y = (int)round(sub_y * data->scale_y);
             }
-            wlr_scene_node_set_position(&sub_tree->node, sub_x, sub_y);
+            if (sub_tree->node.x != sub_x || sub_tree->node.y != sub_y) {
+                wlr_scene_node_set_position(&sub_tree->node, sub_x, sub_y);
+            }
         }
-    } else if (scene_buffer->buffer) {
-        orig_w = scene_buffer->buffer->width;
-        orig_h = scene_buffer->buffer->height;
-    } else {
-        orig_w = scene_buffer->WLR_PRIVATE.buffer_width;
-        orig_h = scene_buffer->WLR_PRIVATE.buffer_height;
+    }
+
+    if (orig_w <= 0 || orig_h <= 0) {
+        if (scene_buffer->buffer) {
+            orig_w = scene_buffer->buffer->width;
+            orig_h = scene_buffer->buffer->height;
+        } else {
+            orig_w = scene_buffer->WLR_PRIVATE.buffer_width;
+            orig_h = scene_buffer->WLR_PRIVATE.buffer_height;
+        }
     }
 
     if (orig_w <= 0 || orig_h <= 0) return;
 
-    if (data->scale_x <= 0.0 || data->scale_y <= 0.0 ||
-        (fabs(data->scale_x - 1.0) < 0.001 && fabs(data->scale_y - 1.0) < 0.001)) {
-        if (scene_surface && scene_surface->surface) {
-            wlr_scene_buffer_set_dest_size(scene_buffer, orig_w, orig_h);
-        } else {
-            wlr_scene_buffer_set_dest_size(scene_buffer, 0, 0);
+    if (!is_scaled) {
+        wlr_scene_buffer_set_source_box(scene_buffer, NULL);
+        int target_w = (scene_surface && scene_surface->surface) ? orig_w : 0;
+        int target_h = (scene_surface && scene_surface->surface) ? orig_h : 0;
+        if (scene_buffer->dst_width != target_w || scene_buffer->dst_height != target_h) {
+            wlr_scene_buffer_set_dest_size(scene_buffer, target_w, target_h);
         }
     } else {
         int dest_w = (int)round(orig_w * data->scale_x);
         int dest_h = (int)round(orig_h * data->scale_y);
         if (dest_w < 1) dest_w = 1;
         if (dest_h < 1) dest_h = 1;
-        wlr_scene_buffer_set_dest_size(scene_buffer, dest_w, dest_h);
-        wlr_scene_buffer_set_filter_mode(scene_buffer, WLR_SCALE_FILTER_BILINEAR);
+        if (scene_buffer->dst_width != dest_w || scene_buffer->dst_height != dest_h) {
+            wlr_scene_buffer_set_dest_size(scene_buffer, dest_w, dest_h);
+            wlr_scene_buffer_set_filter_mode(scene_buffer, WLR_SCALE_FILTER_BILINEAR);
+        }
     }
 }
 
 void view_set_scale(aurade_view_t *view, double scale_x, double scale_y) {
     if (!view || !view->scene_tree) return;
     view->current_scale = scale_x;
-    struct view_scale_data data = { .scale_x = scale_x, .scale_y = scale_y };
-    wlr_scene_node_for_each_buffer(&view->scene_tree->node, view_scale_buffer_iterator, &data);
 
-    if (view->content_tree && view->xdg_toplevel && view->xdg_toplevel->base) {
-        struct wlr_box *geo = &view->xdg_toplevel->base->geometry;
-        int off_x = 0;
-        int off_y = 0;
-        if (scale_x > 0.0 && fabs(scale_x - 1.0) >= 0.001) {
-            off_x = (int)round(geo->x * (1.0 - scale_x));
+    if (view->content_tree) {
+        if (view->content_tree->node.x != 0 || view->content_tree->node.y != 0) {
+            wlr_scene_node_set_position(&view->content_tree->node, 0, 0);
         }
-        if (scale_y > 0.0 && fabs(scale_y - 1.0) >= 0.001) {
-            off_y = (int)round(geo->y * (1.0 - scale_y));
-        }
-        wlr_scene_node_set_position(&view->content_tree->node, off_x, off_y);
     }
+
+    struct view_scale_data data = {
+        .view = view,
+        .scale_x = scale_x,
+        .scale_y = scale_y,
+    };
+    wlr_scene_node_for_each_buffer(&view->scene_tree->node, view_scale_buffer_iterator, &data);
 }
 
 struct view_opacity_data {
@@ -128,6 +167,8 @@ void view_anim_settle(aurade_view_t *view) {
     view_anim_type_t prev = view->anim_type;
     view->anim_type = VIEW_ANIM_NONE;
     if (!view->scene_tree) return;
+
+    if (view->y < TOPBAR_HEIGHT) view->y = TOPBAR_HEIGHT;
 
     if (prev == VIEW_ANIM_MINIMIZE) {
         view->minimized = true;
@@ -245,6 +286,7 @@ void server_tick_view_animations(aurade_server_t *server, double dt) {
 
                 if (cur_w < 50.0) cur_w = 50.0;
                 if (cur_h < 50.0) cur_h = 50.0;
+                if (cur_y < TOPBAR_HEIGHT) cur_y = TOPBAR_HEIGHT;
 
                 double scale_x = cur_w / (double)(view->width > 0 ? view->width : 1);
                 double scale_y = cur_h / (double)(view->height > 0 ? view->height : 1);
@@ -382,6 +424,7 @@ static void view_apply_geometry(aurade_view_t *view) {
     // assert inside wlr_xdg_toplevel_set_size.
     if (view->width < 240) view->width = 240;
     if (view->height < 180) view->height = 180;
+    if (view->y < TOPBAR_HEIGHT) view->y = TOPBAR_HEIGHT;
     if (view->scene_tree) {
         wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
     }
@@ -486,6 +529,7 @@ void view_toggle_maximize(aurade_view_t *view) {
             target_y = view->prev_y;
             target_w = view->prev_w;
             target_h = view->prev_h;
+            if (target_y < TOPBAR_HEIGHT) target_y = TOPBAR_HEIGHT;
         } else {
             // The view was maximized before its first configure, so there is
             // no real previous geometry to restore. Use a centered window.
@@ -584,6 +628,7 @@ void view_set_fullscreen(aurade_view_t *view, bool fullscreen) {
         if (view->prev_w >= 240 && view->prev_h >= 180) {
             view->x = view->prev_x;
             view->y = view->prev_y;
+            if (view->y < TOPBAR_HEIGHT) view->y = TOPBAR_HEIGHT;
             view->width = view->prev_w;
             view->height = view->prev_h;
         } else {
@@ -755,25 +800,6 @@ static void xdg_surface_commit_debug(struct wl_listener *listener, void *data) {
         view_set_scale(view, view->current_scale, view->current_scale);
     }
 
-    if (view->server && view->server->dock && view->server->config.blur_dock &&
-        view->workspace == view->server->current_workspace && !view->minimized) {
-        aurade_dock_t *dock = view->server->dock;
-        if (!dock->hide_target &&
-            view->x + view->width > dock->pill_x && view->x < dock->pill_x + dock->pill_width &&
-            view->y + view->height > dock->pill_y && view->y < dock->pill_y + dock->pill_height) {
-            dock->blur_dirty = true;
-            dock->needs_render = true;
-            schedule_all_outputs(view->server);
-        }
-    }
-    if (view->server && view->server->topbar && view->server->config.blur_topbar &&
-        view->workspace == view->server->current_workspace && !view->minimized) {
-        if (view->y <= TOPBAR_HEIGHT + 24) {
-            view->server->topbar->blur_dirty = true;
-            view->server->topbar->needs_render = true;
-            schedule_all_outputs(view->server);
-        }
-    }
 
     // Ignore the frames a client commits while it is still reacting to a
     // configure we just sent (maximise, tile, restore); those carry the old
@@ -794,6 +820,11 @@ static void xdg_surface_commit_debug(struct wl_listener *listener, void *data) {
         width = surface->surface->current.width;
         height = surface->surface->current.height;
     }
+    if (view->content_tree && (view->current_scale <= 0.0 || fabs(view->current_scale - 1.0) < 0.001)) {
+        if (view->content_tree->node.x != 0 || view->content_tree->node.y != 0) {
+            wlr_scene_node_set_position(&view->content_tree->node, 0, 0);
+        }
+    }
     if (width <= 0 || height <= 0) return;
 
     // Shadow margins can change even when the window size does not.
@@ -809,9 +840,6 @@ static void xdg_surface_commit_debug(struct wl_listener *listener, void *data) {
 
     view->width = width;
     view->height = height;
-    if (view->xdg_toplevel && !view->maximized && !view->fullscreen) {
-        wlr_xdg_toplevel_set_size(view->xdg_toplevel, width, height);
-    }
     dock_refresh(view->server);
 }
 
@@ -883,16 +911,25 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
             wlr_xdg_toplevel_set_size(view->xdg_toplevel, view->width, view->height);
         }
 
-        // Cascade position, clamped to the screen.
-        static int spawn_offset = 60;
+        // Center window in available screen area (between topbar and dock)
         int screen_w = view->server->screen_width > 0 ? view->server->screen_width : 1920;
         int screen_h = view->server->screen_height > 0 ? view->server->screen_height : 1080;
-        view->x = 100 + spawn_offset;
-        view->y = 60 + spawn_offset;
-        if (view->x + view->width > screen_w) view->x = 60;
-        if (view->y + view->height > screen_h - 90) view->y = 40;
-        spawn_offset = (spawn_offset + 30) % 240;
+        int top_margin = TOPBAR_HEIGHT;
+        bool hide_dock = view->server->config.dock_autohide ||
+                         view->server->config.dock_intellihide ||
+                         !view->server->config.dock_enabled;
+        int bottom_margin = hide_dock ? 0 : 96;
+
+        int center_x = (screen_w - view->width) / 2;
+        int center_y = top_margin + ((screen_h - top_margin - bottom_margin) - view->height) / 2;
+        if (center_x < 0) center_x = 0;
+        if (center_y < top_margin) center_y = top_margin;
+
+        view->x = center_x;
+        view->y = center_y;
     }
+
+    if (view->y < TOPBAR_HEIGHT) view->y = TOPBAR_HEIGHT;
 
     wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
     view_focus(view);
@@ -1025,6 +1062,38 @@ static void xdg_toplevel_request_move(struct wl_listener *listener, void *data) 
     aurade_view_t *view = wl_container_of(listener, view, request_move);
     if (view->anim_type != VIEW_ANIM_NONE) view_anim_settle(view);
     aurade_server_t *server = view->server;
+
+    if (view->maximized) {
+        int screen_w = server->screen_width > 0 ? server->screen_width : 1920;
+        int screen_h = server->screen_height > 0 ? server->screen_height : 1080;
+        int restored_w = (view->prev_w >= 240 && view->prev_w < screen_w) ? view->prev_w : (screen_w * 3 / 4);
+        int restored_h = (view->prev_h >= 180 && view->prev_h < screen_h) ? view->prev_h : ((screen_h - TOPBAR_HEIGHT - 96) * 3 / 4);
+
+        double rel_x = (server->cursor->x - view->x) / (double)(view->width > 0 ? view->width : screen_w);
+        if (rel_x < 0.1) rel_x = 0.1;
+        if (rel_x > 0.9) rel_x = 0.9;
+
+        int new_x = (int)(server->cursor->x - restored_w * rel_x);
+        int new_y = (int)server->cursor->y - 15;
+        if (new_y < TOPBAR_HEIGHT) new_y = TOPBAR_HEIGHT;
+
+        view->maximized = false;
+        view->fullscreen = false;
+        view->x = new_x;
+        view->y = new_y;
+        view->width = restored_w;
+        view->height = restored_h;
+
+        if (view->xdg_toplevel && view->xdg_toplevel->base->initialized) {
+            wlr_xdg_toplevel_set_maximized(view->xdg_toplevel, false);
+            wlr_xdg_toplevel_set_size(view->xdg_toplevel, restored_w, restored_h);
+        } else if (view->xwayland_surface) {
+            wlr_xwayland_surface_set_maximized(view->xwayland_surface, false, false);
+            wlr_xwayland_surface_configure(view->xwayland_surface, new_x, new_y, restored_w, restored_h);
+        }
+        wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
+    }
+
     server->grabbed_view = view;
     server->cursor_mode = CURSOR_MOVE;
     server->grab_button = 0;
@@ -1250,22 +1319,37 @@ static void popup_handle_destroy(struct wl_listener *listener, void *data) {
 // Close every client popup. Compositor-owned UI (menu bar, Dock, overlays,
 // desktop) consumes clicks before they reach the seat, so wlroots never sees
 // the outside press that would normally dismiss a popup grab.
+static void dismiss_surface_popups(struct wlr_xdg_surface *surface) {
+    if (!surface) return;
+    struct wlr_xdg_popup *popup, *tmp;
+    wl_list_for_each_safe(popup, tmp, &surface->popups, link) {
+        if (popup->base) {
+            dismiss_surface_popups(popup->base);
+        }
+        wlr_xdg_popup_destroy(popup);
+    }
+}
+
 void server_dismiss_popups(aurade_server_t *server) {
+    if (!server) return;
     aurade_view_t *view;
     wl_list_for_each(view, &server->views, link) {
         if (!view->xdg_toplevel || !view->xdg_toplevel->base) {
             continue;
         }
-        struct wlr_xdg_popup *popup, *tmp;
-        wl_list_for_each_safe(popup, tmp, &view->xdg_toplevel->base->popups, link) {
-            wlr_xdg_popup_destroy(popup);
-        }
+        dismiss_surface_popups(view->xdg_toplevel->base);
     }
 }
 
 static void server_new_xdg_popup(struct wl_listener *listener, void *data) {
     aurade_server_t *server = wl_container_of(listener, server, new_xdg_popup);
     struct wlr_xdg_popup *xdg_popup = data;
+
+    if ((server->mission_control && server->mission_control->active) ||
+        (server->launchpad && server->launchpad->active)) {
+        wlr_xdg_popup_destroy(xdg_popup);
+        return;
+    }
 
     struct wlr_xdg_surface *parent_xdg = xdg_popup->parent
         ? wlr_xdg_surface_try_from_wlr_surface(xdg_popup->parent) : NULL;
@@ -1352,6 +1436,7 @@ static void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 
     aurade_view_t *view = calloc(1, sizeof(*view));
     view->server = server;
+    view->id = ++server->next_view_id;
     view->xdg_toplevel = xdg_toplevel;
     view->workspace = server->current_workspace;
 

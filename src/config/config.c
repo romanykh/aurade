@@ -87,6 +87,7 @@ aurade_config_t config_get_defaults(void) {
         .dock_magnification = true,
         .dock_max_scale = 1.5,
         .dock_mag_radius = 130.0,
+        .dock_theme = DOCK_THEME_MODERN,
         .dock_pinned_count = 1,
         .dock_pinned = {
             { "Launchpad", "" },
@@ -228,6 +229,9 @@ bool config_load(aurade_config_t *cfg, const char *path) {
         if (json_object_object_get_ex(dock, "magnification", &v)) cfg->dock_magnification = json_object_get_boolean(v);
         if (json_object_object_get_ex(dock, "max_scale", &v)) cfg->dock_max_scale = json_object_get_double(v);
         if (json_object_object_get_ex(dock, "mag_radius", &v)) cfg->dock_mag_radius = json_object_get_double(v);
+        if (json_object_object_get_ex(dock, "theme", &v)) {
+            snprintf(cfg->dock_theme, sizeof(cfg->dock_theme), "%s", json_object_get_string(v));
+        }
 
         struct json_object *pinned = NULL;
         if (json_object_object_get_ex(dock, "pinned", &pinned) &&
@@ -365,6 +369,7 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     json_object_object_add(dock, "magnification", json_object_new_boolean(cfg->dock_magnification));
     json_object_object_add(dock, "max_scale", json_object_new_double(cfg->dock_max_scale));
     json_object_object_add(dock, "mag_radius", json_object_new_double(cfg->dock_mag_radius));
+    json_object_object_add(dock, "theme", json_object_new_string(cfg->dock_theme));
     if (cfg->dock_pinned_count > 0) {
         struct json_object *pinned = json_object_new_array();
         for (int i = 0; i < cfg->dock_pinned_count; i++) {

@@ -1,4 +1,5 @@
 #include "workspace.h"
+#include "xdg_shell.h"
 #include "../shell/mission_control.h"
 #include "../shell/dock.h"
 #include "../shell/topbar.h"
@@ -110,6 +111,8 @@ void server_workspace_auto_focus(aurade_server_t *server) {
 }
 
 void server_switch_workspace(aurade_server_t *server, int target_workspace, bool animate) {
+    if (!server) return;
+    server_dismiss_popups(server);
     int num_ws = server->num_workspaces > 0 ? server->num_workspaces : DEFAULT_WORKSPACES;
     if (target_workspace < 0) target_workspace = 0;
     if (target_workspace >= num_ws) target_workspace = num_ws - 1;
@@ -124,14 +127,6 @@ void server_switch_workspace(aurade_server_t *server, int target_workspace, bool
         server_update_workspace_positions(server);
         if (server->dock) {
             dock_update_visibility(server->dock);
-            if (server->config.blur_dock) {
-                server->dock->blur_dirty = true;
-                server->dock->needs_render = true;
-            }
-        }
-        if (server->topbar && server->config.blur_topbar) {
-            server->topbar->blur_dirty = true;
-            server->topbar->needs_render = true;
         }
         schedule_all_outputs(server);
         if (old_ws != target_workspace) {
@@ -156,14 +151,6 @@ void server_switch_workspace(aurade_server_t *server, int target_workspace, bool
     server_update_workspace_positions(server);
     if (server->dock) {
         dock_update_visibility(server->dock);
-        if (server->config.blur_dock) {
-            server->dock->blur_dirty = true;
-            server->dock->needs_render = true;
-        }
-    }
-    if (server->topbar && server->config.blur_topbar) {
-        server->topbar->blur_dirty = true;
-        server->topbar->needs_render = true;
     }
     schedule_all_outputs(server);
     if (old_ws != target_workspace) {

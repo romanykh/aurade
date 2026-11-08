@@ -8,7 +8,7 @@
 #endif
 #include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/types/wlr_buffer.h>
-#include <wlr/types/wlr_scene.h>
+#include <scenefx/types/wlr_scene.h>
 
 typedef struct {
     struct wlr_buffer base;
@@ -68,6 +68,15 @@ void draw_text(cairo_t *cr, const char *text, const char *font, double size,
 void draw_text_shadowed(cairo_t *cr, const char *text, const char *font, double size,
                         bool bold, double r, double g, double b, double a,
                         double shadow_a, double x, double y, bool center_x, bool center_y);
+
+/**
+ * Draw styled text with soft drop shadow, wrapped to max_w and limited to max_lines.
+ * cx specifies horizontal center; y specifies top offset.
+ */
+void draw_text_shadowed_wrapped(cairo_t *cr, const char *text, const char *font, double size,
+                                bool bold, double r, double g, double b, double a,
+                                double shadow_a, double cx, double y,
+                                double max_w, int max_lines);
 
 /**
  * Measure a string with the same font/size used by draw_text().

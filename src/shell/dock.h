@@ -13,6 +13,7 @@ typedef struct {
     double center_x;
     double width;
     bool is_running;
+    int window_count;
     bool is_pinned;
     bool demands_attention;
     double bounce_offset;
@@ -59,9 +60,9 @@ typedef struct aurade_dock {
 
     bool enabled;
     bool needs_render;
-    cairo_surface_t *blur_cache;
-    bool blur_dirty;
-    double last_blur_x, last_blur_y, last_blur_w, last_blur_h;
+    struct wlr_scene_blur *blur_node;
+    double pill_local_y;
+    double pill_r;
 
     // Auto-hide: the dock rests below the screen and slides up when the
     // pointer reaches the bottom edge (or is already over the dock).
@@ -112,6 +113,7 @@ bool dock_is_bouncing(aurade_dock_t *dock);
 void dock_tick_bounce(aurade_dock_t *dock, double dt);
 bool dock_pin_app(aurade_dock_t *dock, const char *name, const char *exec,
                   const char *icon_name, cairo_surface_t *icon_surface);
+bool dock_has_app(aurade_dock_t *dock, const desktop_app_t *app);
 void dock_save_pinned(aurade_dock_t *dock);
 void dock_destroy(aurade_dock_t *dock);
 

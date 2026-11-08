@@ -25,6 +25,8 @@ typedef struct aurade_mission_control {
     double progress; // 0.0 (closed) to 1.0 (fully open)
     bool needs_render;
     cairo_surface_t *wallpaper_thumb;
+    cairo_surface_t *spaces_bar_surf;
+    bool spaces_bar_dirty;
 
     mc_window_slot_t slots[32];
     int slot_count;
@@ -40,6 +42,13 @@ typedef struct aurade_mission_control {
     double drag_offset_x, drag_offset_y;
     int drag_target_workspace; // -1 if not hovering workspace thumbnail, 0..NUM_WORKSPACES-1
     bool mouse_pressed;
+
+    // Workspace swiping & scrolling
+    bool ws_animating;
+    spring_simulation_t ws_spring;
+    double ws_slide_offset;
+    double scroll_accum_x;
+    uint64_t last_scroll_time_ms;
 } aurade_mission_control_t;
 
 aurade_mission_control_t *mission_control_create(aurade_server_t *server);
@@ -51,6 +60,10 @@ bool mission_control_handle_click(aurade_mission_control_t *mc, double x, double
 bool mission_control_handle_press(aurade_mission_control_t *mc, double x, double y);
 bool mission_control_handle_release(aurade_mission_control_t *mc, double x, double y);
 void mission_control_handle_motion(aurade_mission_control_t *mc, double x, double y);
+void mission_control_switch_workspace(aurade_mission_control_t *mc, int new_workspace);
+void mission_control_handle_axis(aurade_mission_control_t *mc, enum wl_pointer_axis orientation,
+                                 double delta, int32_t delta_discrete);
+void mission_control_tick(aurade_mission_control_t *mc, double dt);
 void mission_control_render(aurade_mission_control_t *mc);
 void mission_control_forget_view(aurade_mission_control_t *mc, aurade_view_t *view);
 void mission_control_destroy(aurade_mission_control_t *mc);

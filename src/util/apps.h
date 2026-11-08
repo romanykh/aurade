@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <cairo.h>
 
-#define MAX_APPS 256
+#define MAX_APPS 512
 
 typedef struct {
     char name[128];

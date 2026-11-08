@@ -118,8 +118,10 @@ void draw_glass_panel(cairo_t *cr, double x, double y, double w, double h, doubl
     cairo_set_source_rgba(cr, r_bg, g_bg, b_bg, a_bg);
     cairo_fill_preserve(cr);
 
+    double edge_a = a_bg > 1.0 ? 1.0 : (a_bg < 0.0 ? 0.0 : a_bg);
+
     // Subtle outer border (translucent white/specular highlight)
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.15);
+    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.15 * edge_a);
     cairo_set_line_width(cr, 1.0);
     cairo_stroke(cr);
 
@@ -127,7 +129,7 @@ void draw_glass_panel(cairo_t *cr, double x, double y, double w, double h, doubl
     cairo_new_path(cr);
     cairo_move_to(cr, x + r, y + 0.5);
     cairo_line_to(cr, x + w - r, y + 0.5);
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.28);
+    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.28 * edge_a);
     cairo_set_line_width(cr, 1.0);
     cairo_stroke(cr);
 
@@ -236,6 +238,52 @@ void draw_text_shadowed(cairo_t *cr, const char *text, const char *font, double 
     double draw_y = y;
     if (center_x) draw_x -= (double)text_w / 2.0;
     if (center_y) draw_y -= (double)text_h / 2.0;
+
+    cairo_save(cr);
+    cairo_new_path(cr);
+    if (shadow_a > 0.0) {
+        cairo_move_to(cr, draw_x, draw_y + 1.0);
+        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, shadow_a);
+        pango_cairo_show_layout(cr, layout);
+    }
+    if (a > 0.0) {
+        cairo_new_path(cr);
+        cairo_move_to(cr, draw_x, draw_y);
+        cairo_set_source_rgba(cr, r, g, b, a);
+        pango_cairo_show_layout(cr, layout);
+    }
+    cairo_new_path(cr);
+    cairo_restore(cr);
+    cairo_new_path(cr);
+
+    pango_font_description_free(desc);
+    g_object_unref(layout);
+}
+
+void draw_text_shadowed_wrapped(cairo_t *cr, const char *text, const char *font, double size,
+                                bool bold, double r, double g, double b, double a,
+                                double shadow_a, double cx, double y,
+                                double max_w, int max_lines) {
+    if (!text || !*text || a <= 0.0) return;
+
+    PangoLayout *layout = pango_cairo_create_layout(cr);
+    PangoFontDescription *desc = pango_font_description_new();
+    apply_font_desc(desc, font, size, bold);
+    pango_layout_set_font_description(layout, desc);
+    safe_pango_set_text(layout, text);
+
+    if (max_w > 0.0) {
+        pango_layout_set_width(layout, (int)(max_w * PANGO_SCALE));
+        pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
+        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+        if (max_lines > 0) {
+            pango_layout_set_height(layout, -max_lines);
+            pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
+        }
+    }
+
+    double draw_x = (max_w > 0.0) ? (cx - max_w / 2.0) : cx;
+    double draw_y = y;
 
     cairo_save(cr);
     cairo_new_path(cr);

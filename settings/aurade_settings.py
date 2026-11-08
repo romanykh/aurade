@@ -72,6 +72,7 @@ DEFAULTS = {
         "magnification": True,
         "max_scale": 1.5,
         "mag_radius": 130.0,
+        "theme": "modern",
         "pinned": [
             {"name": "Launchpad", "exec": ""},
         ],
@@ -2406,8 +2407,18 @@ class AuraSettings(Gtk.Application):
     def page_dock(self):
         box = self.page("Dock", "Autohide, intellihide, icon sizing, and magnification.")
 
+        card_theme = self.card(box, "Theme & Style")
+        dock_theme_labels = ["Modern Floating Glass Pill", "Classic 3D Glass Shelf (OS X Table)"]
+        dock_theme_values = ["modern", "table_3d"]
+        cur_dock_theme = self.cfg.get("dock", {}).get("theme", "modern")
+        dock_theme_idx = dock_theme_values.index(cur_dock_theme) if cur_dock_theme in dock_theme_values else 0
+        dock_theme_dd = Gtk.DropDown.new_from_strings(dock_theme_labels)
+        dock_theme_dd.set_selected(dock_theme_idx)
+        dock_theme_dd.connect("notify::selected", lambda dd, _: self.on_dock_theme(dock_theme_values[dd.get_selected()]))
+        self.add_row(card_theme, "Dock Theme", "Choose between modern floating pill or classic OS X 3D glass table shelf.", dock_theme_dd, icon_name="preferences-desktop-theme-symbolic", badge_class="badge-appearance")
+
         card = self.card(box, "Behaviour")
-        self.add_row(card, "Show the Dock", "Display the macOS-style application dock along the bottom edge.", self.switch("dock", "enabled"), icon_name="view-paged-symbolic", badge_class="badge-dock")
+        self.add_row(card, "Show the Dock", "Display the application dock along the bottom edge.", self.switch("dock", "enabled"), icon_name="view-paged-symbolic", badge_class="badge-dock")
         self.add_row(card, "Frosted Glass Blur", "Enable frosted glass blur effect under the dock.", self.switch("blur", "dock"), icon_name="preferences-desktop-wallpaper-symbolic", badge_class="badge-appearance")
         self.add_row(card, "Blur Strength", "Adjust the intensity and diffusion radius of the frosted glass blur.", self.scale("blur", "strength", 0.2, 2.5, 0.1, 1), icon_name="preferences-desktop-theme-symbolic", badge_class="badge-appearance")
         self.add_row(card, "Automatically Hide", "Hide the dock until the pointer reaches the bottom edge.", self.switch("dock", "autohide"), icon_name="view-reveal-symbolic", badge_class="badge-wifi")
@@ -2450,6 +2461,12 @@ class AuraSettings(Gtk.Application):
         if "music_pill" not in self.cfg:
             self.cfg["music_pill"] = {}
         self.cfg["music_pill"]["position"] = pos_str
+        self.changed()
+
+    def on_dock_theme(self, theme_str):
+        if "dock" not in self.cfg:
+            self.cfg["dock"] = {}
+        self.cfg["dock"]["theme"] = theme_str
         self.changed()
 
     # =======================================================================

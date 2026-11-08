@@ -242,6 +242,13 @@ aurade_topbar_t *topbar_create(aurade_server_t *server) {
     bar->scene_buffer = wlr_scene_buffer_create(server->shell_tree, &bar->buffer->base);
     wlr_scene_node_set_position(&bar->scene_buffer->node, 0, 0);
 
+    bar->blur_node = wlr_scene_blur_create(server->shell_tree, bar->width, bar->height);
+    if (bar->blur_node) {
+        wlr_scene_node_set_position(&bar->blur_node->node, 0, 0);
+        wlr_scene_node_place_below(&bar->blur_node->node, &bar->scene_buffer->node);
+        wlr_scene_node_set_enabled(&bar->blur_node->node, server->config.blur_topbar);
+    }
+
     bar->power_menu_state = POWER_MENU_CLOSED;
     bar->power_menu_hover_row = -1;
     bar->power_menu_confirm_hover = 0;
@@ -253,7 +260,6 @@ aurade_topbar_t *topbar_create(aurade_server_t *server) {
     wlr_scene_node_set_enabled(&bar->power_menu_scene->node, false);
     power_menu_render(bar);
 
-    bar->blur_dirty = true;
     topbar_render(bar);
     return bar;
 }
@@ -262,6 +268,10 @@ void topbar_resize(aurade_topbar_t *bar, int width) {
     if (!bar || bar->width == width) return;
     bar->width = width;
     cairo_buffer_resize(bar->buffer, width, bar->height);
+    if (bar->blur_node) {
+        wlr_scene_blur_set_size(bar->blur_node, width, bar->height);
+        wlr_scene_node_set_enabled(&bar->blur_node->node, bar->server && bar->server->config.blur_topbar);
+    }
     topbar_render(bar);
 }
 
@@ -282,38 +292,41 @@ void topbar_render(aurade_topbar_t *bar) {
 
     cairo_buffer_clear(bar->buffer);
 
-    if (bar->server->config.blur_topbar && bar->server->wallpaper) {
-        bool dims_changed = (bar->blur_cache == NULL ||
-                             bar->last_blur_w != w ||
-                             bar->last_blur_h != h);
-        if (bar->blur_dirty || dims_changed) {
-            bar->blur_dirty = false;
-            bar->last_blur_w = w;
-            bar->last_blur_h = h;
-            if (bar->blur_cache) cairo_surface_destroy(bar->blur_cache);
-            bar->blur_cache = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
-            cairo_t *bcr = cairo_create(bar->blur_cache);
-            wallpaper_draw_realtime_blur_rect(bar->server->wallpaper, bcr,
-                                              0.0, 0.0,
-                                              0, 0, w, h, 0.0,
-                                              0.10, 0.11, 0.14, 0.50);
-            cairo_set_source_rgba(bcr, 1.0, 1.0, 1.0, 0.15);
-            cairo_rectangle(bcr, 0, 0, w, 0.5);
-            cairo_fill(bcr);
-            cairo_set_source_rgba(bcr, 0.0, 0.0, 0.0, 0.28);
-            cairo_rectangle(bcr, 0, h - 1.0, w, 1.0);
-            cairo_fill(bcr);
-            cairo_destroy(bcr);
+    bool overlay_active = bar->server && (
+        bar->server->gesture_mode != GESTURE_MODE_IDLE ||
+        bar->server->gesture_in_progress ||
+        bar->server->gesture_animating
+    );
+
+    if (bar->server && bar->server->config.blur_topbar && !overlay_active) {
+        if (bar->blur_node) {
+            wlr_scene_blur_set_size(bar->blur_node, w, h);
+            wlr_scene_node_set_enabled(&bar->blur_node->node, true);
         }
-        cairo_save(cr);
-        cairo_set_source_surface(cr, bar->blur_cache, 0, 0);
-        cairo_paint(cr);
-        cairo_restore(cr);
+        // Translucent frosted glass tint overlay
+        cairo_pattern_t *bg = cairo_pattern_create_linear(0, 0, 0, h);
+        cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.09, 0.10, 0.14, 0.48);
+        cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.04, 0.05, 0.07, 0.58);
+        cairo_set_source(cr, bg);
+        cairo_rectangle(cr, 0, 0, w, h);
+        cairo_fill(cr);
+        cairo_pattern_destroy(bg);
+
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.16);
+        cairo_rectangle(cr, 0, 0, w, 0.5);
+        cairo_fill(cr);
+
+        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.32);
+        cairo_rectangle(cr, 0, h - 1.0, w, 1.0);
+        cairo_fill(cr);
     } else {
+        if (bar->blur_node) {
+            wlr_scene_node_set_enabled(&bar->blur_node->node, false);
+        }
         // Translucent charcoal "vibrancy" bar with a soft top highlight.
         cairo_pattern_t *bg = cairo_pattern_create_linear(0, 0, 0, h);
-        cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.10, 0.10, 0.12, 0.66);
-        cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.04, 0.04, 0.06, 0.74);
+        cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.10, 0.10, 0.12, 0.82);
+        cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.04, 0.04, 0.06, 0.88);
         cairo_set_source(cr, bg);
         cairo_rectangle(cr, 0, 0, w, h);
         cairo_fill(cr);
@@ -938,9 +951,9 @@ bool topbar_handle_click(aurade_topbar_t *bar, double x, double y) {
 
 void topbar_destroy(aurade_topbar_t *bar) {
     if (!bar) return;
-    if (bar->blur_cache) {
-        cairo_surface_destroy(bar->blur_cache);
-        bar->blur_cache = NULL;
+    if (bar->blur_node) {
+        wlr_scene_node_destroy(&bar->blur_node->node);
+        bar->blur_node = NULL;
     }
     if (bar->power_menu_buffer) wlr_buffer_drop(&bar->power_menu_buffer->base);
     if (bar->buffer) wlr_buffer_drop(&bar->buffer->base);
