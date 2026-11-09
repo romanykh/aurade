@@ -1053,17 +1053,18 @@ class AuraSettings(Gtk.Application):
 
         self.wifi_scan_btn = Gtk.Button()
         self.wifi_scan_btn.add_css_class("btn-primary")
-        scan_btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.wifi_scan_btn.set_tooltip_text("Scan for Wi-Fi Networks")
+        scan_btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         scan_btn_box.set_halign(Gtk.Align.CENTER)
         self.wifi_scan_spinner = Gtk.Spinner()
         self.wifi_scan_spinner.set_visible(False)
-        self.wifi_scan_lbl = Gtk.Label(label="Scan for Networks")
+        self.wifi_scan_lbl = Gtk.Label(label="Scan")
         scan_btn_box.append(self.wifi_scan_spinner)
         scan_btn_box.append(self.wifi_scan_lbl)
         self.wifi_scan_btn.set_child(scan_btn_box)
         self.wifi_scan_btn.connect("clicked", lambda *_: self.refresh_wifi(rescan=True))
 
-        hrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        hrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         hrow.append(self.wifi_scan_btn)
         hrow.append(self.wifi_switch)
         self.add_row(card_power, "Wi-Fi Interface", "Enable or disable wireless networking.", hrow,
@@ -1144,7 +1145,7 @@ class AuraSettings(Gtk.Application):
             self.wifi_scan_btn.set_sensitive(False)
         else:
             self.wifi_scan_spinner.stop()
-            self.wifi_scan_lbl.set_label("Scan for Networks")
+            self.wifi_scan_lbl.set_label("Scan")
             self.wifi_scan_btn.set_sensitive(True)
 
     def refresh_wifi(self, rescan=False):
@@ -1443,13 +1444,14 @@ class AuraSettings(Gtk.Application):
         bt_scan_box.set_halign(Gtk.Align.CENTER)
         self.bt_scan_spinner = Gtk.Spinner()
         self.bt_scan_spinner.set_visible(False)
-        self.bt_scan_lbl = Gtk.Label(label="Scan for Devices")
+        self.bt_scan_lbl = Gtk.Label(label="Scan")
         bt_scan_box.append(self.bt_scan_spinner)
         bt_scan_box.append(self.bt_scan_lbl)
         self.bt_scan_btn.set_child(bt_scan_box)
+        self.bt_scan_btn.set_tooltip_text("Scan for Bluetooth Devices")
         self.bt_scan_btn.connect("clicked", lambda *_: self.on_bt_scan_clicked())
 
-        hrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        hrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         hrow.append(self.bt_scan_btn)
         hrow.append(self.bt_switch)
         self.add_row(card_power, "Bluetooth Power", "Enable or disable the Bluetooth controller.", hrow,
@@ -1500,7 +1502,7 @@ class AuraSettings(Gtk.Application):
         if hasattr(self, "bt_scan_spinner"):
             self.bt_scan_spinner.stop()
             self.bt_scan_spinner.set_visible(False)
-            self.bt_scan_lbl.set_label("Scan for Devices")
+            self.bt_scan_lbl.set_label("Scan")
 
     def on_bt_scan_clicked(self):
         if self.bt_is_scanning:
@@ -1511,7 +1513,7 @@ class AuraSettings(Gtk.Application):
         self.bt_is_scanning = True
         self.bt_scan_spinner.set_visible(True)
         self.bt_scan_spinner.start()
-        self.bt_scan_lbl.set_label("Stop Scanning")
+        self.bt_scan_lbl.set_label("Stop")
         if self.status:
             self.status.set_text("Scanning for Bluetooth devices…")
 
