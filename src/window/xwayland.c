@@ -145,6 +145,12 @@ static void xwayland_surface_map(struct wl_listener *listener, void *data) {
     view->y = y;
     view->width = w;
     view->height = h;
+    if (view->float_w < 240 || view->float_h < 180) {
+        view->float_x = view->x;
+        view->float_y = view->y;
+        view->float_w = view->width >= 240 ? view->width : 800;
+        view->float_h = view->height >= 180 ? view->height : 550;
+    }
 
     if (view->scene_tree) {
         wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
@@ -170,6 +176,9 @@ static void xwayland_surface_map(struct wl_listener *listener, void *data) {
             .position_threshold = 0.001,
         };
         spring_simulation_start(&view->anim_spring, &map_cfg, 0.0, 1.0, 0.0);
+        if (server->config.tiling_enabled) {
+            workspace_relayout_tiling(server, view->workspace);
+        }
         double initial_scale = 0.88;
         int render_x = (int)round(view->x + (view->width * (1.0 - initial_scale)) / 2.0);
         int render_y = (int)round(view->y + (view->height * (1.0 - initial_scale)) / 2.0);
@@ -191,6 +200,7 @@ static void xwayland_surface_unmap(struct wl_listener *listener, void *data) {
     aurade_view_t *view = wl_container_of(listener, view, unmap);
     struct aurade_server *server = view->server;
     struct wlr_xwayland_surface *xsurface = view->xwayland_surface;
+    int ws = view->workspace;
 
     if (view->scene_tree) {
         wlr_scene_node_set_enabled(&view->scene_tree->node, false);
@@ -228,6 +238,9 @@ static void xwayland_surface_unmap(struct wl_listener *listener, void *data) {
             server->active_constraint->surface == xsurface->surface) {
             server_set_pointer_constraint(server, NULL);
         }
+        if (server->config.tiling_enabled) {
+            workspace_relayout_tiling(server, ws);
+        }
         dock_refresh(server);
         server_export_running_windows(server);
     }
@@ -237,6 +250,7 @@ static void xwayland_surface_destroy(struct wl_listener *listener, void *data) {
     (void)data;
     aurade_view_t *view = wl_container_of(listener, view, destroy);
     struct aurade_server *server = view->server;
+    int ws = view->workspace;
 
     if (!wl_list_empty(&view->link)) {
         wl_list_remove(&view->link);
@@ -304,6 +318,9 @@ static void xwayland_surface_destroy(struct wl_listener *listener, void *data) {
     }
 
     free(view);
+    if (server->config.tiling_enabled) {
+        workspace_relayout_tiling(server, ws);
+    }
     dock_refresh(server);
     server_export_running_windows(server);
 }
@@ -323,7 +340,7 @@ static void xwayland_surface_request_configure(struct wl_listener *listener, voi
         return;
     }
 
-    if (view->maximized || view->fullscreen) {
+    if (view->maximized || view->fullscreen || view->is_tiled) {
         wlr_xwayland_surface_configure(xsurface, view->x, view->y, view->width, view->height);
         return;
     }
@@ -393,17 +410,8 @@ static void xwayland_surface_request_resize(struct wl_listener *listener, void *
     if (!server) return;
 
     if (server->cursor_mode == CURSOR_PASSTHROUGH) {
-        server->grabbed_view = view;
-        server->cursor_mode = CURSOR_RESIZE;
+        server_start_resize(server, view, ev->edges, server->cursor->x, server->cursor->y);
         server->grab_button = 0;
-        server->resize_edges = ev->edges;
-        server->grab_x = server->cursor->x;
-        server->grab_y = server->cursor->y;
-        server->grab_geobox.x = view->x;
-        server->grab_geobox.y = view->y;
-        server->grab_geobox.width = view->width;
-        server->grab_geobox.height = view->height;
-        wlr_seat_pointer_clear_focus(server->seat);
     }
 }
 
@@ -492,6 +500,8 @@ static void handle_xwayland_new_surface(struct wl_listener *listener, void *data
 
     view->server = server;
     view->id = ++server->next_view_id;
+    view->tile_order = view->id;
+    view->tile_split_ratio = 0.5;
     view->xwayland_surface = xsurface;
     xsurface->data = view;
     view->workspace = server->current_workspace;

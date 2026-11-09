@@ -108,6 +108,11 @@ typedef struct aurade_view {
     bool minimized;
     bool fullscreen;
     bool demands_attention;
+    uint64_t tile_order;
+    double tile_split_ratio;
+    bool is_tiled;
+    bool is_floating;
+    int float_x, float_y, float_w, float_h;
     bool pending_configure; // geometry changed before the xdg surface was initialized
     bool decoration_pending; // reply to xdg-decoration after initial configure
     uint64_t last_configure_ms; // last time we sent a toplevel configure
@@ -254,6 +259,8 @@ typedef struct aurade_server {
     double grab_x, grab_y;
     struct wlr_box grab_geobox;
     uint32_t resize_edges;
+    aurade_view_t *grabbed_neighbor;
+    struct wlr_box grab_neighbor_geobox;
 
     // Shell scene trees
     struct wlr_scene_tree *wallpaper_tree;
@@ -339,6 +346,12 @@ aurade_view_t *server_view_at(aurade_server_t *server, double lx, double ly,
 void server_switch_workspace(aurade_server_t *server, int target_workspace, bool animate);
 void server_update_workspace_positions(aurade_server_t *server);
 void server_workspace_auto_focus(aurade_server_t *server);
+bool view_should_tile(aurade_view_t *view);
+void view_toggle_floating(aurade_view_t *view);
+void workspace_relayout_tiling(aurade_server_t *server, int workspace);
+void server_relayout_all_workspaces(aurade_server_t *server);
+void server_untile_all_workspaces(aurade_server_t *server);
+void server_start_resize(aurade_server_t *server, aurade_view_t *view, uint32_t edges, double lx, double ly);
 
 // Gesture dispatcher
 void server_handle_gesture_begin(aurade_server_t *server, gesture_action_type_t action);

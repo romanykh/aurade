@@ -87,6 +87,8 @@ DEFAULTS = {
     "workspaces": {
         "count": 4,
         "auto_focus": True,
+        "tiling": False,
+        "tiling_gap": 10,
     },
     "blur": {
         "dock": True,
@@ -553,7 +555,13 @@ def load_config():
         pass
     except Exception as exc:
         print("AuraDE settings: could not read config:", exc)
-    return merge_defaults(raw, DEFAULTS)
+    merged = merge_defaults(raw, DEFAULTS)
+    # Ensure tiling_gap has a sane default (10) if set to 0.0 or missing
+    if "workspaces" in merged:
+        gap = merged["workspaces"].get("tiling_gap", 10)
+        if gap is None or gap <= 0:
+            merged["workspaces"]["tiling_gap"] = 10
+    return merged
 
 
 def gsettings_get(schema, key, default=None):
@@ -677,7 +685,8 @@ class AuraSettings(Gtk.Application):
             return
 
         self.win = Gtk.ApplicationWindow(application=self, title="System Settings")
-        self.win.set_default_size(980, 680)
+        self.win.set_default_size(880, 600)
+        self.win.set_size_request(460, 360)
         self.win.connect("close-request", self.on_close)
 
         header = Gtk.HeaderBar()
@@ -765,13 +774,13 @@ class AuraSettings(Gtk.Application):
 
     def scrolled(self, child):
         sw = Gtk.ScrolledWindow()
-        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         sw.set_child(child)
         return sw
 
     def build_sidebar(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        box.set_size_request(248, -1)
+        box.set_size_request(200, -1)
         box.set_hexpand(False)
         box.set_vexpand(True)
         box.add_css_class("sidebar")
@@ -947,7 +956,7 @@ class AuraSettings(Gtk.Application):
         sc.set_digits(digits)
         sc.set_draw_value(True)
         sc.set_value_pos(Gtk.PositionType.RIGHT)
-        sc.set_size_request(220, -1)
+        sc.set_size_request(140, -1)
         sc.set_value(float(self.cfg[section].get(key, lo)))
         sc.connect("value-changed", self.on_scale, section, key, on_change)
         return sc
@@ -975,7 +984,7 @@ class AuraSettings(Gtk.Application):
         en = Gtk.Entry()
         en.set_text(self.cfg[section].get(key, ""))
         en.set_placeholder_text(placeholder)
-        en.set_size_request(240, -1)
+        en.set_size_request(160, -1)
         en.connect("changed", self.on_entry, section, key)
         return en
 
@@ -1001,8 +1010,10 @@ class AuraSettings(Gtk.Application):
     def save_now(self):
         try:
             os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-            with open(CONFIG_PATH, "w") as f:
+            tmp_path = CONFIG_PATH + ".tmp"
+            with open(tmp_path, "w") as f:
                 json.dump(self.cfg, f, indent=2)
+            os.replace(tmp_path, CONFIG_PATH)
             if self.status:
                 self.status.set_text("Saved")
                 self.status.set_css_classes(["connected-pill"])
@@ -2016,6 +2027,24 @@ class AuraSettings(Gtk.Application):
 
         self.refresh_workspace_cards()
 
+        card_tiling = self.card(box, "Window Tiling (Hyprland Style)")
+        self.add_row(
+            card_tiling,
+            "Dynamic Window Tiling",
+            "Automatically arrange windows in a Hyprland-style Dwindle spiral layout (off by default). Press Super + V to float/tile a window, or Super + Drag to swap tiles.",
+            self.switch("workspaces", "tiling"),
+            icon_name="view-grid-symbolic",
+            badge_class="badge-workspaces",
+        )
+        self.add_row(
+            card_tiling,
+            "Tiling Window Gaps",
+            "Spacing in pixels between tiled windows and screen edges (0–32 px).",
+            self.scale("workspaces", "tiling_gap", 0, 32, 1, 0),
+            icon_name="preferences-system-windows-symbolic",
+            badge_class="badge-appearance",
+        )
+
         card_focus = self.card(box, "Window Focus & Blur")
         self.add_row(
             card_focus,
@@ -2255,6 +2284,7 @@ class AuraSettings(Gtk.Application):
         card_shortcuts = self.card(box, "Keyboard & Gesture Shortcuts")
         shortcuts = [
             ("Switch Layout", "Super + Space"),
+            ("Toggle Floating (Tiling)", "Super + V"),
             ("Mission Control", "Swipe 3 fingers Up · F3"),
             ("App Exposé", "Swipe 3 fingers Down"),
             ("Switch Workspaces", "Swipe 3 fingers Left / Right"),

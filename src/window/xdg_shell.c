@@ -183,10 +183,23 @@ static void view_scale_buffer_iterator(struct wlr_scene_buffer *scene_buffer,
                 pixman_region32_init(&empty);
                 wlr_scene_buffer_set_opaque_region(scene_buffer, &empty);
                 pixman_region32_fini(&empty);
-            } else {
+            } else if (surf) {
                 wlr_scene_buffer_set_opaque_region(scene_buffer, &surf->opaque_region);
             }
-            wlr_scene_buffer_set_corner_radius(scene_buffer, 0);
+
+            if (view->is_tiled && (geo.x == 0 && geo.y == 0) && surf == root_surf) {
+                int max_r = (orig_w < orig_h ? orig_w : orig_h) / 4;
+                int rad = 12;
+                if (rad > max_r) rad = max_r;
+                wlr_scene_buffer_set_corner_radius(scene_buffer, rad);
+                pixman_region32_t empty;
+                pixman_region32_init(&empty);
+                wlr_scene_buffer_set_opaque_region(scene_buffer, &empty);
+                pixman_region32_fini(&empty);
+            } else {
+                wlr_scene_buffer_set_corner_radius(scene_buffer, 0);
+            }
+
             if (scene_buffer->opacity != target_alpha) {
                 wlr_scene_buffer_set_opacity(scene_buffer, target_alpha);
             }
@@ -364,17 +377,29 @@ static void view_scale_buffer_iterator(struct wlr_scene_buffer *scene_buffer,
             }
         }
         wlr_scene_buffer_set_source_box(scene_buffer, NULL);
-        wlr_scene_buffer_set_corner_radius(scene_buffer, 0);
-        struct wlr_surface *surf = scene_surface ? scene_surface->surface : NULL;
-        float target_alpha = view_effective_alpha(view);
-        if (target_alpha < 0.999f) {
+        if (view->is_tiled) {
+            int max_r = (orig_w < orig_h ? orig_w : orig_h) / 4;
+            int rad = 12;
+            if (rad > max_r) rad = max_r;
+            wlr_scene_buffer_set_corner_radius(scene_buffer, rad);
             pixman_region32_t empty;
             pixman_region32_init(&empty);
             wlr_scene_buffer_set_opaque_region(scene_buffer, &empty);
             pixman_region32_fini(&empty);
-        } else if (surf) {
-            wlr_scene_buffer_set_opaque_region(scene_buffer, &surf->opaque_region);
+        } else {
+            wlr_scene_buffer_set_corner_radius(scene_buffer, 0);
+            struct wlr_surface *surf = scene_surface ? scene_surface->surface : NULL;
+            float target_alpha = view_effective_alpha(view);
+            if (target_alpha < 0.999f) {
+                pixman_region32_t empty;
+                pixman_region32_init(&empty);
+                wlr_scene_buffer_set_opaque_region(scene_buffer, &empty);
+                pixman_region32_fini(&empty);
+            } else if (surf) {
+                wlr_scene_buffer_set_opaque_region(scene_buffer, &surf->opaque_region);
+            }
         }
+        float target_alpha = view_effective_alpha(view);
         if (scene_buffer->opacity != target_alpha) {
             wlr_scene_buffer_set_opacity(scene_buffer, target_alpha);
         }
@@ -635,8 +660,21 @@ void server_tick_view_animations(aurade_server_t *server, double dt) {
                 if (cur_h < 50.0) cur_h = 50.0;
                 if (cur_y < TOPBAR_HEIGHT) cur_y = TOPBAR_HEIGHT;
 
-                double scale_x = cur_w / (double)(view->width > 0 ? view->width : 1);
-                double scale_y = cur_h / (double)(view->height > 0 ? view->height : 1);
+                int cur_base_w = view->width > 0 ? view->width : 1;
+                int cur_base_h = view->height > 0 ? view->height : 1;
+                if (view->xdg_toplevel && view->xdg_toplevel->base &&
+                    view->xdg_toplevel->base->geometry.width > 0) {
+                    cur_base_w = view->xdg_toplevel->base->geometry.width;
+                    cur_base_h = view->xdg_toplevel->base->geometry.height;
+                } else if (view->xwayland_surface && view->xwayland_surface->surface) {
+                    cur_base_w = view->xwayland_surface->surface->current.width;
+                    cur_base_h = view->xwayland_surface->surface->current.height;
+                }
+                if (cur_base_w <= 0) cur_base_w = 1;
+                if (cur_base_h <= 0) cur_base_h = 1;
+
+                double scale_x = cur_w / (double)cur_base_w;
+                double scale_y = cur_h / (double)cur_base_h;
 
                 wlr_scene_node_set_position(&view->scene_tree->node, (int)round(cur_x), (int)round(cur_y));
                 view_set_scale(view, scale_x, scale_y);
@@ -791,6 +829,335 @@ static void view_apply_geometry(aurade_view_t *view) {
     }
 }
 
+bool view_should_tile(aurade_view_t *view) {
+    if (!view || !view->server) return false;
+    if (!view->server->config.tiling_enabled) return false;
+    if (!view->scene_tree) return false;
+    if (view->minimized || view->anim_type == VIEW_ANIM_MINIMIZE) return false;
+    if (view->fullscreen || view->maximized) return false;
+    if (view->is_floating) return false;
+
+    if (view->xdg_toplevel) {
+        if (!view->xdg_toplevel->base || !view->xdg_toplevel->base->surface ||
+            !view->xdg_toplevel->base->surface->mapped) {
+            return false;
+        }
+        if (view->xdg_toplevel->parent != NULL) {
+            return false;
+        }
+        struct wlr_xdg_toplevel_state *st = &view->xdg_toplevel->current;
+        if (st->min_width > 0 && st->max_width > 0 &&
+            st->min_width == st->max_width &&
+            st->min_height > 0 && st->max_height > 0 &&
+            st->min_height == st->max_height) {
+            return false;
+        }
+        return true;
+    } else if (view->xwayland_surface) {
+        struct wlr_xwayland_surface *xs = view->xwayland_surface;
+        if (xs->override_redirect) return false;
+        if (!xs->surface || !xs->surface->mapped) return false;
+        if (xs->parent != NULL || xs->modal) return false;
+        return true;
+    }
+    return false;
+}
+
+static int compare_tile_views(const void *a, const void *b) {
+    const aurade_view_t *va = *(const aurade_view_t *const *)a;
+    const aurade_view_t *vb = *(const aurade_view_t *const *)b;
+    uint64_t oa = va->tile_order ? va->tile_order : va->id;
+    uint64_t ob = vb->tile_order ? vb->tile_order : vb->id;
+    if (oa < ob) return -1;
+    if (oa > ob) return 1;
+    if (va->id < vb->id) return -1;
+    if (va->id > vb->id) return 1;
+    return 0;
+}
+
+void workspace_relayout_tiling(aurade_server_t *server, int workspace) {
+    if (!server || !server->config.tiling_enabled) return;
+    if (workspace < 0 || workspace >= MAX_WORKSPACES) return;
+
+    aurade_view_t *tiled[64];
+    int count = 0;
+
+    aurade_view_t *v;
+    wl_list_for_each(v, &server->views, link) {
+        if (v->workspace != workspace) continue;
+        if (view_should_tile(v)) {
+            if (v->tile_order == 0) v->tile_order = v->id;
+            if (count < 64) {
+                tiled[count++] = v;
+            }
+        } else if (v->is_tiled) {
+            v->is_tiled = false;
+            if (v->xdg_toplevel && v->xdg_toplevel->base && v->xdg_toplevel->base->initialized) {
+                wlr_xdg_toplevel_set_tiled(v->xdg_toplevel, WLR_EDGE_NONE);
+            }
+        }
+    }
+
+    if (count == 0) return;
+
+    qsort(tiled, (size_t)count, sizeof(aurade_view_t *), compare_tile_views);
+
+    int screen_w = server->screen_width > 0 ? server->screen_width : 1920;
+    int screen_h = server->screen_height > 0 ? server->screen_height : 1080;
+    int top_margin = TOPBAR_HEIGHT;
+    bool hide_dock = server->config.dock_autohide ||
+                     server->config.dock_intellihide ||
+                     !server->config.dock_enabled;
+    int bottom_margin = hide_dock ? 0 : 96;
+
+    int gap = server->config.tiling_gap;
+    if (gap < 0) gap = 0;
+    if (gap > 48) gap = 48;
+
+    int rx = gap;
+    int ry = top_margin + gap;
+    int rw = screen_w - 2 * gap;
+    int rh = screen_h - top_margin - bottom_margin - 2 * gap;
+    if (rw < 240) rw = 240;
+    if (rh < 180) rh = 180;
+
+    for (int i = 0; i < count; i++) {
+        aurade_view_t *tv = tiled[i];
+        int tx = rx;
+        int ty = ry;
+        int tw = rw;
+        int th = rh;
+
+        if (i < count - 1) {
+            double ratio = (tv->tile_split_ratio >= 0.05 && tv->tile_split_ratio <= 0.95)
+                           ? tv->tile_split_ratio : 0.5;
+            if (rw >= rh) {
+                tw = (int)round((rw - gap) * ratio);
+                if (tw < 240) tw = 240;
+                if (rw - tw - gap < 240) tw = rw - gap - 240;
+                rx = rx + tw + gap;
+                rw = rw - tw - gap;
+                if (rw < 240) rw = 240;
+            } else {
+                th = (int)round((rh - gap) * ratio);
+                if (th < 180) th = 180;
+                if (rh - th - gap < 180) th = rh - gap - 180;
+                ry = ry + th + gap;
+                rh = rh - th - gap;
+                if (rh < 180) rh = 180;
+            }
+        }
+
+        if (!tv->is_tiled) {
+            if (tv->float_w < 240 || tv->float_h < 180) {
+                tv->float_x = tv->x;
+                tv->float_y = tv->y;
+                tv->float_w = tv->width >= 240 ? tv->width : 800;
+                tv->float_h = tv->height >= 180 ? tv->height : 550;
+            } else {
+                tv->float_x = tv->x;
+                tv->float_y = tv->y;
+                tv->float_w = tv->width;
+                tv->float_h = tv->height;
+            }
+            tv->is_tiled = true;
+        }
+
+        if ((tv == server->grabbed_view || tv == server->grabbed_neighbor) &&
+            (server->cursor_mode == CURSOR_MOVE || server->cursor_mode == CURSOR_RESIZE)) {
+            continue;
+        }
+
+        int old_x = tv->x;
+        int old_y = tv->y;
+        int old_w = tv->width;
+        int old_h = tv->height;
+
+        tv->x = tx;
+        tv->y = ty;
+        tv->width = tw;
+        tv->height = th;
+        view_apply_geometry(tv);
+
+        if (tv->anim_type == VIEW_ANIM_MAP || tv->anim_type == VIEW_ANIM_RESTORE) {
+            if (tv->anim_type == VIEW_ANIM_RESTORE) {
+                tv->anim_target_x = tx + tw / 2.0;
+                tv->anim_target_y = ty + th / 2.0;
+            }
+        } else if (old_w > 0 && old_h > 0 &&
+                   (old_x != tx || old_y != ty || old_w != tw || old_h != th)) {
+            tv->anim_type = VIEW_ANIM_GEOMETRY;
+            tv->anim_start_x = old_x;
+            tv->anim_start_y = old_y;
+            tv->anim_start_w = old_w;
+            tv->anim_start_h = old_h;
+            tv->anim_target_x = tx;
+            tv->anim_target_y = ty;
+            tv->anim_target_w = tw;
+            tv->anim_target_h = th;
+
+            spring_config_t geom_cfg = {
+                .mass = 1.0,
+                .stiffness = 340.0,
+                .damping = 0.88,
+                .velocity_threshold = 0.01,
+                .position_threshold = 0.001,
+            };
+            spring_simulation_start(&tv->anim_spring, &geom_cfg, 0.0, 1.0, 0.0);
+
+            if (tv->scene_tree) {
+                wlr_scene_node_set_position(&tv->scene_tree->node, old_x, old_y);
+                view_set_scale(tv, 1.0, 1.0);
+            }
+        }
+    }
+
+    schedule_all_outputs(server);
+    dock_refresh(server);
+}
+
+void server_relayout_all_workspaces(aurade_server_t *server) {
+    if (!server || !server->config.tiling_enabled) return;
+    int n = server->num_workspaces > 0 ? server->num_workspaces : 4;
+    if (n > MAX_WORKSPACES) n = MAX_WORKSPACES;
+    for (int i = 0; i < n; i++) {
+        workspace_relayout_tiling(server, i);
+    }
+}
+
+void server_untile_all_workspaces(aurade_server_t *server) {
+    if (!server) return;
+    int screen_w = server->screen_width > 0 ? server->screen_width : 1920;
+    int screen_h = server->screen_height > 0 ? server->screen_height : 1080;
+    bool hide_dock = server->config.dock_autohide ||
+                     server->config.dock_intellihide ||
+                     !server->config.dock_enabled;
+    int bottom_margin = hide_dock ? 0 : 96;
+
+    aurade_view_t *v;
+    wl_list_for_each(v, &server->views, link) {
+        if (!v->is_tiled) continue;
+        v->is_tiled = false;
+        if (v->maximized || v->fullscreen) continue;
+
+        int old_x = v->x, old_y = v->y, old_w = v->width, old_h = v->height;
+        int tx = v->float_x;
+        int ty = v->float_y;
+        int tw = v->float_w;
+        int th = v->float_h;
+        if (tw < 240 || th < 180) {
+            tw = 800;
+            th = 550;
+            tx = (screen_w - tw) / 2;
+            ty = TOPBAR_HEIGHT + ((screen_h - TOPBAR_HEIGHT - bottom_margin) - th) / 2;
+        }
+        if (ty < TOPBAR_HEIGHT) ty = TOPBAR_HEIGHT;
+
+        v->x = tx;
+        v->y = ty;
+        v->width = tw;
+        v->height = th;
+        view_apply_geometry(v);
+
+        if (!v->minimized && v->scene_tree && old_w > 0 && old_h > 0 &&
+            (old_x != tx || old_y != ty || old_w != tw || old_h != th)) {
+            v->anim_type = VIEW_ANIM_GEOMETRY;
+            v->anim_start_x = old_x;
+            v->anim_start_y = old_y;
+            v->anim_start_w = old_w;
+            v->anim_start_h = old_h;
+            v->anim_target_x = tx;
+            v->anim_target_y = ty;
+            v->anim_target_w = tw;
+            v->anim_target_h = th;
+
+            spring_config_t geom_cfg = {
+                .mass = 1.0,
+                .stiffness = 340.0,
+                .damping = 0.88,
+                .velocity_threshold = 0.01,
+                .position_threshold = 0.001,
+            };
+            spring_simulation_start(&v->anim_spring, &geom_cfg, 0.0, 1.0, 0.0);
+            wlr_scene_node_set_position(&v->scene_tree->node, old_x, old_y);
+            view_set_scale(v, 1.0, 1.0);
+        }
+    }
+    schedule_all_outputs(server);
+    dock_refresh(server);
+}
+
+void view_toggle_floating(aurade_view_t *view) {
+    if (!view || !view->server) return;
+    aurade_server_t *server = view->server;
+    view->is_floating = !view->is_floating;
+
+    if (view->is_floating && view->is_tiled) {
+        view->is_tiled = false;
+        int screen_w = server->screen_width > 0 ? server->screen_width : 1920;
+        int screen_h = server->screen_height > 0 ? server->screen_height : 1080;
+        bool hide_dock = server->config.dock_autohide ||
+                         server->config.dock_intellihide ||
+                         !server->config.dock_enabled;
+        int bottom_margin = hide_dock ? 0 : 96;
+
+        int old_x = view->x, old_y = view->y, old_w = view->width, old_h = view->height;
+        int tx = view->float_x;
+        int ty = view->float_y;
+        int tw = view->float_w;
+        int th = view->float_h;
+        if (tw < 240 || th < 180) {
+            tw = 800;
+            th = 550;
+            tx = (screen_w - tw) / 2;
+            ty = TOPBAR_HEIGHT + ((screen_h - TOPBAR_HEIGHT - bottom_margin) - th) / 2;
+        }
+        if (ty < TOPBAR_HEIGHT) ty = TOPBAR_HEIGHT;
+
+        view->x = tx;
+        view->y = ty;
+        view->width = tw;
+        view->height = th;
+        view_apply_geometry(view);
+        if (view->scene_tree) {
+            wlr_scene_node_raise_to_top(&view->scene_tree->node);
+        }
+
+        if (old_w > 0 && old_h > 0 && (old_x != tx || old_y != ty || old_w != tw || old_h != th)) {
+            view->anim_type = VIEW_ANIM_GEOMETRY;
+            view->anim_start_x = old_x;
+            view->anim_start_y = old_y;
+            view->anim_start_w = old_w;
+            view->anim_start_h = old_h;
+            view->anim_target_x = tx;
+            view->anim_target_y = ty;
+            view->anim_target_w = tw;
+            view->anim_target_h = th;
+
+            spring_config_t geom_cfg = {
+                .mass = 1.0,
+                .stiffness = 340.0,
+                .damping = 0.88,
+                .velocity_threshold = 0.01,
+                .position_threshold = 0.001,
+            };
+            spring_simulation_start(&view->anim_spring, &geom_cfg, 0.0, 1.0, 0.0);
+            if (view->scene_tree) {
+                wlr_scene_node_set_position(&view->scene_tree->node, old_x, old_y);
+                view_set_scale(view, 1.0, 1.0);
+            }
+        }
+    } else if (!view->is_floating) {
+        view->float_x = view->x;
+        view->float_y = view->y;
+        view->float_w = view->width;
+        view->float_h = view->height;
+        view->tile_order = ++server->next_view_id;
+    }
+
+    workspace_relayout_tiling(server, view->workspace);
+}
+
 void view_tile(aurade_view_t *view, bool left_half) {
     if (!view) return;
     int screen_w = view->server->screen_width > 0 ? view->server->screen_width : 1920;
@@ -872,6 +1239,17 @@ void view_toggle_maximize(aurade_view_t *view) {
     if (view->maximized) {
         view->maximized = false;
         view->fullscreen = false;
+        if (server->config.tiling_enabled && !view->is_floating) {
+            if (view->xdg_toplevel && view->xdg_toplevel->base->initialized) {
+                wlr_xdg_toplevel_set_maximized(view->xdg_toplevel, false);
+                wlr_xdg_toplevel_set_fullscreen(view->xdg_toplevel, false);
+            } else if (view->xwayland_surface) {
+                wlr_xwayland_surface_set_maximized(view->xwayland_surface, false, false);
+                wlr_xwayland_surface_set_fullscreen(view->xwayland_surface, false);
+            }
+            workspace_relayout_tiling(server, view->workspace);
+            return;
+        }
         if (view->prev_w >= 240 && view->prev_h >= 180) {
             target_x = view->prev_x;
             target_y = view->prev_y;
@@ -892,6 +1270,7 @@ void view_toggle_maximize(aurade_view_t *view) {
         view->prev_w = view->width;
         view->prev_h = view->height;
         view->maximized = true;
+        view->is_tiled = false;
 
         // macOS windows maximise below the menu bar and above the Dock.
         target_x = 0;
@@ -941,6 +1320,9 @@ void view_toggle_maximize(aurade_view_t *view) {
         schedule_all_outputs(server);
     }
 
+    if (server->config.tiling_enabled) {
+        workspace_relayout_tiling(server, view->workspace);
+    }
     dock_refresh(server);
 }
 
@@ -964,6 +1346,7 @@ void view_set_fullscreen(aurade_view_t *view, bool fullscreen) {
         }
         view->fullscreen = true;
         view->maximized = true;
+        view->is_tiled = false;
 
         // "fullscreen size (except topbar, do it like maximized window)"
         view->x = 0;
@@ -973,6 +1356,17 @@ void view_set_fullscreen(aurade_view_t *view, bool fullscreen) {
     } else {
         view->fullscreen = false;
         view->maximized = false;
+        if (server->config.tiling_enabled && !view->is_floating) {
+            if (view->xdg_toplevel && view->xdg_toplevel->base->initialized) {
+                wlr_xdg_toplevel_set_fullscreen(view->xdg_toplevel, false);
+                wlr_xdg_toplevel_set_maximized(view->xdg_toplevel, false);
+            } else if (view->xwayland_surface) {
+                wlr_xwayland_surface_set_fullscreen(view->xwayland_surface, false);
+                wlr_xwayland_surface_set_maximized(view->xwayland_surface, false, false);
+            }
+            workspace_relayout_tiling(server, view->workspace);
+            return;
+        }
         if (view->prev_w >= 240 && view->prev_h >= 180) {
             view->x = view->prev_x;
             view->y = view->prev_y;
@@ -997,6 +1391,9 @@ void view_set_fullscreen(aurade_view_t *view, bool fullscreen) {
         wlr_xwayland_surface_set_maximized(view->xwayland_surface, view->maximized, view->maximized);
     }
     view_apply_geometry(view);
+    if (server->config.tiling_enabled) {
+        workspace_relayout_tiling(server, view->workspace);
+    }
     dock_refresh(server);
 }
 
@@ -1048,6 +1445,9 @@ void view_minimize(aurade_view_t *view) {
             }
         }
     }
+    if (view->server->config.tiling_enabled) {
+        workspace_relayout_tiling(view->server, view->workspace);
+    }
     schedule_all_outputs(view->server);
     dock_refresh(view->server);
 }
@@ -1097,6 +1497,10 @@ void view_restore(aurade_view_t *view) {
                                 (int)round(dock_cy - cur_h / 2.0));
     view_set_scale(view, initial_scale, initial_scale);
     view_set_opacity(view, 0.0f);
+
+    if (view->server->config.tiling_enabled) {
+        workspace_relayout_tiling(view->server, view->workspace);
+    }
 
     view_focus(view);
     schedule_all_outputs(view->server);
@@ -1182,6 +1586,23 @@ static void xdg_surface_commit_debug(struct wl_listener *listener, void *data) {
 
     if (width == view->width && height == view->height) return;
 
+    if (view->is_tiled) {
+        if (view->anim_type == VIEW_ANIM_NONE) {
+            if (width > view->width || height > view->height) {
+                double sx = (double)view->width / (double)width;
+                double sy = (double)view->height / (double)height;
+                double scale = sx < sy ? sx : sy;
+                if (scale < 0.999) {
+                    view_set_scale(view, scale, scale);
+                }
+            } else if (view->current_scale > 0.0 && fabs(view->current_scale - 1.0) >= 0.001) {
+                view_set_scale(view, 1.0, 1.0);
+            }
+        }
+        dock_refresh(view->server);
+        return;
+    }
+
     // A client that takes control of its own size while maximized is no
     // longer maximized.
     if (view->maximized) {
@@ -1241,7 +1662,7 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 
     if (wants_fullscreen) {
         view_set_fullscreen(view, true);
-    } else if (is_media_viewer || wants_maximize) {
+    } else if (!view->server->config.tiling_enabled && (is_media_viewer || wants_maximize)) {
         if (!view->maximized) {
             view_toggle_maximize(view);
         }
@@ -1275,6 +1696,12 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 
         view->x = center_x;
         view->y = center_y;
+        if (view->float_w < 240 || view->float_h < 180) {
+            view->float_x = view->x;
+            view->float_y = view->y;
+            view->float_w = view->width >= 240 ? view->width : 800;
+            view->float_h = view->height >= 180 ? view->height : 550;
+        }
     }
 
     if (view->y < TOPBAR_HEIGHT) view->y = TOPBAR_HEIGHT;
@@ -1292,6 +1719,11 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
         .position_threshold = 0.001,
     };
     spring_simulation_start(&view->anim_spring, &map_cfg, 0.0, 1.0, 0.0);
+
+    if (view->server->config.tiling_enabled) {
+        workspace_relayout_tiling(view->server, view->workspace);
+    }
+
     double initial_scale = 0.88;
     int render_x = (int)round(view->x + (view->width * (1.0 - initial_scale)) / 2.0);
     int render_y = (int)round(view->y + (view->height * (1.0 - initial_scale)) / 2.0);
@@ -1334,6 +1766,7 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
     (void)data;
     aurade_view_t *view = wl_container_of(listener, view, unmap);
+    int ws = view->workspace;
 
     // Unmap is the first half of a close (destroy follows), but some clients
     // withdraw a window and keep the toplevel alive. Hide the whole view so no
@@ -1342,15 +1775,36 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 
     if (view->server->focused_view == view) {
         view->server->focused_view = NULL;
-        wlr_seat_keyboard_clear_focus(view->server->seat);
-        if (view->server->topbar) {
-            topbar_set_active_app(view->server->topbar, "Finder");
+        aurade_view_t *other;
+        bool found = false;
+        wl_list_for_each(other, &view->server->views, link) {
+            if (other != view && !other->minimized &&
+                other->anim_type != VIEW_ANIM_MINIMIZE &&
+                other->workspace == view->server->current_workspace &&
+                ((other->xdg_toplevel && other->xdg_toplevel->base &&
+                  other->xdg_toplevel->base->surface &&
+                  other->xdg_toplevel->base->surface->mapped) ||
+                 (other->xwayland_surface && other->xwayland_surface->surface &&
+                  other->xwayland_surface->surface->mapped))) {
+                view_focus(other);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            wlr_seat_keyboard_clear_focus(view->server->seat);
+            if (view->server->topbar) {
+                topbar_set_active_app(view->server->topbar, "Finder");
+            }
         }
     }
     if (view->server->active_constraint &&
         view->xdg_toplevel && view->xdg_toplevel->base &&
         view->server->active_constraint->surface == view->xdg_toplevel->base->surface) {
         server_set_pointer_constraint(view->server, NULL);
+    }
+    if (view->server->config.tiling_enabled) {
+        workspace_relayout_tiling(view->server, ws);
     }
     dock_refresh(view->server);
     server_export_running_windows(view->server);
@@ -1360,6 +1814,7 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
     (void)data;
     aurade_view_t *view = wl_container_of(listener, view, destroy);
     aurade_server_t *server = view->server;
+    int ws = view->workspace;
 
     wl_list_remove(&view->map.link);
     wl_list_remove(&view->unmap.link);
@@ -1405,6 +1860,9 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
         view->blur_node = NULL;
     }
 
+    if (server->config.tiling_enabled) {
+        workspace_relayout_tiling(server, ws);
+    }
     dock_refresh(server);
     server_export_running_windows(server);
     free(view);
@@ -1459,23 +1917,10 @@ static void xdg_toplevel_request_move(struct wl_listener *listener, void *data) 
 static void xdg_toplevel_request_resize(struct wl_listener *listener, void *data) {
     struct wlr_xdg_toplevel_resize_event *event = data;
     aurade_view_t *view = wl_container_of(listener, view, request_resize);
-    if (view->anim_type != VIEW_ANIM_NONE) view_anim_settle(view);
     aurade_server_t *server = view->server;
-
-    server->grabbed_view = view;
-    server->cursor_mode = CURSOR_RESIZE;
+    if (!server) return;
+    server_start_resize(server, view, event->edges, server->cursor->x, server->cursor->y);
     server->grab_button = 0; // any mouse button release ends client resize
-    server->resize_edges = event->edges;
-    server->grab_x = server->cursor->x;
-    server->grab_y = server->cursor->y;
-    server->grab_geobox.x = view->x;
-    server->grab_geobox.y = view->y;
-    server->grab_geobox.width = view->width;
-    server->grab_geobox.height = view->height;
-    if (view->xdg_toplevel) {
-        wlr_xdg_toplevel_set_resizing(view->xdg_toplevel, true);
-    }
-    wlr_seat_pointer_clear_focus(server->seat);
 }
 
 static void xdg_toplevel_request_maximize(struct wl_listener *listener, void *data) {
@@ -1792,6 +2237,8 @@ static void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
     aurade_view_t *view = calloc(1, sizeof(*view));
     view->server = server;
     view->id = ++server->next_view_id;
+    view->tile_order = view->id;
+    view->tile_split_ratio = 0.5;
     view->xdg_toplevel = xdg_toplevel;
     view->workspace = server->current_workspace;
 

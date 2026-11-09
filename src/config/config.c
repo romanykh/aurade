@@ -108,6 +108,8 @@ aurade_config_t config_get_defaults(void) {
         // Workspaces
         .num_workspaces = 4,
         .workspace_auto_focus = false,
+        .tiling_enabled = false,
+        .tiling_gap = 10,
 
         // Blur effects
         .blur_dock = true,
@@ -349,6 +351,29 @@ bool config_load(aurade_config_t *cfg, const char *path) {
         if (json_object_object_get_ex(ws, "auto_focus", &v)) {
             cfg->workspace_auto_focus = json_object_get_boolean(v);
         }
+        if (json_object_object_get_ex(ws, "tiling", &v)) {
+            cfg->tiling_enabled = json_object_get_boolean(v);
+        }
+        if (json_object_object_get_ex(ws, "tiling_gap", &v)) {
+            int g = json_object_get_int(v);
+            if (g < 0) g = 0;
+            if (g > 48) g = 48;
+            cfg->tiling_gap = g;
+        }
+    }
+
+    struct json_object *tiling_obj = NULL;
+    if (json_object_object_get_ex(root, "tiling", &tiling_obj)) {
+        struct json_object *v;
+        if (json_object_object_get_ex(tiling_obj, "enabled", &v)) {
+            cfg->tiling_enabled = json_object_get_boolean(v);
+        }
+        if (json_object_object_get_ex(tiling_obj, "gap", &v)) {
+            int g = json_object_get_int(v);
+            if (g < 0) g = 0;
+            if (g > 48) g = 48;
+            cfg->tiling_gap = g;
+        }
     }
 
     struct json_object *mp = NULL;
@@ -487,6 +512,8 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     struct json_object *ws = json_object_new_object();
     json_object_object_add(ws, "count", json_object_new_int(cfg->num_workspaces > 0 ? cfg->num_workspaces : 4));
     json_object_object_add(ws, "auto_focus", json_object_new_boolean(cfg->workspace_auto_focus));
+    json_object_object_add(ws, "tiling", json_object_new_boolean(cfg->tiling_enabled));
+    json_object_object_add(ws, "tiling_gap", json_object_new_int(cfg->tiling_gap));
     json_object_object_add(root, "workspaces", ws);
 
     struct json_object *mp = json_object_new_object();

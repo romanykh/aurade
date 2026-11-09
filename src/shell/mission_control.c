@@ -812,11 +812,28 @@ bool mission_control_handle_release(aurade_mission_control_t *mc, double x, doub
 
     if (was_dragging && dragged) {
         if (target_ws >= 0 && target_ws != dragged->workspace) {
+            int old_ws = dragged->workspace;
             dragged->workspace = target_ws;
+            dragged->tile_order = ++mc->server->next_view_id;
             wlr_scene_node_reparent(&dragged->scene_tree->node,
                                     mc->server->workspace_trees[target_ws]);
             if (drag_slot >= 0 && drag_slot < mc->slot_count && mc->slots[drag_slot].view == dragged) {
                 mc->slots[drag_slot].workspace = target_ws;
+            }
+            if (mc->server->config.tiling_enabled) {
+                workspace_relayout_tiling(mc->server, old_ws);
+                workspace_relayout_tiling(mc->server, target_ws);
+                for (int i = 0; i < mc->slot_count; i++) {
+                    aurade_view_t *sv = mc->slots[i].view;
+                    if (!sv) continue;
+                    if (sv->anim_type == VIEW_ANIM_GEOMETRY) {
+                        view_anim_settle(sv);
+                    }
+                    mc->slots[i].orig_x = (double)sv->x;
+                    mc->slots[i].orig_y = (double)sv->y;
+                    mc->slots[i].orig_w = (double)sv->width;
+                    mc->slots[i].orig_h = (double)sv->height;
+                }
             }
             mc->spaces_bar_dirty = true;
             if (mc->slot_count > 0) {

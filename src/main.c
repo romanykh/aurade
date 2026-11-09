@@ -154,21 +154,28 @@ static int config_inotify_handler(int fd, uint32_t mask, void *data) {
     char prev_wallpaper[512];
     snprintf(prev_wallpaper, sizeof(prev_wallpaper), "%s", server->config.wallpaper_path);
     double prev_blur_strength = server->config.blur_strength;
+    bool prev_tiling = server->config.tiling_enabled;
 
     // Re-add watch on config file in case it was replaced atomically
     const char *cfg_path = config_get_default_path();
     inotify_add_watch(server->config_inotify_fd, cfg_path, IN_MODIFY | IN_ATTRIB);
 
     config_load(&server->config, NULL);
-    fprintf(stderr, "[AuraDE] Config reloaded from %s (DWT=%s)\n",
+    fprintf(stderr, "[AuraDE] Config reloaded from %s (DWT=%s, tiling=%s)\n",
             config_get_default_path(),
-            server->config.disable_while_typing ? "enabled" : "disabled");
+            server->config.disable_while_typing ? "enabled" : "disabled",
+            server->config.tiling_enabled ? "on" : "off");
 
     server_update_blur_config(server);
 
     // Apply live: re-render everything that depends on configuration.
     if (server->config.num_workspaces > 0 && server->config.num_workspaces != server->num_workspaces) {
         server_set_num_workspaces(server, server->config.num_workspaces);
+    }
+    if (server->config.tiling_enabled) {
+        server_relayout_all_workspaces(server);
+    } else if (prev_tiling && !server->config.tiling_enabled) {
+        server_untile_all_workspaces(server);
     }
     if (server->wallpaper && (strcmp(prev_wallpaper, server->config.wallpaper_path) != 0 ||
                               fabs(prev_blur_strength - server->config.blur_strength) > 0.01)) {
@@ -370,40 +377,123 @@ static const char *resize_cursor_name(uint32_t edges) {
 }
 
 static aurade_view_t *server_view_resize_at(aurade_server_t *server, double lx, double ly, uint32_t *out_edges) {
-    if (!server || !server->focused_view) return NULL;
-    aurade_view_t *view = server->focused_view;
-    if (view->workspace != server->current_workspace || view->minimized || view->maximized) {
-        return NULL;
+    if (!server) return NULL;
+    if (server->focused_view &&
+        server->focused_view->workspace == server->current_workspace &&
+        !server->focused_view->minimized && !server->focused_view->maximized) {
+        aurade_view_t *view = server->focused_view;
+        int vx = view->x, vy = view->y, vw = view->width, vh = view->height;
+        if (vw > 0 && vh > 0 &&
+            lx >= vx - RESIZE_MARGIN_OUT && lx <= vx + vw + RESIZE_MARGIN_OUT &&
+            ly >= vy - RESIZE_MARGIN_OUT && ly <= vy + vh + RESIZE_MARGIN_OUT &&
+            !(lx > vx + RESIZE_MARGIN_IN && lx < vx + vw - RESIZE_MARGIN_IN &&
+              ly > vy + RESIZE_MARGIN_IN && ly < vy + vh - RESIZE_MARGIN_IN)) {
+            uint32_t edges = 0;
+            if (lx <= vx + RESIZE_MARGIN_IN) edges |= WLR_EDGE_LEFT;
+            if (lx >= vx + vw - RESIZE_MARGIN_IN) edges |= WLR_EDGE_RIGHT;
+            if (ly <= vy + RESIZE_MARGIN_IN) edges |= WLR_EDGE_TOP;
+            if (ly >= vy + vh - RESIZE_MARGIN_IN) edges |= WLR_EDGE_BOTTOM;
+            if (edges != 0) {
+                if (out_edges) *out_edges = edges;
+                return view;
+            }
+        }
     }
-    int vx = view->x;
-    int vy = view->y;
-    int vw = view->width;
-    int vh = view->height;
-    if (vw <= 0 || vh <= 0) return NULL;
-
-    // Check if within outer bounding box with margin
-    if (lx < vx - RESIZE_MARGIN_OUT || lx > vx + vw + RESIZE_MARGIN_OUT ||
-        ly < vy - RESIZE_MARGIN_OUT || ly > vy + vh + RESIZE_MARGIN_OUT) {
-        return NULL;
-    }
-
-    // Inside inner content area (not on edge) -> no resize
-    if (lx > vx + RESIZE_MARGIN_IN && lx < vx + vw - RESIZE_MARGIN_IN &&
-        ly > vy + RESIZE_MARGIN_IN && ly < vy + vh - RESIZE_MARGIN_IN) {
-        return NULL;
-    }
-
-    uint32_t edges = 0;
-    if (lx <= vx + RESIZE_MARGIN_IN) edges |= WLR_EDGE_LEFT;
-    if (lx >= vx + vw - RESIZE_MARGIN_IN) edges |= WLR_EDGE_RIGHT;
-    if (ly <= vy + RESIZE_MARGIN_IN) edges |= WLR_EDGE_TOP;
-    if (ly >= vy + vh - RESIZE_MARGIN_IN) edges |= WLR_EDGE_BOTTOM;
-
-    if (edges != 0) {
-        if (out_edges) *out_edges = edges;
-        return view;
+    aurade_view_t *view;
+    wl_list_for_each(view, &server->views, link) {
+        if (view == server->focused_view) continue;
+        if (view->workspace != server->current_workspace || view->minimized || view->maximized) continue;
+        int vx = view->x, vy = view->y, vw = view->width, vh = view->height;
+        if (vw <= 0 || vh <= 0) continue;
+        if (lx >= vx - RESIZE_MARGIN_OUT && lx <= vx + vw + RESIZE_MARGIN_OUT &&
+            ly >= vy - RESIZE_MARGIN_OUT && ly <= vy + vh + RESIZE_MARGIN_OUT &&
+            !(lx > vx + RESIZE_MARGIN_IN && lx < vx + vw - RESIZE_MARGIN_IN &&
+              ly > vy + RESIZE_MARGIN_IN && ly < vy + vh - RESIZE_MARGIN_IN)) {
+            uint32_t edges = 0;
+            if (lx <= vx + RESIZE_MARGIN_IN) edges |= WLR_EDGE_LEFT;
+            if (lx >= vx + vw - RESIZE_MARGIN_IN) edges |= WLR_EDGE_RIGHT;
+            if (ly <= vy + RESIZE_MARGIN_IN) edges |= WLR_EDGE_TOP;
+            if (ly >= vy + vh - RESIZE_MARGIN_IN) edges |= WLR_EDGE_BOTTOM;
+            if (edges != 0) {
+                if (out_edges) *out_edges = edges;
+                return view;
+            }
+        }
     }
     return NULL;
+}
+
+void server_start_resize(aurade_server_t *server, aurade_view_t *view, uint32_t edges, double lx, double ly) {
+    if (!server || !view) return;
+    if (view->anim_type != VIEW_ANIM_NONE) view_anim_settle(view);
+    view_focus(view);
+    if (view->maximized) {
+        view_toggle_maximize(view);
+    }
+    server->grabbed_view = view;
+    server->cursor_mode = CURSOR_RESIZE;
+    server->resize_edges = edges;
+    server->grab_x = lx;
+    server->grab_y = ly;
+    server->grab_geobox.x = view->x;
+    server->grab_geobox.y = view->y;
+    server->grab_geobox.width = view->width;
+    server->grab_geobox.height = view->height;
+    if (view->xdg_toplevel) {
+        wlr_xdg_toplevel_set_resizing(view->xdg_toplevel, true);
+    }
+
+    server->grabbed_neighbor = NULL;
+    if (server->config.tiling_enabled && view->is_tiled) {
+        int gap = server->config.tiling_gap;
+        aurade_view_t *other;
+        wl_list_for_each(other, &server->views, link) {
+            if (other == view || other->workspace != view->workspace || !view_should_tile(other)) continue;
+            if (edges & WLR_EDGE_RIGHT) {
+                int overlap_top = other->y > view->y ? other->y : view->y;
+                int overlap_bottom = (other->y + other->height < view->y + view->height) ? (other->y + other->height) : (view->y + view->height);
+                if (abs(other->x - (view->x + view->width + gap)) <= gap + 16 &&
+                    overlap_bottom - overlap_top > 10) {
+                    server->grabbed_neighbor = other;
+                    break;
+                }
+            } else if (edges & WLR_EDGE_LEFT) {
+                int overlap_top = other->y > view->y ? other->y : view->y;
+                int overlap_bottom = (other->y + other->height < view->y + view->height) ? (other->y + other->height) : (view->y + view->height);
+                if (abs((other->x + other->width + gap) - view->x) <= gap + 16 &&
+                    overlap_bottom - overlap_top > 10) {
+                    server->grabbed_neighbor = other;
+                    break;
+                }
+            } else if (edges & WLR_EDGE_BOTTOM) {
+                int overlap_left = other->x > view->x ? other->x : view->x;
+                int overlap_right = (other->x + other->width < view->x + view->width) ? (other->x + other->width) : (view->x + view->width);
+                if (abs(other->y - (view->y + view->height + gap)) <= gap + 16 &&
+                    overlap_right - overlap_left > 10) {
+                    server->grabbed_neighbor = other;
+                    break;
+                }
+            } else if (edges & WLR_EDGE_TOP) {
+                int overlap_left = other->x > view->x ? other->x : view->x;
+                int overlap_right = (other->x + other->width < view->x + view->width) ? (other->x + other->width) : (view->x + view->width);
+                if (abs((other->y + other->height + gap) - view->y) <= gap + 16 &&
+                    overlap_right - overlap_left > 10) {
+                    server->grabbed_neighbor = other;
+                    break;
+                }
+            }
+        }
+        if (server->grabbed_neighbor) {
+            server->grab_neighbor_geobox.x = server->grabbed_neighbor->x;
+            server->grab_neighbor_geobox.y = server->grabbed_neighbor->y;
+            server->grab_neighbor_geobox.width = server->grabbed_neighbor->width;
+            server->grab_neighbor_geobox.height = server->grabbed_neighbor->height;
+            if (server->grabbed_neighbor->xdg_toplevel) {
+                wlr_xdg_toplevel_set_resizing(server->grabbed_neighbor->xdg_toplevel, true);
+            }
+        }
+    }
+    wlr_seat_pointer_clear_focus(server->seat);
 }
 
 static bool super_is_held(aurade_server_t *server) {
@@ -738,8 +828,106 @@ static void cursor_motion(struct wl_listener *listener, void *data) {
 
     if (server->cursor_mode == CURSOR_RESIZE && server->grabbed_view) {
         aurade_view_t *view = server->grabbed_view;
+        aurade_view_t *neighbor = server->grabbed_neighbor;
         double dx = lx - server->grab_x;
         double dy = ly - server->grab_y;
+
+        if (neighbor && server->config.tiling_enabled && view->is_tiled && neighbor->is_tiled) {
+            int gap = server->config.tiling_gap;
+            if (server->resize_edges & WLR_EDGE_RIGHT) {
+                int total_w = server->grab_geobox.width + server->grab_neighbor_geobox.width;
+                int min_w = 200;
+                int new_w1 = server->grab_geobox.width + (int)round(dx);
+                if (new_w1 < min_w) new_w1 = min_w;
+                if (new_w1 > total_w - min_w) new_w1 = total_w - min_w;
+                int new_w2 = total_w - new_w1;
+                int new_x2 = server->grab_geobox.x + new_w1 + gap;
+
+                view->x = server->grab_geobox.x;
+                view->width = new_w1;
+                neighbor->x = new_x2;
+                neighbor->width = new_w2;
+                view->tile_split_ratio = (double)new_w1 / (double)(total_w > 0 ? total_w : 1);
+            } else if (server->resize_edges & WLR_EDGE_LEFT) {
+                int total_w = server->grab_geobox.width + server->grab_neighbor_geobox.width;
+                int min_w = 200;
+                int new_w2 = server->grab_neighbor_geobox.width + (int)round(dx);
+                if (new_w2 < min_w) new_w2 = min_w;
+                if (new_w2 > total_w - min_w) new_w2 = total_w - min_w;
+                int new_w1 = total_w - new_w2;
+                int new_x1 = server->grab_neighbor_geobox.x + new_w2 + gap;
+
+                neighbor->x = server->grab_neighbor_geobox.x;
+                neighbor->width = new_w2;
+                view->x = new_x1;
+                view->width = new_w1;
+                neighbor->tile_split_ratio = (double)new_w2 / (double)(total_w > 0 ? total_w : 1);
+            } else if (server->resize_edges & WLR_EDGE_BOTTOM) {
+                int total_h = server->grab_geobox.height + server->grab_neighbor_geobox.height;
+                int min_h = 160;
+                int new_h1 = server->grab_geobox.height + (int)round(dy);
+                if (new_h1 < min_h) new_h1 = min_h;
+                if (new_h1 > total_h - min_h) new_h1 = total_h - min_h;
+                int new_h2 = total_h - new_h1;
+                int new_y2 = server->grab_geobox.y + new_h1 + gap;
+
+                view->y = server->grab_geobox.y;
+                view->height = new_h1;
+                neighbor->y = new_y2;
+                neighbor->height = new_h2;
+                view->tile_split_ratio = (double)new_h1 / (double)(total_h > 0 ? total_h : 1);
+            } else if (server->resize_edges & WLR_EDGE_TOP) {
+                int total_h = server->grab_geobox.height + server->grab_neighbor_geobox.height;
+                int min_h = 160;
+                int new_h2 = server->grab_neighbor_geobox.height + (int)round(dy);
+                if (new_h2 < min_h) new_h2 = min_h;
+                if (new_h2 > total_h - min_h) new_h2 = total_h - min_h;
+                int new_h1 = total_h - new_h2;
+                int new_y1 = server->grab_neighbor_geobox.y + new_h2 + gap;
+
+                neighbor->y = server->grab_neighbor_geobox.y;
+                neighbor->height = new_h2;
+                view->y = new_y1;
+                view->height = new_h1;
+                neighbor->tile_split_ratio = (double)new_h2 / (double)(total_h > 0 ? total_h : 1);
+            }
+
+            view->maximized = false;
+            wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
+            view_update_workspace_clip(view);
+            if (view->xdg_toplevel && view->xdg_toplevel->base->initialized) {
+                view->last_configure_ms = now_ms();
+                wlr_xdg_toplevel_set_size(view->xdg_toplevel, view->width, view->height);
+            } else if (view->xdg_toplevel) {
+                view->pending_configure = true;
+            } else if (view->xwayland_surface) {
+                wlr_xwayland_surface_configure(view->xwayland_surface, view->x, view->y, view->width, view->height);
+            }
+
+            neighbor->maximized = false;
+            wlr_scene_node_set_position(&neighbor->scene_tree->node, neighbor->x, neighbor->y);
+            view_update_workspace_clip(neighbor);
+            if (neighbor->xdg_toplevel && neighbor->xdg_toplevel->base->initialized) {
+                neighbor->last_configure_ms = now_ms();
+                wlr_xdg_toplevel_set_size(neighbor->xdg_toplevel, neighbor->width, neighbor->height);
+            } else if (neighbor->xdg_toplevel) {
+                neighbor->pending_configure = true;
+            } else if (neighbor->xwayland_surface) {
+                wlr_xwayland_surface_configure(neighbor->xwayland_surface, neighbor->x, neighbor->y, neighbor->width, neighbor->height);
+            }
+
+            schedule_all_outputs(server);
+            wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr,
+                                   resize_cursor_name(server->resize_edges));
+            if (server->dock) dock_update_visibility(server->dock);
+            return;
+        }
+
+        if (server->config.tiling_enabled && view->is_tiled) {
+            // Tiled window with no adjacent neighbor on this edge cannot be resized outwards
+            return;
+        }
+
         int new_x = server->grab_geobox.x;
         int new_y = server->grab_geobox.y;
         int new_w = server->grab_geobox.width;
@@ -901,7 +1089,7 @@ static void cursor_motion(struct wl_listener *listener, void *data) {
     if (!over_popup) {
         uint32_t resize_edges = 0;
         aurade_view_t *resize_view = server_view_resize_at(server, lx, ly, &resize_edges);
-        if (resize_view && resize_edges != 0 && (!view || view == resize_view)) {
+        if (resize_view && resize_edges != 0) {
             wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr,
                                    resize_cursor_name(resize_edges));
             wlr_seat_pointer_clear_focus(server->seat);
@@ -1028,6 +1216,21 @@ static void cursor_button(struct wl_listener *listener, void *data) {
                     if (!v->maximized) {
                         view_toggle_maximize(v);
                     }
+                } else if (server->config.tiling_enabled && view_should_tile(v)) {
+                    aurade_view_t *other;
+                    wl_list_for_each(other, &server->views, link) {
+                        if (other != v && other->workspace == v->workspace && view_should_tile(other)) {
+                            if (lx >= other->x && lx <= other->x + other->width &&
+                                ly >= other->y && ly <= other->y + other->height) {
+                                uint64_t tmp_order = v->tile_order ? v->tile_order : v->id;
+                                uint64_t other_order = other->tile_order ? other->tile_order : other->id;
+                                v->tile_order = other_order;
+                                other->tile_order = tmp_order;
+                                break;
+                            }
+                        }
+                    }
+                    workspace_relayout_tiling(server, v->workspace);
                 } else if (snap == SNAP_LEFT) {
                     view_tile(v, true);
                 } else if (snap == SNAP_RIGHT) {
@@ -1040,17 +1243,32 @@ static void cursor_button(struct wl_listener *listener, void *data) {
             }
 
             if (server->cursor_mode == CURSOR_RESIZE && server->grabbed_view) {
-                if (server->grabbed_view->xdg_toplevel) {
-                    wlr_xdg_toplevel_set_resizing(server->grabbed_view->xdg_toplevel, false);
-                    wlr_xdg_toplevel_set_size(server->grabbed_view->xdg_toplevel,
-                                              server->grabbed_view->width,
-                                              server->grabbed_view->height);
-                } else if (server->grabbed_view->xwayland_surface) {
-                    wlr_xwayland_surface_configure(server->grabbed_view->xwayland_surface,
-                                                  server->grabbed_view->x,
-                                                  server->grabbed_view->y,
-                                                  server->grabbed_view->width,
-                                                  server->grabbed_view->height);
+                aurade_view_t *rv = server->grabbed_view;
+                int ws = rv->workspace;
+                bool was_tiled = server->config.tiling_enabled && rv->is_tiled;
+                if (rv->xdg_toplevel) {
+                    wlr_xdg_toplevel_set_resizing(rv->xdg_toplevel, false);
+                    wlr_xdg_toplevel_set_size(rv->xdg_toplevel, rv->width, rv->height);
+                } else if (rv->xwayland_surface) {
+                    wlr_xwayland_surface_configure(rv->xwayland_surface,
+                                                  rv->x, rv->y, rv->width, rv->height);
+                }
+                if (server->grabbed_neighbor) {
+                    aurade_view_t *nv = server->grabbed_neighbor;
+                    if (nv->xdg_toplevel) {
+                        wlr_xdg_toplevel_set_resizing(nv->xdg_toplevel, false);
+                        wlr_xdg_toplevel_set_size(nv->xdg_toplevel, nv->width, nv->height);
+                    } else if (nv->xwayland_surface) {
+                        wlr_xwayland_surface_configure(nv->xwayland_surface,
+                                                      nv->x, nv->y, nv->width, nv->height);
+                    }
+                    server->grabbed_neighbor = NULL;
+                }
+                server->cursor_mode = CURSOR_PASSTHROUGH;
+                server->grabbed_view = NULL;
+                server->grab_button = 0;
+                if (was_tiled) {
+                    workspace_relayout_tiling(server, ws);
                 }
             }
             update_snap_preview(server, SNAP_NONE);
@@ -1259,28 +1477,9 @@ static void cursor_button(struct wl_listener *listener, void *data) {
     if (left && !over_popup) {
         uint32_t resize_edges = 0;
         aurade_view_t *resize_view = server_view_resize_at(server, lx, ly, &resize_edges);
-        if (resize_view && resize_edges != 0 && (!view || view == resize_view)) {
-            if (resize_view->anim_type != VIEW_ANIM_NONE) {
-                view_anim_settle(resize_view);
-            }
-            view_focus(resize_view);
-            if (resize_view->maximized) {
-                view_toggle_maximize(resize_view);
-            }
-            server->grabbed_view = resize_view;
-            server->cursor_mode = CURSOR_RESIZE;
+        if (resize_view && resize_edges != 0) {
+            server_start_resize(server, resize_view, resize_edges, lx, ly);
             server->grab_button = event->button;
-            server->resize_edges = resize_edges;
-            server->grab_x = lx;
-            server->grab_y = ly;
-            server->grab_geobox.x = resize_view->x;
-            server->grab_geobox.y = resize_view->y;
-            server->grab_geobox.width = resize_view->width;
-            server->grab_geobox.height = resize_view->height;
-            if (resize_view->xdg_toplevel) {
-                wlr_xdg_toplevel_set_resizing(resize_view->xdg_toplevel, true);
-            }
-            wlr_seat_pointer_clear_focus(server->seat);
             return;
         }
     }
@@ -1806,11 +2005,17 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
                 if (shift) {
                     if (server->focused_view) {
                         aurade_view_t *view = server->focused_view;
+                        int old_ws = view->workspace;
                         view->workspace = ws;
+                        view->tile_order = ++server->next_view_id;
                         server_switch_workspace(server, ws, true);
                         wlr_scene_node_reparent(&view->scene_tree->node,
                                                 server->workspace_trees[ws]);
                         server_update_workspace_positions(server);
+                        if (server->config.tiling_enabled) {
+                            workspace_relayout_tiling(server, old_ws);
+                            workspace_relayout_tiling(server, ws);
+                        }
                     }
                 } else {
                     server_switch_workspace(server, ws, true);
@@ -1824,6 +2029,10 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
                     return;
                 case XKB_KEY_q:
                     if (server->focused_view) { view_close(server->focused_view); return; }
+                    break;
+                case XKB_KEY_v:
+                case XKB_KEY_V:
+                    if (server->focused_view) { view_toggle_floating(server->focused_view); return; }
                     break;
                 case XKB_KEY_m:
                     if (server->focused_view) { view_minimize(server->focused_view); return; }

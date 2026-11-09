@@ -99,6 +99,8 @@ typedef struct {
     // Workspaces
     int num_workspaces;
     bool workspace_auto_focus;
+    bool tiling_enabled;            // Hyprland-style dynamic dwindle tiling (off by default)
+    int tiling_gap;                 // Inner/outer gap in pixels for tiled windows (default 10)
 
     // Blur effects
     bool blur_dock;
