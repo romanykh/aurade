@@ -685,8 +685,8 @@ class AuraSettings(Gtk.Application):
             return
 
         self.win = Gtk.ApplicationWindow(application=self, title="System Settings")
-        self.win.set_default_size(880, 600)
-        self.win.set_size_request(460, 360)
+        self.win.set_default_size(820, 560)
+        self.win.set_size_request(360, 300)
         self.win.connect("close-request", self.on_close)
 
         header = Gtk.HeaderBar()
@@ -774,13 +774,14 @@ class AuraSettings(Gtk.Application):
 
     def scrolled(self, child):
         sw = Gtk.ScrolledWindow()
-        sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sw.set_propagate_natural_width(False)
         sw.set_child(child)
         return sw
 
     def build_sidebar(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        box.set_size_request(200, -1)
+        box.set_size_request(180, -1)
         box.set_hexpand(False)
         box.set_vexpand(True)
         box.add_css_class("sidebar")
@@ -808,8 +809,10 @@ class AuraSettings(Gtk.Application):
         user_title = os.environ.get("USER", "User").capitalize()
         lbl_user = Gtk.Label(label=f"{user_title} • {socket.gethostname()}", xalign=0)
         lbl_user.add_css_class("profile-name")
+        lbl_user.set_ellipsize(Pango.EllipsizeMode.END)
         lbl_sub = Gtk.Label(label="AuraDE System Settings", xalign=0)
         lbl_sub.add_css_class("profile-sub")
+        lbl_sub.set_ellipsize(Pango.EllipsizeMode.END)
         pcol.append(lbl_user)
         pcol.append(lbl_sub)
         prof.append(pcol)
@@ -878,19 +881,22 @@ class AuraSettings(Gtk.Application):
 
     def page(self, title, lead):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        box.set_margin_start(28)
-        box.set_margin_end(28)
-        box.set_margin_top(22)
-        box.set_margin_bottom(28)
+        box.set_margin_start(18)
+        box.set_margin_end(18)
+        box.set_margin_top(16)
+        box.set_margin_bottom(20)
 
         t = Gtk.Label(label=title, xalign=0)
         t.add_css_class("headline")
+        t.set_wrap(True)
+        t.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         box.append(t)
 
         if lead:
             l = Gtk.Label(label=lead, xalign=0)
             l.add_css_class("lead")
             l.set_wrap(True)
+            l.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
             box.append(l)
 
         return box
@@ -911,7 +917,7 @@ class AuraSettings(Gtk.Application):
             sep.add_css_class("mac-sep")
             card.append(sep)
 
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         row.add_css_class("row")
 
         if icon_name:
@@ -924,12 +930,15 @@ class AuraSettings(Gtk.Application):
 
         t = Gtk.Label(label=title, xalign=0)
         t.add_css_class("title")
+        t.set_wrap(True)
+        t.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         label_box.append(t)
 
         if subtitle:
             s = Gtk.Label(label=subtitle, xalign=0)
             s.add_css_class("subtitle")
             s.set_wrap(True)
+            s.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
             label_box.append(s)
 
         row.append(label_box)
@@ -956,7 +965,7 @@ class AuraSettings(Gtk.Application):
         sc.set_digits(digits)
         sc.set_draw_value(True)
         sc.set_value_pos(Gtk.PositionType.RIGHT)
-        sc.set_size_request(140, -1)
+        sc.set_size_request(90, -1)
         sc.set_value(float(self.cfg[section].get(key, lo)))
         sc.connect("value-changed", self.on_scale, section, key, on_change)
         return sc
@@ -984,7 +993,7 @@ class AuraSettings(Gtk.Application):
         en = Gtk.Entry()
         en.set_text(self.cfg[section].get(key, ""))
         en.set_placeholder_text(placeholder)
-        en.set_size_request(160, -1)
+        en.set_size_request(110, -1)
         en.connect("changed", self.on_entry, section, key)
         return en
 
@@ -1732,7 +1741,7 @@ class AuraSettings(Gtk.Application):
         card_out = self.card(box, "Output & Speakers")
         self.sound_out_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
         self.sound_out_scale.set_draw_value(True)
-        self.sound_out_scale.set_size_request(220, -1)
+        self.sound_out_scale.set_size_request(90, -1)
         self.sound_out_scale.connect("value-changed", self.on_sound_out_volume)
 
         self.sound_out_mute = Gtk.Switch()
@@ -1754,7 +1763,7 @@ class AuraSettings(Gtk.Application):
         card_in = self.card(box, "Input & Microphone")
         self.sound_in_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
         self.sound_in_scale.set_draw_value(True)
-        self.sound_in_scale.set_size_request(220, -1)
+        self.sound_in_scale.set_size_request(90, -1)
         self.sound_in_scale.connect("value-changed", self.on_sound_in_volume)
 
         self.sound_in_mute = Gtk.Switch()
@@ -1909,7 +1918,7 @@ class AuraSettings(Gtk.Application):
         # Brightness slider
         self.bright_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 5, 100, 1)
         self.bright_scale.set_draw_value(True)
-        self.bright_scale.set_size_request(240, -1)
+        self.bright_scale.set_size_request(90, -1)
         self.bright_scale.connect("value-changed", self.on_brightness_changed)
 
         # Read current brightness
@@ -1952,7 +1961,7 @@ class AuraSettings(Gtk.Application):
 
         nl_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 1700, 5000, 100)
         nl_scale.set_draw_value(False)
-        nl_scale.set_size_request(240, -1)
+        nl_scale.set_size_request(90, -1)
         cur_temp = gsettings_get("org.gnome.settings-daemon.plugins.color", "night-light-temperature", 3500)
         nl_scale.set_value(cur_temp if isinstance(cur_temp, (int, float)) else 3500)
         nl_scale.connect("value-changed", lambda sc: gsettings_set("org.gnome.settings-daemon.plugins.color", "night-light-temperature", int(sc.get_value())))
@@ -1960,13 +1969,10 @@ class AuraSettings(Gtk.Application):
 
         # Display Scaling Card
         card_scale = self.card(box, "Display Scaling")
-        scale_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        scale_box.set_margin_top(8); scale_box.set_margin_bottom(8); scale_box.set_margin_start(8)
-        for s_val in ("100%", "125%", "150%", "200%"):
-            sbtn = Gtk.Button(label=s_val)
-            sbtn.connect("clicked", lambda *_, sv=s_val: self.on_scale_clicked(sv))
-            scale_box.append(sbtn)
-        self.add_row(card_scale, "UI Scale Factor", "Enlarge interface items for higher DPI screens.", scale_box)
+        scale_dd = Gtk.DropDown.new_from_strings(["100%", "125%", "150%", "200%"])
+        scale_dd.set_selected(0)
+        scale_dd.connect("notify::selected", lambda dd, _: self.on_scale_clicked(["100%", "125%", "150%", "200%"][dd.get_selected()]))
+        self.add_row(card_scale, "UI Scale Factor", "Enlarge interface items for higher DPI screens.", scale_dd)
 
         return box
 
@@ -1987,7 +1993,7 @@ class AuraSettings(Gtk.Application):
 
         card_count = self.card(box, "Workspace Count")
 
-        ctrl_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        ctrl_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
 
         current_count = self.get_workspace_count()
 
@@ -1996,11 +2002,13 @@ class AuraSettings(Gtk.Application):
         self.ws_spin.set_digits(0)
         self.ws_spin.connect("value-changed", self.on_ws_spin_changed)
 
-        btn_add = Gtk.Button(label="+ Add Space")
+        btn_add = Gtk.Button(label="+")
+        btn_add.set_tooltip_text("Add space")
         btn_add.add_css_class("btn-primary")
         btn_add.connect("clicked", lambda _b: self.set_workspace_count(self.get_workspace_count() + 1))
 
-        btn_del = Gtk.Button(label="− Delete Space")
+        btn_del = Gtk.Button(label="−")
+        btn_del.set_tooltip_text("Delete space")
         btn_del.add_css_class("btn-destructive")
         btn_del.connect("clicked", lambda _b: self.set_workspace_count(self.get_workspace_count() - 1))
 
@@ -2014,6 +2022,7 @@ class AuraSettings(Gtk.Application):
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        scroll.set_propagate_natural_width(False)
         scroll.set_min_content_height(140)
 
         self.ws_cards_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -2190,7 +2199,7 @@ class AuraSettings(Gtk.Application):
 
         tp_speed = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -1.0, 1.0, 0.1)
         tp_speed.set_draw_value(True)
-        tp_speed.set_size_request(240, -1)
+        tp_speed.set_size_request(90, -1)
         val = gsettings_get("org.gnome.desktop.peripherals.touchpad", "speed", 0.0)
         tp_speed.set_value(float(val) if isinstance(val, (int, float)) else 0.0)
         tp_speed.connect("value-changed", lambda sc: gsettings_set("org.gnome.desktop.peripherals.touchpad", "speed", round(sc.get_value(), 2)))
@@ -2209,7 +2218,7 @@ class AuraSettings(Gtk.Application):
 
         m_speed = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -1.0, 1.0, 0.1)
         m_speed.set_draw_value(True)
-        m_speed.set_size_request(240, -1)
+        m_speed.set_size_request(90, -1)
         mval = gsettings_get("org.gnome.desktop.peripherals.mouse", "speed", 0.0)
         m_speed.set_value(float(mval) if isinstance(mval, (int, float)) else 0.0)
         m_speed.connect("value-changed", lambda sc: gsettings_set("org.gnome.desktop.peripherals.mouse", "speed", round(sc.get_value(), 2)))
@@ -2267,7 +2276,7 @@ class AuraSettings(Gtk.Application):
         card_repeat = self.card(box, "Key Repeat")
         del_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 150, 1000, 25)
         del_scale.set_draw_value(True)
-        del_scale.set_size_request(240, -1)
+        del_scale.set_size_request(90, -1)
         cur_del = gsettings_get("org.gnome.desktop.peripherals.keyboard", "delay", 500)
         del_scale.set_value(float(cur_del) if isinstance(cur_del, (int, float)) else 500)
         del_scale.connect("value-changed", lambda sc: gsettings_set("org.gnome.desktop.peripherals.keyboard", "delay", int(sc.get_value())))
@@ -2275,7 +2284,7 @@ class AuraSettings(Gtk.Application):
 
         rep_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 10, 100, 5)
         rep_scale.set_draw_value(True)
-        rep_scale.set_size_request(240, -1)
+        rep_scale.set_size_request(90, -1)
         cur_rep = gsettings_get("org.gnome.desktop.peripherals.keyboard", "repeat-interval", 30)
         rep_scale.set_value(float(cur_rep) if isinstance(cur_rep, (int, float)) else 30)
         rep_scale.connect("value-changed", lambda sc: gsettings_set("org.gnome.desktop.peripherals.keyboard", "repeat-interval", int(sc.get_value())))
@@ -2510,12 +2519,12 @@ class AuraSettings(Gtk.Application):
             sc = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.20, 1.0, 0.05)
             sc.set_digits(2)
             sc.set_draw_value(False)
-            sc.set_size_request(160, -1)
+            sc.set_size_request(80, -1)
             sc.set_value(float(cur_op))
 
             pct_lbl = Gtk.Label(label=f"{int(round(float(cur_op) * 100))}%")
             pct_lbl.add_css_class("mono")
-            pct_lbl.set_size_request(45, -1)
+            pct_lbl.set_size_request(38, -1)
             pct_lbl.set_xalign(1.0)
 
             btn_reset = Gtk.Button(label="Default")
@@ -2593,12 +2602,12 @@ class AuraSettings(Gtk.Application):
             sc = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.20, 1.0, 0.05)
             sc.set_digits(2)
             sc.set_draw_value(False)
-            sc.set_size_request(160, -1)
+            sc.set_size_request(80, -1)
             sc.set_value(float(saved_op))
 
             pct_lbl = Gtk.Label(label=f"{int(round(float(saved_op) * 100))}%")
             pct_lbl.add_css_class("mono")
-            pct_lbl.set_size_request(45, -1)
+            pct_lbl.set_size_request(38, -1)
             pct_lbl.set_xalign(1.0)
 
             btn_reset = Gtk.Button(label="Remove")
@@ -2780,8 +2789,7 @@ class AuraSettings(Gtk.Application):
             self.add_row(card_feel, title, subtitle, self.scale("physics", key, lo, hi, step, digits))
 
         card_live = self.card(box, "Live Touchpad Telemetry")
-        status = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
-        status.set_size_request(320, -1)
+        status = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
 
         self.fingers_label = Gtk.Label(label="Fingers: —")
         self.fingers_label.add_css_class("mono")
@@ -2873,6 +2881,8 @@ class AuraSettings(Gtk.Application):
         for slbl, sval, sic, sbadge in sys_rows:
             vl = Gtk.Label(label=sval)
             vl.add_css_class("subtitle")
+            vl.set_ellipsize(Pango.EllipsizeMode.END)
+            vl.set_max_width_chars(28)
             self.add_row(card_sys, slbl, None, vl, icon_name=sic, badge_class=sbadge)
 
         # Configuration Card
@@ -2881,17 +2891,20 @@ class AuraSettings(Gtk.Application):
         path.add_css_class("mono")
         path.set_selectable(True)
 
-        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        save = Gtk.Button(label="Save Configuration")
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        save = Gtk.Button(label="Save")
+        save.set_tooltip_text("Save Configuration")
         save.add_css_class("btn-primary")
         save.connect("clicked", lambda *_: self.save_now())
         buttons.append(save)
 
-        folder = Gtk.Button(label="Open Config Folder")
+        folder = Gtk.Button(label="Folder")
+        folder.set_tooltip_text("Open Config Folder")
         folder.connect("clicked", self.on_open_folder)
         buttons.append(folder)
 
-        reset = Gtk.Button(label="Reset to Defaults")
+        reset = Gtk.Button(label="Defaults")
+        reset.set_tooltip_text("Reset to Defaults")
         reset.add_css_class("btn-destructive")
         reset.connect("clicked", self.on_reset)
         buttons.append(reset)
