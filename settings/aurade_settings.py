@@ -696,7 +696,8 @@ class AuraSettings(Gtk.Application):
         header.set_title_widget(self.header_title_lbl)
 
         # Quick Aura Connect launcher in HeaderBar
-        connect_btn = Gtk.Button(label="Aura Connect…")
+        connect_btn = Gtk.Button(label="Connect")
+        connect_btn.set_tooltip_text("Open Aura Connect")
         connect_btn.add_css_class("header-btn")
         connect_btn.set_valign(Gtk.Align.CENTER)
         connect_btn.connect(
@@ -728,6 +729,8 @@ class AuraSettings(Gtk.Application):
         self.stack = Gtk.Stack()
         self.stack.set_hexpand(True)
         self.stack.set_vexpand(True)
+        self.stack.set_hhomogeneous(False)
+        self.stack.set_vhomogeneous(False)
         self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self.stack.set_transition_duration(150)
 
@@ -776,6 +779,7 @@ class AuraSettings(Gtk.Application):
         sw = Gtk.ScrolledWindow()
         sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         sw.set_propagate_natural_width(False)
+        sw.set_min_content_width(100)
         sw.set_child(child)
         return sw
 
@@ -841,6 +845,7 @@ class AuraSettings(Gtk.Application):
             text = Gtk.Label(label=label, xalign=0)
             text.set_hexpand(True)
             text.set_valign(Gtk.Align.CENTER)
+            text.set_ellipsize(Pango.EllipsizeMode.END)
             rbox.append(text)
 
             row.set_child(rbox)
@@ -864,6 +869,7 @@ class AuraSettings(Gtk.Application):
         f_lbl = Gtk.Label(label="AuraDE Wayland Compositor", xalign=0)
         f_lbl.add_css_class("profile-sub")
         f_lbl.set_hexpand(True)
+        f_lbl.set_ellipsize(Pango.EllipsizeMode.END)
         footer.append(f_ic)
         footer.append(f_lbl)
         box.append(footer)
@@ -905,6 +911,8 @@ class AuraSettings(Gtk.Application):
         if title:
             lbl = Gtk.Label(label=title.upper(), xalign=0)
             lbl.add_css_class("section")
+            lbl.set_wrap(True)
+            lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
             parent.append(lbl)
         c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         c.add_css_class("card")
@@ -1995,36 +2003,22 @@ class AuraSettings(Gtk.Application):
 
         card_count = self.card(box, "Workspace Count")
 
-        ctrl_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-
         current_count = self.get_workspace_count()
 
         self.ws_spin = Gtk.SpinButton.new_with_range(1, 16, 1)
         self.ws_spin.set_value(current_count)
         self.ws_spin.set_digits(0)
+        self.ws_spin.set_valign(Gtk.Align.CENTER)
         self.ws_spin.connect("value-changed", self.on_ws_spin_changed)
 
-        btn_add = Gtk.Button(label="+")
-        btn_add.set_tooltip_text("Add space")
-        btn_add.add_css_class("btn-primary")
-        btn_add.connect("clicked", lambda _b: self.set_workspace_count(self.get_workspace_count() + 1))
-
-        btn_del = Gtk.Button(label="−")
-        btn_del.set_tooltip_text("Delete space")
-        btn_del.add_css_class("btn-destructive")
-        btn_del.connect("clicked", lambda _b: self.set_workspace_count(self.get_workspace_count() - 1))
-
-        ctrl_box.append(self.ws_spin)
-        ctrl_box.append(btn_add)
-        ctrl_box.append(btn_del)
-
-        self.add_row(card_count, "Number of Spaces", "Choose between 1 and 16 virtual desktops.", ctrl_box)
+        self.add_row(card_count, "Number of Spaces", "Choose between 1 and 16 virtual desktops.", self.ws_spin)
 
         card_visual = self.card(box, "Spaces Overview")
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
         scroll.set_propagate_natural_width(False)
+        scroll.set_min_content_width(100)
         scroll.set_min_content_height(140)
 
         self.ws_cards_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -2309,6 +2303,9 @@ class AuraSettings(Gtk.Application):
         for name, shortcut in shortcuts:
             slbl = Gtk.Label(label=shortcut)
             slbl.add_css_class("mono")
+            slbl.set_wrap(True)
+            slbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            slbl.set_ellipsize(Pango.EllipsizeMode.END)
             self.add_row(card_shortcuts, name, None, slbl, icon_name="input-keyboard-symbolic", badge_class="badge-keyboard")
 
         return box
@@ -2356,13 +2353,17 @@ class AuraSettings(Gtk.Application):
         self.wallpaper_label = Gtk.Label(xalign=0)
         self.wallpaper_label.add_css_class("mono")
         self.wallpaper_label.set_text(self.cfg["appearance"].get("wallpaper_path") or "Built-in dynamic gradient")
+        self.wallpaper_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        self.wallpaper_label.set_max_width_chars(24)
 
         buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        choose = Gtk.Button(label="Choose Image…")
+        choose = Gtk.Button(label="Choose…")
+        choose.set_tooltip_text("Choose a desktop wallpaper image")
         choose.add_css_class("btn-primary")
         choose.connect("clicked", self.on_choose_wallpaper)
         buttons.append(choose)
-        clear = Gtk.Button(label="Use Built-in")
+        clear = Gtk.Button(label="Default")
+        clear.set_tooltip_text("Use built-in dynamic gradient")
         clear.connect("clicked", self.on_clear_wallpaper)
         buttons.append(clear)
 
@@ -2512,6 +2513,10 @@ class AuraSettings(Gtk.Application):
                 status_str = f"{app_id} • {status_str}"
             s = Gtk.Label(label=status_str, xalign=0)
             s.add_css_class("subtitle")
+            s.set_wrap(True)
+            s.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            s.set_ellipsize(Pango.EllipsizeMode.END)
+            s.set_max_width_chars(24)
             label_box.append(s)
             row.append(label_box)
 
@@ -2591,10 +2596,16 @@ class AuraSettings(Gtk.Application):
 
             t = Gtk.Label(label=saved_app.capitalize(), xalign=0)
             t.add_css_class("title")
+            t.set_ellipsize(Pango.EllipsizeMode.END)
+            t.set_max_width_chars(24)
             label_box.append(t)
 
             s = Gtk.Label(label=f"{saved_app} • (Not currently running)", xalign=0)
             s.add_css_class("subtitle")
+            s.set_wrap(True)
+            s.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            s.set_ellipsize(Pango.EllipsizeMode.END)
+            s.set_max_width_chars(24)
             label_box.append(s)
             row.append(label_box)
 
@@ -2791,27 +2802,34 @@ class AuraSettings(Gtk.Application):
             self.add_row(card_feel, title, subtitle, self.scale("physics", key, lo, hi, step, digits))
 
         card_live = self.card(box, "Live Touchpad Telemetry")
-        status = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        t_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        t_box.set_margin_top(10)
+        t_box.set_margin_bottom(10)
+        t_box.set_margin_start(14)
+        t_box.set_margin_end(14)
 
-        self.fingers_label = Gtk.Label(label="Fingers: —")
+        t_sub = Gtk.Label(label="Touch the pad with 3 or 4 fingers to inspect live gesture recognition.", xalign=0)
+        t_sub.add_css_class("subtitle")
+        t_sub.set_wrap(True)
+        t_sub.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        t_box.append(t_sub)
+
+        stat_lbls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.fingers_label = Gtk.Label(label="Fingers: —", xalign=0)
         self.fingers_label.add_css_class("mono")
-        self.gesture_label = Gtk.Label(label="Gesture: —")
+        self.gesture_label = Gtk.Label(label="Gesture: —", xalign=0)
         self.gesture_label.add_css_class("mono")
+        self.gesture_label.set_hexpand(True)
+        stat_lbls.append(self.fingers_label)
+        stat_lbls.append(self.gesture_label)
+        t_box.append(stat_lbls)
+
         self.progress = Gtk.ProgressBar()
         self.progress.set_hexpand(True)
         self.progress.set_valign(Gtk.Align.CENTER)
-        status.append(self.fingers_label)
-        status.append(self.gesture_label)
-        status.append(self.progress)
+        t_box.append(self.progress)
 
-        self.add_row(
-            card_live,
-            "Touchpad Stream",
-            "Touch the pad with 3 or 4 fingers to inspect live gesture recognition.",
-            status,
-            icon_name="utilities-system-monitor-symbolic",
-            badge_class="badge-display",
-        )
+        card_live.append(t_box)
         return box
 
     # =======================================================================
@@ -2836,8 +2854,12 @@ class AuraSettings(Gtk.Application):
         hcol.set_hexpand(True)
         ht = Gtk.Label(label=f"{hostname} • AuraDE Desktop", xalign=0)
         ht.add_css_class("title")
+        ht.set_wrap(True)
+        ht.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         hs = Gtk.Label(label=f"Arch Linux  •  Wayland Native Compositor  •  Kernel {kernel}", xalign=0)
         hs.add_css_class("subtitle")
+        hs.set_wrap(True)
+        hs.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         hcol.append(ht)
         hcol.append(hs)
         hero.append(hcol)
@@ -2892,6 +2914,8 @@ class AuraSettings(Gtk.Application):
         path = Gtk.Label(label=CONFIG_PATH)
         path.add_css_class("mono")
         path.set_selectable(True)
+        path.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        path.set_max_width_chars(24)
 
         buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         save = Gtk.Button(label="Save")
