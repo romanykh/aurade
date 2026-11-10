@@ -61,7 +61,6 @@ typedef struct {
     double pad_x, pad_top, pad_bottom;
     double label_gap, label_h;
     double plus_cx, plus_cy, plus_r;
-    double minus_cx, minus_cy, minus_r;
 } mc_bar_geom_t;
 
 static void mc_compute_bar_geom(const aurade_mission_control_t *mc, mc_bar_geom_t *g, double p) {
@@ -82,7 +81,7 @@ static void mc_compute_bar_geom(const aurade_mission_control_t *mc, mc_bar_geom_
     double thumb_h = 76.0;
     double thumb_w = round(thumb_h / aspect);
 
-    double max_avail_w = (double)screen_w - 180.0;
+    double max_avail_w = (double)screen_w - 120.0;
     if (thumb_w * num_ws + gap * (num_ws - 1) > max_avail_w) {
         thumb_w = (max_avail_w - gap * (num_ws - 1)) / (double)num_ws;
         if (thumb_w < 60.0) thumb_w = 60.0;
@@ -106,10 +105,6 @@ static void mc_compute_bar_geom(const aurade_mission_control_t *mc, mc_bar_geom_
     g->plus_cx = (double)screen_w - 38.0;
     g->plus_cy = pad_top + thumb_h / 2.0;
     g->plus_r = 16.0;
-
-    g->minus_cx = (double)screen_w - 76.0;
-    g->minus_cy = pad_top + thumb_h / 2.0;
-    g->minus_r = 16.0;
 }
 
 /*
@@ -498,7 +493,13 @@ aurade_mission_control_t *mission_control_create(aurade_server_t *server) {
     mc->scene_buffer = wlr_scene_buffer_create(server->overlay_tree, &mc->buffer->base);
     wlr_scene_node_set_enabled(&mc->scene_buffer->node, false);
     mc->hovered_ws_close = -1;
-    mc->hovered_minus = false;
+    mc->hovered_plus = false;
+    mc->is_dragging_ws = false;
+    mc->ws_drag_candidate = -1;
+    mc->ws_close_candidate = -1;
+    mc->plus_candidate = false;
+    mc->drag_ws = -1;
+    mc->ws_drag_target = -1;
 
     return mc;
 }
@@ -552,11 +553,18 @@ void mission_control_begin(aurade_mission_control_t *mc) {
     mc->hovered_workspace = -1;
     mc->hovered_ws_close = -1;
     mc->hovered_plus = false;
-    mc->hovered_minus = false;
     mc->mouse_pressed = false;
     mc->is_dragging = false;
     mc->dragged_view = NULL;
     mc->drag_target_workspace = -1;
+    mc->is_dragging_ws = false;
+    mc->ws_drag_candidate = -1;
+    mc->ws_close_candidate = -1;
+    mc->plus_candidate = false;
+    mc->drag_ws = -1;
+    mc->ws_drag_target = -1;
+    mc->ws_drag_start_x = mc->ws_drag_start_y = 0.0;
+    mc->ws_drag_current_x = mc->ws_drag_current_y = 0.0;
     mc->spaces_bar_dirty = true;
     mc->ws_animating = false;
     mc->ws_gesture_active = false;
@@ -680,6 +688,12 @@ void mission_control_end(aurade_mission_control_t *mc, bool opened) {
             mc->is_dragging = false;
             mc->dragged_view = NULL;
         }
+        mc->is_dragging_ws = false;
+        mc->drag_ws = -1;
+        mc->ws_drag_candidate = -1;
+        mc->ws_drag_target = -1;
+        mc->ws_close_candidate = -1;
+        mc->plus_candidate = false;
         if (mc->server && mc->server->topbar) {
             if (mc->server->topbar->scene_buffer) {
                 wlr_scene_node_set_enabled(&mc->server->topbar->scene_buffer->node, true);
@@ -713,6 +727,10 @@ bool mission_control_handle_press(aurade_mission_control_t *mc, double x, double
     mc->is_dragging = false;
     mc->dragged_view = NULL;
     mc->drag_target_workspace = -1;
+    mc->is_dragging_ws = false;
+    mc->ws_drag_candidate = -1;
+    mc->ws_close_candidate = -1;
+    mc->plus_candidate = false;
     mc->drag_start_x = x;
     mc->drag_start_y = y;
 
@@ -749,6 +767,43 @@ bool mission_control_handle_press(aurade_mission_control_t *mc, double x, double
     mc_bar_geom_t bar;
     mc_compute_bar_geom(mc, &bar, 1.0);
     if (y >= bar.bar_y && y <= bar.bar_y + bar.bar_h) {
+        int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
+
+        // Plus button: add desktop
+        if (hypot(x - bar.plus_cx, y - (bar.bar_y + bar.plus_cy)) <= bar.plus_r + 6.0) {
+            mc->plus_candidate = true;
+            return true;
+        }
+
+        // Workspace close button '✕' candidate
+        if (num_ws > 1) {
+            for (int i = 0; i < num_ws; i++) {
+                double sx = bar.pad_x + i * (bar.thumb_w + bar.gap);
+                double sy = bar.bar_y + bar.pad_top;
+                if (hypot(x - (sx + 12.0), y - (sy + 12.0)) <= 14.0) {
+                    mc->ws_close_candidate = i;
+                    return true;
+                }
+            }
+        }
+
+        // Workspace thumbnail (drag candidate or click candidate)
+        for (int i = 0; i < num_ws; i++) {
+            double sx = bar.pad_x + i * (bar.thumb_w + bar.gap);
+            double sy = bar.bar_y + bar.pad_top;
+            if (x >= sx - 4.0 && x <= sx + bar.thumb_w + 4.0 &&
+                y >= sy - 4.0 && y <= sy + bar.thumb_h + bar.label_gap + bar.label_h + 6.0) {
+                mc->ws_drag_candidate = i;
+                mc->ws_drag_start_x = x;
+                mc->ws_drag_start_y = y;
+                mc->ws_drag_current_x = x;
+                mc->ws_drag_current_y = y;
+                mc->is_dragging_ws = false;
+                mc->drag_ws = i;
+                mc->ws_drag_target = i;
+                return true;
+            }
+        }
         return true;
     }
 
@@ -760,6 +815,7 @@ void mission_control_handle_motion(aurade_mission_control_t *mc, double x, doubl
 
     double ep = mc_ease_out_cubic(mc->progress);
 
+    // Dragging a window slot
     if (mc->mouse_pressed && mc->dragged_view) {
         if (!mc->is_dragging && hypot(x - mc->drag_start_x, y - mc->drag_start_y) > 6.0) {
             mc->is_dragging = true;
@@ -798,15 +854,42 @@ void mission_control_handle_motion(aurade_mission_control_t *mc, double x, doubl
         }
     }
 
+    // Dragging a desktop thumbnail in Spaces bar
+    if (mc->mouse_pressed && mc->ws_drag_candidate >= 0) {
+        if (!mc->is_dragging_ws && hypot(x - mc->ws_drag_start_x, y - mc->ws_drag_start_y) > 6.0) {
+            mc->is_dragging_ws = true;
+            mc->drag_ws = mc->ws_drag_candidate;
+        }
+
+        if (mc->is_dragging_ws) {
+            mc->ws_drag_current_x = x;
+            mc->ws_drag_current_y = y;
+            mc_bar_geom_t bar;
+            mc_compute_bar_geom(mc, &bar, 1.0);
+            int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
+
+            double step = bar.thumb_w + bar.gap;
+            int target = (int)round((x - bar.pad_x - bar.thumb_w / 2.0) / step);
+            if (target < 0) target = 0;
+            if (target >= num_ws) target = num_ws - 1;
+
+            if (target != mc->ws_drag_target) {
+                mc->ws_drag_target = target;
+            }
+            mc->spaces_bar_dirty = true;
+            mission_control_render(mc);
+            schedule_all_outputs(mc->server);
+            return;
+        }
+    }
+
     int prev_ws_hover = mc->hovered_workspace;
     int prev_ws_close = mc->hovered_ws_close;
     bool prev_hover_plus = mc->hovered_plus;
-    bool prev_hover_minus = mc->hovered_minus;
 
     mc->hovered_workspace = -1;
     mc->hovered_ws_close = -1;
     mc->hovered_plus = false;
-    mc->hovered_minus = false;
 
     mc_bar_geom_t bar;
     mc_compute_bar_geom(mc, &bar, 1.0);
@@ -815,18 +898,17 @@ void mission_control_handle_motion(aurade_mission_control_t *mc, double x, doubl
     if (y >= bar.bar_y && y <= bar.bar_y + bar.bar_h) {
         if (hypot(x - bar.plus_cx, y - (bar.bar_y + bar.plus_cy)) <= bar.plus_r + 6.0) {
             mc->hovered_plus = true;
-        } else if (num_ws > 1 && hypot(x - bar.minus_cx, y - (bar.bar_y + bar.minus_cy)) <= bar.minus_r + 6.0) {
-            mc->hovered_minus = true;
         } else {
             for (int i = 0; i < num_ws; i++) {
                 double sx = bar.pad_x + i * (bar.thumb_w + bar.gap);
                 double sy = bar.bar_y + bar.pad_top;
-                if (num_ws > 1 && hypot(x - (sx + 12.0), y - (sy + 12.0)) <= 12.0) {
+                if (num_ws > 1 && hypot(x - (sx + 12.0), y - (sy + 12.0)) <= 14.0) {
                     mc->hovered_ws_close = i;
                     mc->hovered_workspace = i;
                     break;
                 }
-                if (x >= sx - 4.0 && x <= sx + bar.thumb_w + 4.0) {
+                if (x >= sx - 4.0 && x <= sx + bar.thumb_w + 4.0 &&
+                    y >= sy - 4.0 && y <= sy + bar.thumb_h + bar.label_gap + bar.label_h + 6.0) {
                     mc->hovered_workspace = i;
                     break;
                 }
@@ -858,16 +940,14 @@ void mission_control_handle_motion(aurade_mission_control_t *mc, double x, doubl
 
     if (mc->hovered_workspace != prev_ws_hover ||
         mc->hovered_ws_close != prev_ws_close ||
-        mc->hovered_plus != prev_hover_plus ||
-        mc->hovered_minus != prev_hover_minus) {
+        mc->hovered_plus != prev_hover_plus) {
         mc->spaces_bar_dirty = true;
     }
     if (mc->hovered_view != prev_hover ||
         mc->hovered_close_view != prev_close ||
         mc->hovered_workspace != prev_ws_hover ||
         mc->hovered_ws_close != prev_ws_close ||
-        mc->hovered_plus != prev_hover_plus ||
-        mc->hovered_minus != prev_hover_minus) {
+        mc->hovered_plus != prev_hover_plus) {
         mission_control_render(mc);
         schedule_all_outputs(mc->server);
     }
@@ -889,6 +969,7 @@ bool mission_control_handle_release(aurade_mission_control_t *mc, double x, doub
 
     double ep = mc_ease_out_cubic(mc->progress);
 
+    // A. Dragging window slot release
     if (was_dragging && dragged) {
         if (target_ws >= 0 && target_ws != dragged->workspace) {
             int old_ws = dragged->workspace;
@@ -933,7 +1014,30 @@ bool mission_control_handle_release(aurade_mission_control_t *mc, double x, doub
         }
     }
 
-    // 1. Close button click (only when close button was hovered)
+    // B. Dragging desktop thumbnail release (reorder desktops)
+    if (mc->is_dragging_ws) {
+        int from_ws = mc->drag_ws;
+        int to_ws = mc->ws_drag_target;
+        int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
+
+        mc->is_dragging_ws = false;
+        mc->ws_drag_candidate = -1;
+        mc->drag_ws = -1;
+        mc->ws_drag_target = -1;
+
+        if (from_ws != to_ws && from_ws >= 0 && to_ws >= 0 && from_ws < num_ws && to_ws < num_ws) {
+            server_reorder_workspace(mc->server, from_ws, to_ws);
+            mc_collect_workspace_slots(mc);
+            mc_apply_slots_scene_state(mc, ep);
+        }
+
+        mc->spaces_bar_dirty = true;
+        mission_control_render(mc);
+        schedule_all_outputs(mc->server);
+        return true;
+    }
+
+    // 1. Close button click on window slot (only when close button was hovered)
     for (int i = 0; i < mc->slot_count; i++) {
         aurade_view_t *view = mc->slots[i].view;
         if (!view || view != mc->hovered_view) continue;
@@ -960,13 +1064,37 @@ bool mission_control_handle_release(aurade_mission_control_t *mc, double x, doub
         }
     }
 
-    // 2. Spaces bar click (plus button, minus button, workspace close button, or workspace thumbnail)
-    mc_bar_geom_t bar;
-    mc_compute_bar_geom(mc, &bar, 1.0);
-    if (y >= bar.bar_y && y <= bar.bar_y + bar.bar_h) {
+    // 2. Spaces bar click (desktop close button, plus button, or desktop thumbnail switch)
+    if (mc->ws_close_candidate >= 0) {
+        int close_idx = mc->ws_close_candidate;
+        mc->ws_close_candidate = -1;
+        mc->ws_drag_candidate = -1;
+        mc->plus_candidate = false;
         int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
+        mc_bar_geom_t bar;
+        mc_compute_bar_geom(mc, &bar, 1.0);
+        double sx = bar.pad_x + close_idx * (bar.thumb_w + bar.gap);
+        double sy = bar.bar_y + bar.pad_top;
+        if (hypot(x - (sx + 12.0), y - (sy + 12.0)) <= 16.0 && num_ws > 1) {
+            server_delete_workspace(mc->server, close_idx);
+            mc->hovered_workspace = -1;
+            mc->hovered_ws_close = -1;
+            mc->spaces_bar_dirty = true;
+            mc_collect_workspace_slots(mc);
+            mc_apply_slots_scene_state(mc, ep);
+            mission_control_render(mc);
+            schedule_all_outputs(mc->server);
+            return true;
+        }
+    }
 
-        // Plus button: add desktop
+    if (mc->plus_candidate) {
+        mc->plus_candidate = false;
+        mc->ws_drag_candidate = -1;
+        mc->ws_close_candidate = -1;
+        mc_bar_geom_t bar;
+        mc_compute_bar_geom(mc, &bar, 1.0);
+        int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
         if (hypot(x - bar.plus_cx, y - (bar.bar_y + bar.plus_cy)) <= bar.plus_r + 6.0) {
             if (num_ws < MAX_WORKSPACES) {
                 server_set_num_workspaces(mc->server, num_ws + 1);
@@ -978,50 +1106,21 @@ bool mission_control_handle_release(aurade_mission_control_t *mc, double x, doub
             }
             return true;
         }
+    }
 
-        // Minus button: delete last desktop
-        if (num_ws > 1 && hypot(x - bar.minus_cx, y - (bar.bar_y + bar.minus_cy)) <= bar.minus_r + 6.0) {
-            server_delete_workspace(mc->server, num_ws - 1);
-            mc->hovered_workspace = -1;
-            mc->hovered_ws_close = -1;
-            mc->spaces_bar_dirty = true;
-            mc_collect_workspace_slots(mc);
-            mc_apply_slots_scene_state(mc, ep);
-            mission_control_render(mc);
-            schedule_all_outputs(mc->server);
+    if (mc->ws_drag_candidate >= 0) {
+        int clicked_ws = mc->ws_drag_candidate;
+        mc->ws_drag_candidate = -1;
+        mc->ws_close_candidate = -1;
+        mc->plus_candidate = false;
+        int num_ws = mc->server->num_workspaces > 0 ? mc->server->num_workspaces : DEFAULT_WORKSPACES;
+        if (clicked_ws >= 0 && clicked_ws < num_ws) {
+            if (clicked_ws != mc->server->current_workspace) {
+                mission_control_switch_workspace(mc, clicked_ws);
+            } else {
+                server_close_overlay(mc->server);
+            }
             return true;
-        }
-
-        // Workspace close button '✕' on thumbnail
-        if (num_ws > 1) {
-            for (int i = 0; i < num_ws; i++) {
-                double sx = bar.pad_x + i * (bar.thumb_w + bar.gap);
-                double sy = bar.bar_y + bar.pad_top;
-                if (hypot(x - (sx + 12.0), y - (sy + 12.0)) <= 14.0) {
-                    server_delete_workspace(mc->server, i);
-                    mc->hovered_workspace = -1;
-                    mc->hovered_ws_close = -1;
-                    mc->spaces_bar_dirty = true;
-                    mc_collect_workspace_slots(mc);
-                    mc_apply_slots_scene_state(mc, ep);
-                    mission_control_render(mc);
-                    schedule_all_outputs(mc->server);
-                    return true;
-                }
-            }
-        }
-
-        // Workspace thumbnail click: switch or close overlay
-        for (int i = 0; i < num_ws; i++) {
-            double sx = bar.pad_x + i * (bar.thumb_w + bar.gap);
-            if (x >= sx - 4.0 && x <= sx + bar.thumb_w + 4.0) {
-                if (i != mc->server->current_workspace) {
-                    mission_control_switch_workspace(mc, i);
-                } else {
-                    server_close_overlay(mc->server);
-                }
-                return true;
-            }
         }
     }
 
@@ -1415,7 +1514,30 @@ static void mc_render_spaces_bar_surface(aurade_mission_control_t *mc) {
         double sy = bar.pad_top;
         bool is_active = (i == mc->server->current_workspace);
         bool is_drag_target = (mc->is_dragging && mc->drag_target_workspace == i);
-        bool is_hover = (mc->hovered_workspace == i && !is_active && !is_drag_target);
+        bool is_ws_hover = (mc->hovered_workspace == i && !is_drag_target);
+        bool is_reorder_source = (mc->is_dragging_ws && mc->drag_ws == i);
+        bool is_reorder_target = (mc->is_dragging_ws && mc->ws_drag_target == i);
+
+        if (is_reorder_source) {
+            // Draw placeholder ghost slot where the desktop was dragged from
+            draw_rounded_rect(cr, sx, sy, bar.thumb_w, bar.thumb_h, 5.0);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.06);
+            cairo_fill_preserve(cr);
+            static const double dashes[] = {4.0, 4.0};
+            cairo_set_dash(cr, dashes, 2, 0);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.28);
+            cairo_set_line_width(cr, 1.2);
+            cairo_stroke(cr);
+            cairo_set_dash(cr, NULL, 0, 0);
+
+            char label[32];
+            snprintf(label, sizeof(label), "Desktop %d", i + 1);
+            double label_cx = sx + bar.thumb_w / 2.0;
+            double label_cy = sy + bar.thumb_h + bar.label_gap + bar.label_h / 2.0;
+            draw_text(cr, label, MC_FONT, 11.5, false, 0.6, 0.62, 0.68, 0.40,
+                      label_cx, label_cy, true, true);
+            continue;
+        }
 
         // Thumbnail shadow
         draw_rounded_rect(cr, sx, sy + 1.0, bar.thumb_w, bar.thumb_h, 5.0);
@@ -1429,8 +1551,8 @@ static void mc_render_spaces_bar_surface(aurade_mission_control_t *mc) {
 
         mc_paint_wallpaper_thumb(cr, mc, sx, sy, bar.thumb_w, bar.thumb_h, 0.95);
 
-        if (!is_active && !is_drag_target) {
-            cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, is_hover ? 0.10 : 0.22);
+        if (!is_active && !is_drag_target && !is_reorder_target) {
+            cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, is_ws_hover ? 0.08 : 0.22);
             cairo_paint(cr);
         }
 
@@ -1438,18 +1560,24 @@ static void mc_render_spaces_bar_surface(aurade_mission_control_t *mc) {
         cairo_restore(cr);
 
         // Thumbnail border
-        if (is_drag_target) {
+        if (is_reorder_target) {
+            // Bright drop target border
+            cairo_set_source_rgba(cr, 0.18, 0.78, 1.0, 1.0);
+            cairo_set_line_width(cr, 3.0);
+            draw_rounded_rect(cr, sx - 1.0, sy - 1.0, bar.thumb_w + 2.0, bar.thumb_h + 2.0, 6.0);
+            cairo_stroke(cr);
+        } else if (is_drag_target) {
             cairo_set_source_rgba(cr, 0.18, 0.78, 1.0, 1.0);
             cairo_set_line_width(cr, 3.0);
             draw_rounded_rect(cr, sx - 1.0, sy - 1.0, bar.thumb_w + 2.0, bar.thumb_h + 2.0, 6.0);
             cairo_stroke(cr);
         } else if (is_active) {
-            // Bright blue highlight on active desktop (matches reference screenshot)
+            // Bright blue highlight on active desktop
             cairo_set_source_rgba(cr, 0.0, 0.48, 1.0, 1.0);
             cairo_set_line_width(cr, 2.5);
             draw_rounded_rect(cr, sx - 1.0, sy - 1.0, bar.thumb_w + 2.0, bar.thumb_h + 2.0, 6.0);
             cairo_stroke(cr);
-        } else if (is_hover) {
+        } else if (is_ws_hover) {
             cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.50);
             cairo_set_line_width(cr, 1.5);
             draw_rounded_rect(cr, sx - 0.5, sy - 0.5, bar.thumb_w + 1.0, bar.thumb_h + 1.0, 5.5);
@@ -1461,29 +1589,37 @@ static void mc_render_spaces_bar_surface(aurade_mission_control_t *mc) {
             cairo_stroke(cr);
         }
 
-        // Desktop close button '✕' (only if num_ws > 1 and hovering this workspace)
-        if (num_ws > 1 && (is_hover || mc->hovered_ws_close == i)) {
+        // Desktop close button '✕' (only if num_ws > 1, not dragging, and hovering this workspace)
+        if (num_ws > 1 && !mc->is_dragging_ws && (is_ws_hover || mc->hovered_ws_close == i)) {
             double btn_x = sx + 12.0;
             double btn_y = sy + 12.0;
-            double btn_r = 8.5;
+            double btn_r = 9.0;
             bool is_close_hover = (mc->hovered_ws_close == i);
 
             cairo_save(cr);
+            // Shadow
+            cairo_new_path(cr);
+            cairo_arc(cr, btn_x, btn_y + 1.0, btn_r, 0, 2 * M_PI);
+            cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.40);
+            cairo_fill(cr);
+
+            // Circle background
             cairo_new_path(cr);
             cairo_arc(cr, btn_x, btn_y, btn_r, 0, 2 * M_PI);
             if (is_close_hover) {
-                cairo_set_source_rgba(cr, 0.95, 0.26, 0.21, 0.95);
+                cairo_set_source_rgba(cr, 0.95, 0.24, 0.20, 0.98);
             } else {
-                cairo_set_source_rgba(cr, 0.10, 0.12, 0.16, 0.82);
+                cairo_set_source_rgba(cr, 0.12, 0.14, 0.18, 0.88);
             }
             cairo_fill_preserve(cr);
-            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, is_close_hover ? 0.50 : 0.25);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, is_close_hover ? 0.60 : 0.35);
             cairo_set_line_width(cr, 1.0);
             cairo_stroke(cr);
 
+            // Cross
             double carm = 3.2;
-            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, is_close_hover ? 1.0 : 0.85);
-            cairo_set_line_width(cr, 1.4);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 1.0);
+            cairo_set_line_width(cr, 1.5);
             cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
             cairo_new_path(cr);
             cairo_move_to(cr, btn_x - carm, btn_y - carm);
@@ -1494,7 +1630,7 @@ static void mc_render_spaces_bar_surface(aurade_mission_control_t *mc) {
             cairo_restore(cr);
         }
 
-        // Clean text label underneath: "Desktop %d" (no bulky pill)
+        // Clean text label underneath: "Desktop %d"
         char label[32];
         if (is_drag_target) {
             snprintf(label, sizeof(label), "Drop to Move");
@@ -1511,13 +1647,54 @@ static void mc_render_spaces_bar_surface(aurade_mission_control_t *mc) {
         if (is_active) {
             draw_text(cr, label, MC_FONT, 11.5, true, 1.0, 1.0, 1.0, 0.98,
                       label_cx, label_cy, true, true);
-        } else if (is_hover) {
+        } else if (is_ws_hover) {
             draw_text(cr, label, MC_FONT, 11.5, false, 0.95, 0.96, 1.0, 0.95,
                       label_cx, label_cy, true, true);
         } else {
             draw_text(cr, label, MC_FONT, 11.5, false, 0.82, 0.84, 0.88, 0.75,
                       label_cx, label_cy, true, true);
         }
+    }
+
+    // Floating dragged desktop thumbnail card
+    if (mc->is_dragging_ws && mc->drag_ws >= 0 && mc->drag_ws < num_ws) {
+        double drag_dx = mc->ws_drag_current_x - mc->ws_drag_start_x;
+        double orig_sx = bar.pad_x + mc->drag_ws * (bar.thumb_w + bar.gap);
+        double drag_sx = orig_sx + drag_dx;
+        double min_sx = bar.pad_x - bar.thumb_w * 0.4;
+        double max_sx = bar.pad_x + (num_ws - 1) * (bar.thumb_w + bar.gap) + bar.thumb_w * 0.4;
+        if (drag_sx < min_sx) drag_sx = min_sx;
+        if (drag_sx > max_sx) drag_sx = max_sx;
+        double drag_sy = bar.pad_top - 4.0;
+
+        // Elevated drop shadow
+        draw_rounded_rect(cr, drag_sx, drag_sy + 4.0, bar.thumb_w, bar.thumb_h, 6.0);
+        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.55);
+        cairo_fill(cr);
+
+        // Thumbnail preview
+        cairo_save(cr);
+        draw_rounded_rect(cr, drag_sx, drag_sy, bar.thumb_w, bar.thumb_h, 5.0);
+        cairo_clip(cr);
+        mc_paint_wallpaper_thumb(cr, mc, drag_sx, drag_sy, bar.thumb_w, bar.thumb_h, 1.0);
+        mc_draw_workspace_mini_windows(cr, mc, mc->drag_ws, drag_sx, drag_sy, bar.thumb_w, bar.thumb_h, true, 1.0);
+        cairo_restore(cr);
+
+        // Bright border on dragged card
+        cairo_set_source_rgba(cr, 0.0, 0.48, 1.0, 1.0);
+        cairo_set_line_width(cr, 2.5);
+        draw_rounded_rect(cr, drag_sx - 1.0, drag_sy - 1.0, bar.thumb_w + 2.0, bar.thumb_h + 2.0, 6.0);
+        cairo_stroke(cr);
+
+        // Dragged label
+        char drag_label[32];
+        snprintf(drag_label, sizeof(drag_label), "Desktop %d", mc->drag_ws + 1);
+        double drag_label_cx = drag_sx + bar.thumb_w / 2.0;
+        double drag_label_cy = drag_sy + bar.thumb_h + bar.label_gap + bar.label_h / 2.0;
+        draw_text(cr, drag_label, MC_FONT, 11.5, true, 0.0, 0.0, 0.0, 0.70,
+                  drag_label_cx, drag_label_cy + 1.0, true, true);
+        draw_text(cr, drag_label, MC_FONT, 11.5, true, 1.0, 1.0, 1.0, 0.98,
+                  drag_label_cx, drag_label_cy, true, true);
     }
 
     // Plus (+) button on the right edge
@@ -1532,18 +1709,6 @@ static void mc_render_spaces_bar_surface(aurade_mission_control_t *mc) {
     cairo_move_to(cr, bar.plus_cx, bar.plus_cy - arm);
     cairo_line_to(cr, bar.plus_cx, bar.plus_cy + arm);
     cairo_stroke(cr);
-
-    // Minus (-) button to delete desktop (only shown if num_ws > 1)
-    if (num_ws > 1) {
-        double minus_alpha = mc->hovered_minus ? 0.95 : 0.55;
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, minus_alpha);
-        cairo_set_line_width(cr, 2.0);
-        cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
-        cairo_new_path(cr);
-        cairo_move_to(cr, bar.minus_cx - arm, bar.minus_cy);
-        cairo_line_to(cr, bar.minus_cx + arm, bar.minus_cy);
-        cairo_stroke(cr);
-    }
 
     cairo_destroy(cr);
     mc->spaces_bar_dirty = false;

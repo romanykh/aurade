@@ -107,6 +107,68 @@ void server_delete_workspace(aurade_server_t *server, int ws_to_delete) {
         wlr_scene_node_set_enabled(&server->workspace_trees[old_count - 1]->node, false);
     }
 
+    if (server->config.tiling_enabled) {
+        for (int w = 0; w < server->num_workspaces; w++) {
+            workspace_relayout_tiling(server, w);
+        }
+    }
+
+    server_update_workspace_positions(server);
+    if (server->dock) dock_update_visibility(server->dock);
+}
+
+void server_reorder_workspace(aurade_server_t *server, int from_ws, int to_ws) {
+    if (!server || server->num_workspaces <= 1) return;
+    if (from_ws < 0 || from_ws >= server->num_workspaces) return;
+    if (to_ws < 0 || to_ws >= server->num_workspaces) return;
+    if (from_ws == to_ws) return;
+
+    aurade_view_t *view;
+    wl_list_for_each(view, &server->views, link) {
+        if (from_ws < to_ws) {
+            if (view->workspace == from_ws) {
+                view->workspace = to_ws;
+            } else if (view->workspace > from_ws && view->workspace <= to_ws) {
+                view->workspace--;
+            }
+        } else {
+            if (view->workspace == from_ws) {
+                view->workspace = to_ws;
+            } else if (view->workspace >= to_ws && view->workspace < from_ws) {
+                view->workspace++;
+            }
+        }
+        if (view->scene_tree && server->workspace_trees[view->workspace]) {
+            wlr_scene_node_reparent(&view->scene_tree->node,
+                                    server->workspace_trees[view->workspace]);
+        }
+    }
+
+    if (from_ws < to_ws) {
+        if (server->current_workspace == from_ws) {
+            server->current_workspace = to_ws;
+        } else if (server->current_workspace > from_ws && server->current_workspace <= to_ws) {
+            server->current_workspace--;
+        }
+    } else {
+        if (server->current_workspace == from_ws) {
+            server->current_workspace = to_ws;
+        } else if (server->current_workspace >= to_ws && server->current_workspace < from_ws) {
+            server->current_workspace++;
+        }
+    }
+
+    server->workspace_offset = 0.0;
+    server->workspace_animating = false;
+
+    if (server->config.tiling_enabled) {
+        int min_ws = from_ws < to_ws ? from_ws : to_ws;
+        int max_ws = from_ws > to_ws ? from_ws : to_ws;
+        for (int w = min_ws; w <= max_ws; w++) {
+            workspace_relayout_tiling(server, w);
+        }
+    }
+
     server_update_workspace_positions(server);
     if (server->dock) dock_update_visibility(server->dock);
 }

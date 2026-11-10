@@ -43,7 +43,6 @@ typedef struct aurade_mission_control {
     int hovered_workspace;
     int hovered_ws_close;
     bool hovered_plus;
-    bool hovered_minus;
 
     bool mouse_pressed;
     bool is_dragging;
@@ -52,6 +51,15 @@ typedef struct aurade_mission_control {
     double drag_start_x, drag_start_y;
     double drag_offset_x, drag_offset_y;
     int drag_target_workspace;
+
+    bool is_dragging_ws;
+    int ws_drag_candidate;
+    int ws_close_candidate;
+    bool plus_candidate;
+    int drag_ws;
+    int ws_drag_target;
+    double ws_drag_start_x, ws_drag_start_y;
+    double ws_drag_current_x, ws_drag_current_y;
 
     bool ws_animating;
     bool ws_gesture_active;
