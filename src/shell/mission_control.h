@@ -18,7 +18,42 @@ typedef struct {
     double title_width;
     double badge_w;
     desktop_app_t *app;
+
+    // Relayout reflow animation
+    bool is_relayout;
+    double relayout_progress;
+    double from_x, from_y;
+    double from_scale;
+
+    // Close window animation
+    bool is_closing;
+    double close_progress;
+    double close_start_x, close_start_y;
+    double close_start_scale;
 } mc_window_slot_t;
+
+typedef struct {
+    bool active;
+    aurade_view_t *view;
+    int from_workspace;
+    int to_workspace;
+    double start_x, start_y;
+    double target_x, target_y;
+    double progress;
+} mc_window_drop_anim_t;
+
+typedef enum {
+    WS_BAR_ANIM_NONE = 0,
+    WS_BAR_ANIM_ADD,
+    WS_BAR_ANIM_DELETE,
+} mc_ws_bar_anim_type_t;
+
+typedef struct {
+    bool active;
+    mc_ws_bar_anim_type_t type;
+    int index;
+    double progress;
+} mc_ws_bar_anim_t;
 
 typedef struct aurade_mission_control {
     aurade_server_t *server;
@@ -61,6 +96,9 @@ typedef struct aurade_mission_control {
     double ws_drag_start_x, ws_drag_start_y;
     double ws_drag_current_x, ws_drag_current_y;
 
+    mc_window_drop_anim_t drop_anim;
+    mc_ws_bar_anim_t ws_bar_anim;
+
     bool ws_animating;
     bool ws_gesture_active;
     double ws_gesture_base_offset;
@@ -72,6 +110,7 @@ typedef struct aurade_mission_control {
 
 aurade_mission_control_t *mission_control_create(aurade_server_t *server);
 void mission_control_resize(aurade_mission_control_t *mc, int width, int height);
+bool mission_control_is_animating(const aurade_mission_control_t *mc);
 void mission_control_begin(aurade_mission_control_t *mc);
 void mission_control_update_progress(aurade_mission_control_t *mc, double progress);
 void mission_control_end(aurade_mission_control_t *mc, bool opened);

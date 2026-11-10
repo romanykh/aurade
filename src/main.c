@@ -3202,8 +3202,8 @@ void server_tick_animations(aurade_server_t *server, double dt) {
         launchpad_tick(server->launchpad, dt);
     }
 
-    // Mission Control Workspace Switch Spring Animation
-    if (server->mission_control && server->mission_control->ws_animating) {
+    // Mission Control Animations (workspace switch, drop window, close window, add/delete desktop)
+    if (server->mission_control && mission_control_is_animating(server->mission_control)) {
         mission_control_tick(server->mission_control, dt);
     }
 
