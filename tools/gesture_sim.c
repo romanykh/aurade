@@ -111,7 +111,7 @@ static void harness_init(int screen_w) {
     cfg->swipe_down_3.type = ACTION_MISSION_CONTROL;
     cfg->swipe_left_3.type = ACTION_WORKSPACE_NEXT;
     cfg->swipe_right_3.type = ACTION_WORKSPACE_PREV;
-    cfg->pinch_in_3.type = ACTION_NONE;
+    cfg->pinch_in_3.type = ACTION_LAUNCHPAD;
     cfg->pinch_out_3.type = ACTION_SHOW_DESKTOP;
     cfg->swipe_up_4.type = ACTION_MISSION_CONTROL;
     cfg->swipe_down_4.type = ACTION_MISSION_CONTROL;
@@ -308,6 +308,75 @@ static void test_pinch_in_four(void) {
     g_now_us += 10000;
     syn();
     CHECK(g_ends == 1, "pinch did not end");
+}
+
+/* Four-finger pinch in with realistic centroid drift (~30px vertical motion
+ * caused by thumb/finger asymmetry) must trigger Launchpad, not Mission Control. */
+static void test_pinch_in_with_centroid_drift(void) {
+    harness_init(1920);
+    const int cx = 600, cy = 340;
+    const int dx[4] = {-200, 200, -200, 200};
+    const int dy[4] = {-125, -125, 125, 125};
+
+    for (int i = 0; i < 4; i++) finger_down(i, 55 + i, cx + dx[i], cy + dy[i]);
+    syn();
+    settle(4, 4);
+
+    for (int step = 1; step <= 6; step++) {
+        advance(10000);
+        double k = 1.0 - 0.05 * step;
+        int drift_y = -5 * step; // centroid drifts up by 30px over 6 frames
+        for (int i = 0; i < 4; i++) {
+            int fx = cx + (int)lround(dx[i] * k);
+            int fy = cy + (int)lround(dy[i] * k) + drift_y;
+            finger_move(i, fx, fy);
+        }
+        syn();
+    }
+
+    CHECK(g_begins == 1, "pinch with drift did not start a gesture (%d)", g_begins);
+    CHECK(g_action == ACTION_LAUNCHPAD,
+          "expected launchpad, got %d (likely stolen by mission_control)", (int)g_action);
+    CHECK(g_last_scale < 0.97, "scale did not shrink (%.3f)", g_last_scale);
+
+    for (int i = 0; i < 4; i++) finger_up(i);
+    g_now_us += 10000;
+    syn();
+    CHECK(g_ends == 1, "pinch did not end");
+}
+
+/* Three-finger pinch in opens Launchpad. */
+static void test_pinch_in_three(void) {
+    harness_init(1920);
+    const int cx = 600, cy = 340;
+    const int dx[3] = {-120, 120, 0};
+    const int dy[3] = {-80, -80, 100};
+
+    for (int i = 0; i < 3; i++) finger_down(i, 80 + i, cx + dx[i], cy + dy[i]);
+    syn();
+    settle(3, 4);
+
+    for (int step = 1; step <= 6; step++) {
+        advance(10000);
+        double k = 1.0 - 0.05 * step;
+        int drift_y = -4 * step;
+        for (int i = 0; i < 3; i++) {
+            int fx = cx + (int)lround(dx[i] * k);
+            int fy = cy + (int)lround(dy[i] * k) + drift_y;
+            finger_move(i, fx, fy);
+        }
+        syn();
+    }
+
+    CHECK(g_begins == 1, "three-finger pinch did not start a gesture (%d)", g_begins);
+    CHECK(g_action == ACTION_LAUNCHPAD,
+          "expected launchpad for 3-finger pinch, got %d", (int)g_action);
+    CHECK(g_last_scale < 0.97, "scale did not shrink (%.3f)", g_last_scale);
+
+    for (int i = 0; i < 3; i++) finger_up(i);
+    g_now_us += 10000;
+    syn();
+    CHECK(g_ends == 1, "three-finger pinch did not end");
 }
 
 /* Swipe, pause, lift: the stored velocity is stale and must not fling. */
@@ -543,6 +612,8 @@ int main(void) {
         {"resting jitter is ignored", test_resting_jitter_ignored},
         {"diagonal waits for axis dominance", test_diagonal_waits_for_dominance},
         {"four-finger pinch in -> Launchpad", test_pinch_in_four},
+        {"four-finger pinch with drift -> Launchpad", test_pinch_in_with_centroid_drift},
+        {"three-finger pinch in -> Launchpad", test_pinch_in_three},
         {"splay does not steal a four-finger swipe", test_splay_does_not_steal_swipe},
         {"pause before lift kills the flick", test_pause_before_lift_kills_flick},
         {"lifted finger ends the gesture", test_finger_lift_ends_gesture},

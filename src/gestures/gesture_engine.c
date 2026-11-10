@@ -33,13 +33,13 @@
 // Pinch recognition needs a meaningful initial spread, otherwise the radius
 // ratio is dominated by contact jitter. All values are in reference pixels.
 #define PINCH_MIN_RADIUS_PX 40.0
-#define PINCH_SCALE_THRESHOLD 0.15
-#define PINCH_MIN_RADIUS_DELTA_PX 30.0
+#define PINCH_SCALE_THRESHOLD 0.08
+#define PINCH_MIN_RADIUS_DELTA_PX 16.0
 
 // A pinch must move the fingers apart/together more than the whole hand
-// travels. Without this, the natural splay of a four-finger swipe reads as a
-// pinch and Launchpad opens instead of the workspace switching.
-#define PINCH_DOMINANCE 1.25
+// travels. Centroid drift during natural thumb-finger pinch requires a lower
+// dominance factor than pure symmetric contraction.
+#define PINCH_DOMINANCE 0.65
 
 // Firmware "touch jumps" (this Dell pad reports them) would otherwise teleport
 // the gesture. Clamp a single frame to a physically plausible speed instead of
@@ -228,7 +228,11 @@ static gesture_action_type_t resolve_action(aurade_server_t *server, int fingers
     int family = (fingers == 3) ? 3 : 4;
 
     if (pinch < 0) {
-        return (family == 3) ? cfg->pinch_in_3.type : cfg->pinch_in_4.type;
+        gesture_action_type_t act = (family == 3) ? cfg->pinch_in_3.type : cfg->pinch_in_4.type;
+        if (act == ACTION_NONE && family == 3) {
+            act = ACTION_LAUNCHPAD;
+        }
+        return act;
     } else if (pinch > 0) {
         return (family == 3) ? cfg->pinch_out_3.type : cfg->pinch_out_4.type;
     }
@@ -554,15 +558,23 @@ static void process_multitouch_frame(gesture_engine_t *ge) {
                            radial >= PINCH_MIN_RADIUS_DELTA_PX &&
                            radial >= translation * PINCH_DOMINANCE;
 
+        // When fingers are contracting or expanding, suppress false swipe triggers
+        // caused by natural centroid drift of the hand.
+        bool pinch_intent = ge->start_radius > 0.0 &&
+                            (radial >= 12.0 || fabs(scale - 1.0) >= 0.06) &&
+                            (radial >= translation * 0.40);
+
         int dir_x = 0, dir_y = 0, pinch = 0;
         bool swipe_ready = false;
 
-        if (adx >= ady) {
-            swipe_ready = adx > deadzone && adx > ady * AXIS_DOMINANCE;
-            if (swipe_ready) dir_x = (delta_x > 0) ? 1 : -1;
-        } else {
-            swipe_ready = ady > deadzone && ady > adx * AXIS_DOMINANCE;
-            if (swipe_ready) dir_y = (delta_y > 0) ? 1 : -1;
+        if (!pinch_intent) {
+            if (adx >= ady) {
+                swipe_ready = adx > deadzone && adx > ady * AXIS_DOMINANCE;
+                if (swipe_ready) dir_x = (delta_x > 0) ? 1 : -1;
+            } else {
+                swipe_ready = ady > deadzone && ady > adx * AXIS_DOMINANCE;
+                if (swipe_ready) dir_y = (delta_y > 0) ? 1 : -1;
+            }
         }
 
         if (pinch_ready) {

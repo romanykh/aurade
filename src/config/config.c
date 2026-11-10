@@ -49,7 +49,7 @@ aurade_config_t config_get_defaults(void) {
         .swipe_down_3 = { .type = ACTION_MISSION_CONTROL },
         .swipe_left_3 = { .type = ACTION_WORKSPACE_NEXT },
         .swipe_right_3 = { .type = ACTION_WORKSPACE_PREV },
-        .pinch_in_3 = { .type = ACTION_NONE }, // disabled — Launchpad is 4-finger only
+        .pinch_in_3 = { .type = ACTION_LAUNCHPAD },
         .pinch_out_3 = { .type = ACTION_SHOW_DESKTOP },
 
         // 4-finger gestures

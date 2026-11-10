@@ -41,7 +41,7 @@ DEFAULTS = {
         "swipe_down_3": "app_expose",
         "swipe_left_3": "workspace_next",
         "swipe_right_3": "workspace_prev",
-        "pinch_in_3": "none",
+        "pinch_in_3": "launchpad",
         "pinch_out_3": "show_desktop",
         "swipe_up_4": "mission_control",
         "swipe_down_4": "app_expose",
