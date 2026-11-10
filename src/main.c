@@ -89,6 +89,7 @@ void server_update_blur_config(aurade_server_t *server) {
         aurade_view_t *view_it;
         wl_list_for_each(view_it, &server->views, link) {
             view_update_blur(view_it);
+            view_set_opacity(view_it, 1.0f);
         }
     }
 }
@@ -196,6 +197,7 @@ static int config_inotify_handler(int fd, uint32_t mask, void *data) {
     aurade_view_t *view_it;
     wl_list_for_each(view_it, &server->views, link) {
         view_update_workspace_clip(view_it);
+        view_set_opacity(view_it, 1.0f);
     }
     server_export_running_windows(server);
     server_update_touchpad_settings(server);
