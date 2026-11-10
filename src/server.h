@@ -365,6 +365,7 @@ void server_update_blur_config(aurade_server_t *server);
 void server_close_overlay(aurade_server_t *server);
 void server_lock_screen(aurade_server_t *server);
 void server_unlock_screen(aurade_server_t *server);
+void server_cycle_keyboard_layout(aurade_server_t *server);
 void server_set_pointer_constraint(aurade_server_t *server,
                                   struct wlr_pointer_constraint_v1 *constraint);
 

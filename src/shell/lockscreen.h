@@ -63,6 +63,10 @@ typedef struct aurade_lockscreen {
     double btn_restart_x, btn_restart_y;
     double btn_power_x, btn_power_y;
     int hover_action; // 0=none, 1=sleep, 2=restart, 3=shutdown
+
+    // Top status layout pill geometry
+    double layout_x, layout_y, layout_w, layout_h;
+    bool hover_layout;
 } aurade_lockscreen_t;
 
 aurade_lockscreen_t *lockscreen_create(aurade_server_t *server);

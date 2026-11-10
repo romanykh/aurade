@@ -13,6 +13,27 @@
 
 #define FONT_UI "SF Pro Display, -apple-system, Cantarell, Ubuntu, sans-serif"
 
+static int utf8_codepoint_count(const char *s) {
+    if (!s) return 0;
+    int count = 0;
+    while (*s) {
+        if (((unsigned char)*s & 0xC0) != 0x80) {
+            count++;
+        }
+        s++;
+    }
+    return count;
+}
+
+static void utf8_remove_last_char(char *s, int *len) {
+    if (!s || !len || *len <= 0) return;
+    int l = *len;
+    do {
+        l--;
+    } while (l > 0 && (((unsigned char)s[l]) & 0xC0) == 0x80);
+    s[l] = '\0';
+    *len = l;
+}
 
 static int pam_conv_cb(int num_msg, const struct pam_message **msg,
                        struct pam_response **resp, void *appdata_ptr) {
@@ -341,8 +362,17 @@ void lockscreen_render(aurade_lockscreen_t *ls) {
     double lay_w = pill_tw + 14.0;
     double lay_h = 19.0;
     cur_right -= lay_w;
+    ls->layout_x = cur_right;
+    ls->layout_y = top_y - lay_h / 2.0;
+    ls->layout_w = lay_w;
+    ls->layout_h = lay_h;
+
     draw_rounded_rect(cr, cur_right, top_y - lay_h / 2.0, lay_w, lay_h, 5.0);
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.18 * alpha);
+    if (ls->hover_layout) {
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.30 * alpha);
+    } else {
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.18 * alpha);
+    }
     cairo_fill_preserve(cr);
     cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.28 * alpha);
     cairo_set_line_width(cr, 0.8);
@@ -491,19 +521,20 @@ void lockscreen_render(aurade_lockscreen_t *ls) {
     }
 
     // Password input text / dots
-    if (ls->password_len == 0) {
+    int dot_count = utf8_codepoint_count(ls->password);
+    if (dot_count == 0) {
         draw_text(cr, "Enter Password", FONT_UI, 12.5, false,
                   0.75, 0.78, 0.84, 0.60 * alpha,
                   pill_x + 18.0, pill_y + pill_h / 2.0, false, true);
     } else {
         // Centered masked password dots (●)
         double dot_spacing = 11.0;
-        double total_dots_w = (ls->password_len - 1) * dot_spacing;
+        double total_dots_w = (dot_count - 1) * dot_spacing;
         double start_dot_x = shake_x - total_dots_w / 2.0;
         if (start_dot_x + total_dots_w > btn_cx - 20.0) {
             start_dot_x = btn_cx - 20.0 - total_dots_w;
         }
-        for (int i = 0; i < ls->password_len; i++) {
+        for (int i = 0; i < dot_count; i++) {
             double dx = start_dot_x + i * dot_spacing;
             cairo_arc(cr, dx, pill_y + pill_h / 2.0, 3.2, 0, 2 * M_PI);
             cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.96 * alpha);
@@ -597,11 +628,32 @@ bool lockscreen_handle_key(aurade_lockscreen_t *ls, xkb_keysym_t sym,
     if (!ls || ls->state == LOCKSCREEN_STATE_UNLOCKED) return false;
 
     if (xkb_state) {
-        ls->caps_lock = xkb_state_mod_name_is_active(xkb_state, XKB_MOD_NAME_CAPS,
-                                                     XKB_STATE_MODS_EFFECTIVE) > 0;
+        bool caps = xkb_state_mod_name_is_active(xkb_state, XKB_MOD_NAME_CAPS,
+                                                 XKB_STATE_MODS_EFFECTIVE) > 0;
+        if (caps != ls->caps_lock) {
+            ls->caps_lock = caps;
+            ls->needs_render = true;
+            schedule_all_outputs(ls->server);
+        }
     }
 
     if (!pressed) return true; // Consume key release events unconditionally
+
+    bool ctrl = xkb_state && xkb_state_mod_name_is_active(xkb_state, XKB_MOD_NAME_CTRL,
+                                                          XKB_STATE_MODS_EFFECTIVE) > 0;
+    bool alt = xkb_state && xkb_state_mod_name_is_active(xkb_state, XKB_MOD_NAME_ALT,
+                                                         XKB_STATE_MODS_EFFECTIVE) > 0;
+    bool logo = xkb_state && xkb_state_mod_name_is_active(xkb_state, XKB_MOD_NAME_LOGO,
+                                                          XKB_STATE_MODS_EFFECTIVE) > 0;
+
+    if (ctrl && (sym == XKB_KEY_u || sym == XKB_KEY_U)) {
+        ls->password_len = 0;
+        ls->password[0] = '\0';
+        ls->error_msg[0] = '\0';
+        ls->needs_render = true;
+        schedule_all_outputs(ls->server);
+        return true;
+    }
 
     if (sym == XKB_KEY_Return || sym == XKB_KEY_KP_Enter) {
         if (!ls->authenticating) {
@@ -620,7 +672,7 @@ bool lockscreen_handle_key(aurade_lockscreen_t *ls, xkb_keysym_t sym,
 
     if (sym == XKB_KEY_BackSpace) {
         if (ls->password_len > 0) {
-            ls->password[--ls->password_len] = '\0';
+            utf8_remove_last_char(ls->password, &ls->password_len);
             ls->error_msg[0] = '\0';
             ls->needs_render = true;
             schedule_all_outputs(ls->server);
@@ -637,13 +689,20 @@ bool lockscreen_handle_key(aurade_lockscreen_t *ls, xkb_keysym_t sym,
         return true;
     }
 
+    // Do not append characters if modifiers are pressed (Ctrl, Alt, Super/Logo)
+    if (ctrl || alt || logo) {
+        return true;
+    }
+
     // Convert keysym to UTF-8
     char utf8[16] = {0};
-    int len = xkb_keysym_to_utf8(sym, utf8, sizeof(utf8));
-    if (len > 0 && utf8[0] >= 32 && (unsigned char)utf8[0] != 127) {
-        if (ls->password_len + len < (int)sizeof(ls->password) - 1) {
-            memcpy(ls->password + ls->password_len, utf8, len);
-            ls->password_len += len;
+    int ret = xkb_keysym_to_utf8(sym, utf8, sizeof(utf8));
+    // xkb_keysym_to_utf8 returns size INCLUDING null terminator, so ret > 1 means characters exist
+    if (ret > 1 && (unsigned char)utf8[0] >= 32 && (unsigned char)utf8[0] != 127) {
+        int byte_len = (int)strlen(utf8);
+        if (ls->password_len + byte_len < (int)sizeof(ls->password) - 1) {
+            memcpy(ls->password + ls->password_len, utf8, byte_len);
+            ls->password_len += byte_len;
             ls->password[ls->password_len] = '\0';
             ls->error_msg[0] = '\0';
             ls->needs_render = true;
@@ -659,8 +718,12 @@ void lockscreen_handle_pointer_motion(aurade_lockscreen_t *ls, double x, double 
 
     bool prev_sub = ls->hover_submit;
     int prev_act = ls->hover_action;
+    bool prev_lay = ls->hover_layout;
 
     ls->hover_submit = (hypot(x - ls->submit_x, y - ls->submit_y) <= ls->submit_r + 4.0);
+
+    ls->hover_layout = (x >= ls->layout_x && x <= ls->layout_x + ls->layout_w &&
+                        y >= ls->layout_y && y <= ls->layout_y + ls->layout_h);
 
     ls->hover_action = 0;
     if (hypot(x - ls->btn_sleep_x, y - ls->btn_sleep_y) <= ls->btn_r + 6.0) {
@@ -671,7 +734,7 @@ void lockscreen_handle_pointer_motion(aurade_lockscreen_t *ls, double x, double 
         ls->hover_action = 3;
     }
 
-    if (ls->hover_submit != prev_sub || ls->hover_action != prev_act) {
+    if (ls->hover_submit != prev_sub || ls->hover_action != prev_act || ls->hover_layout != prev_lay) {
         ls->needs_render = true;
         schedule_all_outputs(ls->server);
     }
@@ -683,6 +746,14 @@ bool lockscreen_handle_button(aurade_lockscreen_t *ls, double x, double y,
     (void)button;
 
     if (pressed) {
+        if (x >= ls->layout_x && x <= ls->layout_x + ls->layout_w &&
+            y >= ls->layout_y && y <= ls->layout_y + ls->layout_h) {
+            server_cycle_keyboard_layout(ls->server);
+            ls->needs_render = true;
+            schedule_all_outputs(ls->server);
+            return true;
+        }
+
         if (hypot(x - ls->submit_x, y - ls->submit_y) <= ls->submit_r + 4.0) {
             if (!ls->authenticating && ls->password_len > 0) {
                 lockscreen_start_pam_task(ls);

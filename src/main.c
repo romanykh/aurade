@@ -1918,6 +1918,14 @@ static void keyboard_cycle_layout(aurade_server_t *server, struct wlr_keyboard *
     fprintf(stderr, "[AuraDE] Keyboard layout -> %s\n", name ? name : "?");
 }
 
+void server_cycle_keyboard_layout(aurade_server_t *server) {
+    if (!server || !server->seat) return;
+    struct wlr_keyboard *kbd = server->seat->keyboard_state.keyboard;
+    if (kbd) {
+        keyboard_cycle_layout(server, kbd);
+    }
+}
+
 static void keyboard_handle_key(struct wl_listener *listener, void *data) {
     struct wlr_keyboard_key_event *event = data;
     aurade_keyboard_t *kbd = wl_container_of(listener, kbd, key);
@@ -1956,8 +1964,14 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
                                             XKB_STATE_MODS_EFFECTIVE) > 0;
 
     if (server->lockscreen && lockscreen_is_active(server->lockscreen)) {
-        for (int i = 0; i < nsyms; i++) {
-            lockscreen_handle_key(server->lockscreen, syms[i], keyboard->xkb_state, pressed);
+        if (super && (syms[0] == XKB_KEY_space || (n_base_syms > 0 && base_syms[0] == XKB_KEY_space)) && pressed) {
+            keyboard_cycle_layout(server, keyboard);
+            server->lockscreen->needs_render = true;
+            schedule_all_outputs(server);
+            return;
+        }
+        if (nsyms > 0) {
+            lockscreen_handle_key(server->lockscreen, syms[0], keyboard->xkb_state, pressed);
         }
         return;
     }
