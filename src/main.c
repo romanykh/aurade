@@ -378,16 +378,24 @@ static const char *resize_cursor_name(uint32_t edges) {
     return "default";
 }
 
-static aurade_view_t *server_view_resize_at(aurade_server_t *server, double lx, double ly, uint32_t *out_edges) {
+static aurade_view_t *server_view_resize_at(aurade_server_t *server, double lx, double ly,
+                                            aurade_view_t *view_at_cursor, uint32_t *out_edges) {
     if (!server) return NULL;
-    if (server->focused_view &&
-        server->focused_view->workspace == server->current_workspace &&
-        !server->focused_view->minimized && !server->focused_view->maximized) {
-        aurade_view_t *view = server->focused_view;
-        int vx = view->x, vy = view->y, vw = view->width, vh = view->height;
-        if (vw > 0 && vh > 0 &&
-            lx >= vx - RESIZE_MARGIN_OUT && lx <= vx + vw + RESIZE_MARGIN_OUT &&
-            ly >= vy - RESIZE_MARGIN_OUT && ly <= vy + vh + RESIZE_MARGIN_OUT &&
+
+    // If the cursor is currently over an active window surface, that window is in front
+    // of everything else at (lx, ly). An occluded background window's edges must NEVER be
+    // reachable through a foreground window!
+    if (view_at_cursor) {
+        if (view_at_cursor->workspace != server->current_workspace ||
+            view_at_cursor->minimized || view_at_cursor->maximized) {
+            return NULL;
+        }
+        int vx = view_at_cursor->x, vy = view_at_cursor->y;
+        int vw = view_at_cursor->width, vh = view_at_cursor->height;
+        if (vw <= 0 || vh <= 0) return NULL;
+
+        // Check if within the inner resize margin of view_at_cursor
+        if (lx >= vx && lx <= vx + vw && ly >= vy && ly <= vy + vh &&
             !(lx > vx + RESIZE_MARGIN_IN && lx < vx + vw - RESIZE_MARGIN_IN &&
               ly > vy + RESIZE_MARGIN_IN && ly < vy + vh - RESIZE_MARGIN_IN)) {
             uint32_t edges = 0;
@@ -397,10 +405,36 @@ static aurade_view_t *server_view_resize_at(aurade_server_t *server, double lx, 
             if (ly >= vy + vh - RESIZE_MARGIN_IN) edges |= WLR_EDGE_BOTTOM;
             if (edges != 0) {
                 if (out_edges) *out_edges = edges;
+                return view_at_cursor;
+            }
+        }
+        // Cursor is over view_at_cursor's interior content: no resize!
+        return NULL;
+    }
+
+    // Cursor is not over any window surface (empty space / outer margin).
+    // First priority: focused window's outer margin.
+    if (server->focused_view &&
+        server->focused_view->workspace == server->current_workspace &&
+        !server->focused_view->minimized && !server->focused_view->maximized) {
+        aurade_view_t *view = server->focused_view;
+        int vx = view->x, vy = view->y, vw = view->width, vh = view->height;
+        if (vw > 0 && vh > 0 &&
+            lx >= vx - RESIZE_MARGIN_OUT && lx <= vx + vw + RESIZE_MARGIN_OUT &&
+            ly >= vy - RESIZE_MARGIN_OUT && ly <= vy + vh + RESIZE_MARGIN_OUT) {
+            uint32_t edges = 0;
+            if (lx < vx) edges |= WLR_EDGE_LEFT;
+            if (lx > vx + vw) edges |= WLR_EDGE_RIGHT;
+            if (ly < vy) edges |= WLR_EDGE_TOP;
+            if (ly > vy + vh) edges |= WLR_EDGE_BOTTOM;
+            if (edges != 0) {
+                if (out_edges) *out_edges = edges;
                 return view;
             }
         }
     }
+
+    // Next: any visible window in z-order whose outer margin contains (lx, ly)
     aurade_view_t *view;
     wl_list_for_each(view, &server->views, link) {
         if (view == server->focused_view) continue;
@@ -408,14 +442,12 @@ static aurade_view_t *server_view_resize_at(aurade_server_t *server, double lx, 
         int vx = view->x, vy = view->y, vw = view->width, vh = view->height;
         if (vw <= 0 || vh <= 0) continue;
         if (lx >= vx - RESIZE_MARGIN_OUT && lx <= vx + vw + RESIZE_MARGIN_OUT &&
-            ly >= vy - RESIZE_MARGIN_OUT && ly <= vy + vh + RESIZE_MARGIN_OUT &&
-            !(lx > vx + RESIZE_MARGIN_IN && lx < vx + vw - RESIZE_MARGIN_IN &&
-              ly > vy + RESIZE_MARGIN_IN && ly < vy + vh - RESIZE_MARGIN_IN)) {
+            ly >= vy - RESIZE_MARGIN_OUT && ly <= vy + vh + RESIZE_MARGIN_OUT) {
             uint32_t edges = 0;
-            if (lx <= vx + RESIZE_MARGIN_IN) edges |= WLR_EDGE_LEFT;
-            if (lx >= vx + vw - RESIZE_MARGIN_IN) edges |= WLR_EDGE_RIGHT;
-            if (ly <= vy + RESIZE_MARGIN_IN) edges |= WLR_EDGE_TOP;
-            if (ly >= vy + vh - RESIZE_MARGIN_IN) edges |= WLR_EDGE_BOTTOM;
+            if (lx < vx) edges |= WLR_EDGE_LEFT;
+            if (lx > vx + vw) edges |= WLR_EDGE_RIGHT;
+            if (ly < vy) edges |= WLR_EDGE_TOP;
+            if (ly > vy + vh) edges |= WLR_EDGE_BOTTOM;
             if (edges != 0) {
                 if (out_edges) *out_edges = edges;
                 return view;
@@ -1090,7 +1122,7 @@ static void cursor_motion(struct wl_listener *listener, void *data) {
     // Check resize handles around window edges (unless hovering a popup menu)
     if (!over_popup) {
         uint32_t resize_edges = 0;
-        aurade_view_t *resize_view = server_view_resize_at(server, lx, ly, &resize_edges);
+        aurade_view_t *resize_view = server_view_resize_at(server, lx, ly, view, &resize_edges);
         if (resize_view && resize_edges != 0) {
             wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr,
                                    resize_cursor_name(resize_edges));
@@ -1478,7 +1510,7 @@ static void cursor_button(struct wl_listener *listener, void *data) {
 
     if (left && !over_popup) {
         uint32_t resize_edges = 0;
-        aurade_view_t *resize_view = server_view_resize_at(server, lx, ly, &resize_edges);
+        aurade_view_t *resize_view = server_view_resize_at(server, lx, ly, view, &resize_edges);
         if (resize_view && resize_edges != 0) {
             server_start_resize(server, resize_view, resize_edges, lx, ly);
             server->grab_button = event->button;
