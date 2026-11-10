@@ -12,6 +12,7 @@
 #include "shell/screenshot.h"
 #include "shell/notifications.h"
 #include "shell/music_pill.h"
+#include "shell/lockscreen.h"
 #include "gestures/gesture_engine.h"
 #include <scenefx/render/fx_renderer/fx_renderer.h>
 #include <json-c/json.h>
@@ -244,6 +245,9 @@ static void output_frame(struct wl_listener *listener, void *data) {
     if (server->dock && server->dock->needs_render) {
         dock_render(server->dock);
     }
+    if (server->lockscreen && server->lockscreen->needs_render) {
+        lockscreen_render(server->lockscreen);
+    }
 
     // Ensure views currently scaled (overview / animations) remain properly scaled
     // even if the client or any subsurface committed a buffer during the frame.
@@ -271,8 +275,10 @@ static void output_frame(struct wl_listener *listener, void *data) {
         (server->launchpad->page_animating ||
          server->launchpad->folder_animating ||
          server->launchpad->needs_render);
+    bool lockscreen_animating = server->lockscreen &&
+        (lockscreen_is_animating(server->lockscreen) || server->lockscreen->needs_render);
 
-    if (view_animating || dock_animating || topbar_animating || launchpad_animating ||
+    if (view_animating || dock_animating || topbar_animating || launchpad_animating || lockscreen_animating ||
         server->gesture_animating || server->workspace_animating || server->gesture_in_progress ||
         (server->mission_control && mission_control_is_animating(server->mission_control)) ||
         (server->osd && server->osd->visible) ||
@@ -353,6 +359,7 @@ static void server_new_output(struct wl_listener *listener, void *data) {
     if (server->screenshot) screenshot_resize(server->screenshot, output->width, output->height);
     if (server->osd) osd_resize(server->osd, output->width, output->height);
     if (server->notifications) notifications_resize(server->notifications, output->width, output->height);
+    if (server->lockscreen) lockscreen_resize(server->lockscreen, output->width, output->height);
 }
 
 // Keep edge resizing forgiving: the visible border is only a few pixels and
@@ -826,6 +833,14 @@ static void cursor_motion(struct wl_listener *listener, void *data) {
     double lx = server->cursor->x;
     double ly = server->cursor->y;
 
+    if (server->lockscreen && lockscreen_is_active(server->lockscreen)) {
+        lockscreen_handle_pointer_motion(server->lockscreen, lx, ly);
+        wlr_seat_pointer_clear_focus(server->seat);
+        server_set_pointer_constraint(server, NULL);
+        wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "default");
+        return;
+    }
+
     if (server->screenshot && screenshot_handle_motion(server->screenshot, lx, ly)) {
         return;
     }
@@ -1201,6 +1216,34 @@ void server_close_overlay(aurade_server_t *server) {
     close_overlay(server);
 }
 
+void server_lock_screen(aurade_server_t *server) {
+    if (!server || !server->lockscreen) return;
+    if (lockscreen_is_active(server->lockscreen)) return;
+
+    server_dismiss_popups(server);
+    if (server->topbar) topbar_close_power_menu(server->topbar);
+    if (server->dock && dock_context_menu_is_open(server->dock)) {
+        dock_close_context_menu(server->dock);
+    }
+    close_overlay(server);
+
+    server_set_pointer_constraint(server, NULL);
+    wlr_seat_pointer_clear_focus(server->seat);
+    wlr_seat_keyboard_clear_focus(server->seat);
+
+    lockscreen_show(server->lockscreen);
+    schedule_all_outputs(server);
+}
+
+void server_unlock_screen(aurade_server_t *server) {
+    if (!server || !server->lockscreen) return;
+    lockscreen_unlock(server->lockscreen);
+    if (server->focused_view) {
+        view_focus(server->focused_view);
+    }
+    schedule_all_outputs(server);
+}
+
 static void unfocus_view(aurade_server_t *server) {
     view_unfocus(server);
 }
@@ -1222,6 +1265,13 @@ static void cursor_button(struct wl_listener *listener, void *data) {
     bool pressed = event->state == WL_POINTER_BUTTON_STATE_PRESSED;
     bool left = event->button == BTN_LEFT;
     uint32_t button_bit = pointer_button_bit(event->button);
+
+    if (server->lockscreen && lockscreen_is_active(server->lockscreen)) {
+        lockscreen_handle_button(server->lockscreen, lx, ly, event->button, pressed);
+        wlr_seat_pointer_clear_focus(server->seat);
+        return;
+    }
+
     if (server->screenshot &&
         screenshot_handle_button(server->screenshot, lx, ly, event->button, pressed)) {
         if (pressed) server_dismiss_popups(server);
@@ -1900,6 +1950,17 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
                                               XKB_STATE_MODS_EFFECTIVE) > 0;
     bool shift = xkb_state_mod_name_is_active(keyboard->xkb_state, XKB_MOD_NAME_SHIFT,
                                               XKB_STATE_MODS_EFFECTIVE) > 0;
+    bool ctrl = xkb_state_mod_name_is_active(keyboard->xkb_state, XKB_MOD_NAME_CTRL,
+                                             XKB_STATE_MODS_EFFECTIVE) > 0;
+    bool alt = xkb_state_mod_name_is_active(keyboard->xkb_state, XKB_MOD_NAME_ALT,
+                                            XKB_STATE_MODS_EFFECTIVE) > 0;
+
+    if (server->lockscreen && lockscreen_is_active(server->lockscreen)) {
+        for (int i = 0; i < nsyms; i++) {
+            lockscreen_handle_key(server->lockscreen, syms[i], keyboard->xkb_state, pressed);
+        }
+        return;
+    }
 
     for (int i = 0; i < nsyms; i++) {
         xkb_keysym_t sym = syms[i];
@@ -2007,6 +2068,14 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
         // Escape dismisses any open overlay (Mission Control, Launchpad, ...).
         if (sym == XKB_KEY_Escape && server->gesture_mode != GESTURE_MODE_IDLE) {
             close_overlay(server);
+            return;
+        }
+
+        // Lock screen activation shortcuts: Super+L, Ctrl+Alt+L, or Ctrl+Super+Q (macOS standard)
+        if ((super && (sym == XKB_KEY_l || sym == XKB_KEY_L)) ||
+            (ctrl && alt && (sym == XKB_KEY_l || sym == XKB_KEY_L)) ||
+            (ctrl && super && (sym == XKB_KEY_q || sym == XKB_KEY_Q))) {
+            server_lock_screen(server);
             return;
         }
 
@@ -2389,6 +2458,10 @@ static void server_new_input(struct wl_listener *listener, void *data) {
 
 void server_handle_gesture_begin(aurade_server_t *server, gesture_action_type_t action) {
     if (action == ACTION_NONE) return;
+
+    if (server->lockscreen && lockscreen_is_active(server->lockscreen)) {
+        return;
+    }
 
     // The screenshot region selector owns the screen until the user captures
     // or cancels; do not let a stray three-finger swipe move workspaces behind
@@ -3224,6 +3297,11 @@ void server_tick_animations(aurade_server_t *server, double dt) {
     if (server->dock && dock_is_bouncing(server->dock)) {
         dock_tick_bounce(server->dock, dt);
     }
+
+    // 8. Lock Screen Animations (fade, shake, unlock)
+    if (server->lockscreen && lockscreen_is_animating(server->lockscreen)) {
+        lockscreen_tick(server->lockscreen, dt);
+    }
 }
 
 static int handle_sigusr1(int sig, void *data) {
@@ -3353,6 +3431,8 @@ int main(int argc, char *argv[]) {
     server.popup_tree = wlr_scene_tree_create(&server.scene->tree);
     // Drag-and-drop icons render on top of popups and chrome.
     server.drag_tree = wlr_scene_tree_create(&server.scene->tree);
+    // Lock screen sits above everything: popups, drag icons, chrome, windows.
+    server.lock_tree = wlr_scene_tree_create(&server.scene->tree);
 
     server_init_xdg_shell(&server);
 
@@ -3434,6 +3514,7 @@ int main(int argc, char *argv[]) {
     server.osd = osd_create(&server);
     server.notifications = notifications_create(&server);
     server.music_pill = music_pill_create(&server);
+    server.lockscreen = lockscreen_create(&server);
     server_update_blur_config(&server);
 
 // Config reload watcher setup moved above
@@ -3511,6 +3592,7 @@ if (server.config_inotify_fd >= 0) {
 
     server_finish_xwayland(&server);
     if (server.notifications) notifications_destroy(server.notifications);
+    if (server.lockscreen) lockscreen_destroy(server.lockscreen);
     if (server.osd) osd_destroy(server.osd);
     screenshot_destroy(server.screenshot);
     gesture_engine_destroy(server.gesture_engine);

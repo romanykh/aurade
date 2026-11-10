@@ -63,6 +63,7 @@ typedef enum {
 } snap_action_t;
 
 struct aurade_server;
+struct aurade_lockscreen;
 
 typedef enum {
     VIEW_ANIM_NONE = 0,
@@ -269,6 +270,7 @@ typedef struct aurade_server {
     struct wlr_scene_tree *dock_tree;
     struct wlr_scene_tree *popup_tree;
     struct wlr_scene_tree *drag_tree;
+    struct wlr_scene_tree *lock_tree;
 
     // Shell components
     struct aurade_wallpaper *wallpaper;
@@ -281,6 +283,7 @@ typedef struct aurade_server {
     struct aurade_screenshot *screenshot;
     struct aurade_notifications *notifications;
     struct aurade_music_pill *music_pill;
+    struct aurade_lockscreen *lockscreen;
 
     // Gesture State Machine (Direct Manipulation + Springs)
     gesture_mode_t gesture_mode;
@@ -360,6 +363,8 @@ void server_handle_gesture_end(aurade_server_t *server, bool cancelled, double v
 void schedule_all_outputs(aurade_server_t *server);
 void server_update_blur_config(aurade_server_t *server);
 void server_close_overlay(aurade_server_t *server);
+void server_lock_screen(aurade_server_t *server);
+void server_unlock_screen(aurade_server_t *server);
 void server_set_pointer_constraint(aurade_server_t *server,
                                   struct wlr_pointer_constraint_v1 *constraint);
 

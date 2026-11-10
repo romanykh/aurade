@@ -15,26 +15,26 @@
 // Apple menu geometry. The menu lives in its own scene buffer parented to the
 // overlay tree so it paints above windows, the dock, and other shell chrome.
 #define POWER_MENU_BUFFER_W 288
-#define POWER_MENU_BUFFER_H 224
+#define POWER_MENU_BUFFER_H 256
 #define POWER_MENU_PANEL_X 10.0
 #define POWER_MENU_PANEL_Y 10.0
 #define POWER_MENU_PANEL_W 268.0
-#define POWER_MENU_PANEL_H 196.0
+#define POWER_MENU_PANEL_H 228.0
 #define POWER_MENU_SCENE_X 4
 #define POWER_MENU_SCENE_Y TOPBAR_HEIGHT
 #define POWER_MENU_ROW_H 32.0
-#define POWER_MENU_ITEM_COUNT 5
-#define POWER_BUTTON_Y 150.0
+#define POWER_MENU_ITEM_COUNT 6
+#define POWER_BUTTON_Y 160.0
 #define POWER_BUTTON_W 96.0
 #define POWER_BUTTON_H 34.0
 
-static const double power_row_y[POWER_MENU_ITEM_COUNT] = { 18.0, 59.0, 91.0, 123.0, 164.0 };
+static const double power_row_y[POWER_MENU_ITEM_COUNT] = { 18.0, 56.0, 88.0, 120.0, 152.0, 190.0 };
 static const power_action_t power_row_action[POWER_MENU_ITEM_COUNT] = {
-    POWER_ACTION_SETTINGS, POWER_ACTION_SLEEP, POWER_ACTION_RESTART,
+    POWER_ACTION_SETTINGS, POWER_ACTION_LOCK, POWER_ACTION_SLEEP, POWER_ACTION_RESTART,
     POWER_ACTION_SHUTDOWN, POWER_ACTION_LOGOUT
 };
 static const char *const power_row_label[POWER_MENU_ITEM_COUNT] = {
-    "System Settings…", "Sleep", "Restart…", "Shut Down…", "Log Out…"
+    "System Settings…", "Lock Screen", "Sleep", "Restart…", "Shut Down…", "Log Out…"
 };
 
 static void power_menu_render(aurade_topbar_t *bar);
@@ -692,10 +692,10 @@ static void power_menu_render(aurade_topbar_t *bar) {
         }
 
         cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12);
-        cairo_rectangle(cr, POWER_MENU_PANEL_X + 8.0, 50.0,
+        cairo_rectangle(cr, POWER_MENU_PANEL_X + 8.0, 52.0,
                         POWER_MENU_PANEL_W - 16.0, 1.0);
         cairo_fill(cr);
-        cairo_rectangle(cr, POWER_MENU_PANEL_X + 8.0, 155.0,
+        cairo_rectangle(cr, POWER_MENU_PANEL_X + 8.0, 186.0,
                         POWER_MENU_PANEL_W - 16.0, 1.0);
         cairo_fill(cr);
     } else {
@@ -730,6 +730,9 @@ static void power_menu_perform(aurade_topbar_t *bar, power_action_t action) {
         case POWER_ACTION_SETTINGS:
             app_launch_command("python3 /home/user/AI/de/settings/aurade_settings.py "
                                ">/dev/null 2>&1 &");
+            break;
+        case POWER_ACTION_LOCK:
+            server_lock_screen(bar->server);
             break;
         case POWER_ACTION_SLEEP:
             app_launch_command("systemctl suspend");

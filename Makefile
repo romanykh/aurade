@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -O3 -march=native -pipe -g -D_GNU_SOURCE -DWLR_USE_UNSTABLE -MMD -MP
 INCLUDES = -Isrc $(shell pkg-config --cflags scenefx-0.5 wlroots-0.20 wayland-server xkbcommon cairo pangocairo json-c libinput libdrm librsvg-2.0 gio-2.0 gio-unix-2.0 xcb xcb-icccm xcb-ewmh pixman-1)
-LIBS = $(shell pkg-config --libs scenefx-0.5 wlroots-0.20 wayland-server xkbcommon cairo pangocairo json-c libinput libdrm librsvg-2.0 gio-2.0 gio-unix-2.0 xcb xcb-icccm xcb-ewmh pixman-1) -lm -lpthread
+LIBS = $(shell pkg-config --libs scenefx-0.5 wlroots-0.20 wayland-server xkbcommon cairo pangocairo json-c libinput libdrm librsvg-2.0 gio-2.0 gio-unix-2.0 xcb xcb-icccm xcb-ewmh pixman-1) -lm -lpthread -lpam
 
 SRCS = src/main.c \
        src/gestures/physics.c \
@@ -19,6 +19,7 @@ SRCS = src/main.c \
        src/shell/screenshot.c \
        src/shell/notifications.c \
        src/shell/music_pill.c \
+       src/shell/lockscreen.c \
        src/window/xdg_shell.c \
        src/window/workspace.c \
        src/window/xwayland.c
