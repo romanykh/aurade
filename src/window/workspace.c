@@ -66,6 +66,51 @@ void server_set_num_workspaces(aurade_server_t *server, int count) {
     if (server->dock) dock_update_visibility(server->dock);
 }
 
+void server_delete_workspace(aurade_server_t *server, int ws_to_delete) {
+    if (!server || server->num_workspaces <= 1) return;
+    if (ws_to_delete < 0 || ws_to_delete >= server->num_workspaces) return;
+
+    int old_count = server->num_workspaces;
+    int target_ws = (ws_to_delete > 0) ? (ws_to_delete - 1) : 0;
+
+    // Move views from the deleted workspace to target_ws
+    aurade_view_t *view;
+    wl_list_for_each(view, &server->views, link) {
+        if (view->workspace == ws_to_delete) {
+            view->workspace = target_ws;
+            if (view->scene_tree && server->workspace_trees[target_ws]) {
+                wlr_scene_node_reparent(&view->scene_tree->node,
+                                        server->workspace_trees[target_ws]);
+            }
+        } else if (view->workspace > ws_to_delete) {
+            // Shift down workspace index
+            view->workspace--;
+            if (view->scene_tree && server->workspace_trees[view->workspace]) {
+                wlr_scene_node_reparent(&view->scene_tree->node,
+                                        server->workspace_trees[view->workspace]);
+            }
+        }
+    }
+
+    // Adjust current workspace if needed
+    if (server->current_workspace == ws_to_delete) {
+        server->current_workspace = target_ws;
+    } else if (server->current_workspace > ws_to_delete) {
+        server->current_workspace--;
+    }
+
+    server->workspace_offset = 0.0;
+    server->workspace_animating = false;
+
+    server->num_workspaces = old_count - 1;
+    if (server->workspace_trees[old_count - 1]) {
+        wlr_scene_node_set_enabled(&server->workspace_trees[old_count - 1]->node, false);
+    }
+
+    server_update_workspace_positions(server);
+    if (server->dock) dock_update_visibility(server->dock);
+}
+
 void server_update_workspace_positions(aurade_server_t *server) {
     int screen_w = server->screen_width > 0 ? server->screen_width : 1920;
     int num_ws = server->num_workspaces > 0 ? server->num_workspaces : DEFAULT_WORKSPACES;

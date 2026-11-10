@@ -41,7 +41,9 @@ typedef struct aurade_mission_control {
     aurade_view_t *hovered_view;
     aurade_view_t *hovered_close_view;
     int hovered_workspace;
+    int hovered_ws_close;
     bool hovered_plus;
+    bool hovered_minus;
 
     bool mouse_pressed;
     bool is_dragging;
