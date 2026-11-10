@@ -35,6 +35,17 @@ void apps_scanner_free(desktop_apps_t *list);
 bool app_launch_command(const char *command);
 
 /**
+ * Launch AuraDE System Settings for a specific page (or NULL for default).
+ * Dynamically discovers settings script path without hardcoded directories.
+ */
+bool app_launch_settings(const char *page);
+
+/**
+ * Launch Aura Connect app if available.
+ */
+bool app_launch_aura_connect(void);
+
+/**
  * Find app by name or command substring.
  */
 desktop_app_t *apps_find(desktop_apps_t *list, const char *name);

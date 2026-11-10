@@ -37,13 +37,11 @@ static void handle_xwayland_ready(struct wl_listener *listener, void *data) {
 
     char cmd[512];
     snprintf(cmd, sizeof(cmd),
-             "dbus-update-activation-environment --systemd DISPLAY=%s WAYLAND_DISPLAY=%s 2>/dev/null &",
+             "dbus-update-activation-environment DISPLAY=%s WAYLAND_DISPLAY=%s 2>/dev/null &",
              server->xwayland->display_name, wayland_display);
     system(cmd);
 
-    snprintf(cmd, sizeof(cmd),
-             "systemctl --user import-environment DISPLAY WAYLAND_DISPLAY 2>/dev/null &");
-    system(cmd);
+    system("if command -v systemctl >/dev/null 2>&1; then systemctl --user import-environment DISPLAY WAYLAND_DISPLAY 2>/dev/null & fi");
 
     fprintf(stderr, "[AURADE] Xwayland ready on DISPLAY=%s (WAYLAND_DISPLAY=%s)\n",
             server->xwayland->display_name, wayland_display);

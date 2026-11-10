@@ -7,6 +7,8 @@
 #include <xkbcommon/xkbcommon.h>
 #include <json-c/json.h>
 #include <sys/stat.h>
+#include <unistd.h>
+#include <pwd.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -54,7 +56,10 @@ static uint64_t lp_now_ms(void) {
 static const char *lp_get_config_path(void) {
     static char path[512];
     const char *home = getenv("HOME");
-    if (!home) home = "/home/user";
+    if (!home || !*home) {
+        struct passwd *pw = getpwuid(getuid());
+        home = pw ? pw->pw_dir : "/tmp";
+    }
     snprintf(path, sizeof(path), "%s/.config/aurade/launchpad.json", home);
     return path;
 }

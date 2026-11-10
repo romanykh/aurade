@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <pwd.h>
 
 gesture_action_t action_from_string(const char *str) {
     gesture_action_t a = { .type = ACTION_NONE, .custom_cmd = "" };
@@ -128,7 +129,10 @@ aurade_config_t config_get_defaults(void) {
 const char *config_get_default_path(void) {
     static char path[512];
     const char *home = getenv("HOME");
-    if (!home) home = "/home/user";
+    if (!home || !*home) {
+        struct passwd *pw = getpwuid(getuid());
+        home = pw ? pw->pw_dir : "/tmp";
+    }
     snprintf(path, sizeof(path), "%s/.config/aurade/config.json", home);
     return path;
 }
@@ -542,7 +546,10 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
 const char *config_get_state_path(void) {
     static char path[512];
     const char *home = getenv("HOME");
-    if (!home) home = "/home/user";
+    if (!home || !*home) {
+        struct passwd *pw = getpwuid(getuid());
+        home = pw ? pw->pw_dir : "/tmp";
+    }
     snprintf(path, sizeof(path), "%s/.config/aurade/state.json", home);
     return path;
 }

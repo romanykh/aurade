@@ -728,29 +728,41 @@ static void power_menu_render(aurade_topbar_t *bar) {
 static void power_menu_perform(aurade_topbar_t *bar, power_action_t action) {
     switch (action) {
         case POWER_ACTION_SETTINGS:
-            app_launch_command("python3 /home/user/AI/de/settings/aurade_settings.py "
-                               ">/dev/null 2>&1 &");
+            app_launch_settings(NULL);
             break;
         case POWER_ACTION_LOCK:
             server_lock_screen(bar->server);
             break;
         case POWER_ACTION_SLEEP:
-            app_launch_command("systemctl suspend");
+            // Multi-init fallback: loginctl (elogind/systemd) -> systemctl -> zzz (runit/Void) -> pm-suspend
+            app_launch_command("loginctl suspend 2>/dev/null || "
+                               "systemctl suspend 2>/dev/null || "
+                               "zzz 2>/dev/null || "
+                               "pm-suspend 2>/dev/null");
             break;
         case POWER_ACTION_RESTART:
-            app_launch_command("systemctl reboot");
+            // Multi-init fallback: loginctl -> systemctl -> openrc-shutdown -> reboot
+            app_launch_command("loginctl reboot 2>/dev/null || "
+                               "systemctl reboot 2>/dev/null || "
+                               "openrc-shutdown -r now 2>/dev/null || "
+                               "reboot 2>/dev/null");
             break;
         case POWER_ACTION_SHUTDOWN:
-            app_launch_command("systemctl poweroff");
+            // Multi-init fallback: loginctl -> systemctl -> openrc-shutdown -> poweroff
+            app_launch_command("loginctl poweroff 2>/dev/null || "
+                               "systemctl poweroff 2>/dev/null || "
+                               "openrc-shutdown -p now 2>/dev/null || "
+                               "poweroff 2>/dev/null");
             break;
         case POWER_ACTION_LOGOUT: {
             const char *sid = getenv("XDG_SESSION_ID");
             if (sid && *sid) {
-                char cmd[96];
-                snprintf(cmd, sizeof(cmd), "loginctl terminate-session %s", sid);
+                char cmd[128];
+                snprintf(cmd, sizeof(cmd), "loginctl terminate-session %s 2>/dev/null", sid);
                 app_launch_command(cmd);
-            } else if (bar->server && bar->server->wl_display) {
-                // No logind session id (e.g. nested run): exit the compositor.
+            }
+            // Always terminate Wayland display on logout so session exits cleanly even without logind
+            if (bar->server && bar->server->wl_display) {
                 wl_display_terminate(bar->server->wl_display);
             }
             break;

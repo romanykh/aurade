@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <gdk-pixbuf/gdk-pixbuf.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -24,13 +25,55 @@ static void draw_orb(cairo_t *cr, double cx, double cy, double radius,
     cairo_pattern_destroy(pat);
 }
 
+static cairo_surface_t *pixbuf_to_cairo_surface(GdkPixbuf *pb) {
+    if (!pb) return NULL;
+    int w = gdk_pixbuf_get_width(pb);
+    int h = gdk_pixbuf_get_height(pb);
+    int stride = gdk_pixbuf_get_rowstride(pb);
+    int channels = gdk_pixbuf_get_n_channels(pb);
+    guchar *pixels = gdk_pixbuf_get_pixels(pb);
+
+    cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+    cairo_surface_flush(surf);
+    unsigned char *cdata = cairo_image_surface_get_data(surf);
+    int cstride = cairo_image_surface_get_stride(surf);
+
+    for (int y = 0; y < h; y++) {
+        guchar *src = pixels + y * stride;
+        uint32_t *dst = (uint32_t *)(cdata + y * cstride);
+        for (int x = 0; x < w; x++) {
+            guchar r = src[0];
+            guchar g = src[1];
+            guchar b = src[2];
+            guchar a = (channels == 4) ? src[3] : 255;
+            uint32_t pr = (r * a + 127) / 255;
+            uint32_t pg = (g * a + 127) / 255;
+            uint32_t pb_b = (b * a + 127) / 255;
+            dst[x] = ((uint32_t)a << 24) | (pr << 16) | (pg << 8) | pb_b;
+            src += channels;
+        }
+    }
+    cairo_surface_mark_dirty(surf);
+    return surf;
+}
+
 static bool load_custom_wallpaper(aurade_wallpaper_t *wp) {
     const char *path = wp->server->config.wallpaper_path;
     if (!path || !*path) return false;
 
-    cairo_surface_t *img = cairo_image_surface_create_from_png(path);
-    if (cairo_surface_status(img) != CAIRO_STATUS_SUCCESS) {
-        cairo_surface_destroy(img);
+    GError *err = NULL;
+    GdkPixbuf *pb = gdk_pixbuf_new_from_file(path, &err);
+    cairo_surface_t *img = NULL;
+    if (pb) {
+        img = pixbuf_to_cairo_surface(pb);
+        g_object_unref(pb);
+    } else {
+        if (err) g_error_free(err);
+        img = cairo_image_surface_create_from_png(path);
+    }
+
+    if (!img || cairo_surface_status(img) != CAIRO_STATUS_SUCCESS) {
+        if (img) cairo_surface_destroy(img);
         return false;
     }
 
@@ -381,4 +424,14 @@ void wallpaper_destroy(aurade_wallpaper_t *wp) {
     if (wp->blurred_buffer) wlr_buffer_drop(&wp->blurred_buffer->base);
     if (wp->buffer) wlr_buffer_drop(&wp->buffer->base);
     free(wp);
+    if (blur_scratch) {
+        free(blur_scratch);
+        blur_scratch = NULL;
+        blur_scratch_cap = 0;
+    }
+    if (col_sum_scratch) {
+        free(col_sum_scratch);
+        col_sum_scratch = NULL;
+        col_sum_scratch_cap = 0;
+    }
 }

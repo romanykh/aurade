@@ -1133,7 +1133,7 @@ bool mission_control_handle_release(aurade_mission_control_t *mc, double x, doub
             int target_rx = 0, target_ry = 0;
             double target_scale = 1.0;
             if (drag_slot >= 0 && drag_slot < mc->slot_count && mc->slots[drag_slot].view == dragged) {
-                mc_slot_current_rect(mc, drag_slot, ep, &target_rx, NULL, &target_ry, NULL, NULL, &target_scale);
+                mc_slot_current_rect(mc, drag_slot, ep, NULL, &target_rx, &target_ry, NULL, NULL, &target_scale);
             } else {
                 target_rx = (int)round(dragged->x);
                 target_ry = (int)round(dragged->y);
@@ -1491,6 +1491,7 @@ void mission_control_ws_gesture_end(aurade_mission_control_t *mc, bool cancelled
 
 void mission_control_tick(aurade_mission_control_t *mc, double dt) {
     if (!mc || !mc->active) return;
+    double ep = mc_ease_out_cubic(mc->progress);
 
     if (mc->ws_animating) {
         bool active = spring_simulation_step(&mc->ws_spring, dt);
@@ -1502,7 +1503,7 @@ void mission_control_tick(aurade_mission_control_t *mc, double dt) {
     }
 
     if (mc->ws_bar_anim.active) {
-        mc->ws_bar_anim.progress += dt / 0.22;
+        mc->ws_bar_anim.progress += dt / 0.26;
         mc->spaces_bar_dirty = true;
         if (mc->ws_bar_anim.progress >= 1.0) {
             if (mc->ws_bar_anim.type == WS_BAR_ANIM_DELETE) {
@@ -1519,7 +1520,7 @@ void mission_control_tick(aurade_mission_control_t *mc, double dt) {
     }
 
     if (mc->drop_anim.active) {
-        mc->drop_anim.progress += dt / 0.22;
+        mc->drop_anim.progress += dt / 0.26;
         double t = mc_ease_out_cubic(fmin(1.0, mc->drop_anim.progress));
         aurade_view_t *dv = mc->drop_anim.view;
         if (dv && dv->scene_tree) {
@@ -1535,27 +1536,44 @@ void mission_control_tick(aurade_mission_control_t *mc, double dt) {
             }
         }
         if (mc->drop_anim.progress >= 1.0) {
-            if (dv && dv->scene_tree) {
-                wlr_scene_node_reparent(&dv->scene_tree->node,
-                                        mc->server->workspace_trees[mc->drop_anim.to_workspace]);
-                view_set_opacity(dv, 1.0f);
-                if (!mc->drop_anim.is_return) {
-                    view_set_scale(dv, 1.0, 1.0);
-                } else {
-                    view_set_scale(dv, mc->drop_anim.target_scale, mc->drop_anim.target_scale);
-                }
-            }
             int to_ws = mc->drop_anim.to_workspace;
             bool was_return = mc->drop_anim.is_return;
             mc->drop_anim.active = false;
             mc->drop_anim.view = NULL;
+
+            if (dv && dv->scene_tree) {
+                wlr_scene_node_reparent(&dv->scene_tree->node,
+                                        mc->server->workspace_trees[to_ws]);
+                view_set_opacity(dv, 1.0f);
+                if (!was_return) {
+                    view_set_scale(dv, 1.0, 1.0);
+                    wlr_scene_node_set_position(&dv->scene_tree->node, dv->x, dv->y);
+                } else {
+                    int slot_idx = -1;
+                    for (int s = 0; s < mc->slot_count; s++) {
+                        if (mc->slots[s].view == dv) {
+                            slot_idx = s;
+                            break;
+                        }
+                    }
+                    int local_rx = (int)round(dv->x);
+                    int local_ry = (int)round(dv->y);
+                    double final_scale = mc->drop_anim.target_scale;
+                    if (slot_idx >= 0) {
+                        mc_slot_current_rect(mc, slot_idx, ep, &local_rx, NULL, &local_ry, NULL, NULL, &final_scale);
+                    }
+                    wlr_scene_node_set_position(&dv->scene_tree->node, local_rx, local_ry);
+                    view_set_scale(dv, final_scale, final_scale);
+                }
+            }
+
             if (!was_return) {
                 if (mc->server->config.tiling_enabled) {
                     workspace_relayout_tiling(mc->server, to_ws);
                 }
+                mc_collect_workspace_slots(mc);
                 mc->spaces_bar_dirty = true;
-                mc_compute_layout(mc);
-                mc_init_slot_metadata(mc);
+                mc_apply_slots_scene_state(mc, ep);
             }
         }
     }
@@ -1563,7 +1581,7 @@ void mission_control_tick(aurade_mission_control_t *mc, double dt) {
     for (int i = 0; i < mc->slot_count; i++) {
         mc_window_slot_t *s = &mc->slots[i];
         if (s->is_closing) {
-            s->close_progress += dt / 0.22;
+            s->close_progress += dt / 0.26;
             if (s->close_progress >= 1.0) {
                 aurade_view_t *v = s->view;
                 s->is_closing = false;
@@ -1575,7 +1593,7 @@ void mission_control_tick(aurade_mission_control_t *mc, double dt) {
             }
         }
         if (s->is_relayout) {
-            s->relayout_progress += dt / 0.22;
+            s->relayout_progress += dt / 0.26;
             if (s->relayout_progress >= 1.0) {
                 s->is_relayout = false;
                 s->relayout_progress = 1.0;
@@ -1583,7 +1601,6 @@ void mission_control_tick(aurade_mission_control_t *mc, double dt) {
         }
     }
 
-    double ep = mc_ease_out_cubic(mc->progress);
     mc_apply_slots_scene_state(mc, ep);
     mc->needs_render = true;
     schedule_all_outputs(mc->server);

@@ -277,10 +277,11 @@ static void output_frame(struct wl_listener *listener, void *data) {
          server->launchpad->needs_render);
     bool lockscreen_animating = server->lockscreen &&
         (lockscreen_is_animating(server->lockscreen) || server->lockscreen->needs_render);
+    bool mc_animating = server->mission_control &&
+        (mission_control_is_animating(server->mission_control) || server->mission_control->needs_render);
 
     if (view_animating || dock_animating || topbar_animating || launchpad_animating || lockscreen_animating ||
-        server->gesture_animating || server->workspace_animating || server->gesture_in_progress ||
-        (server->mission_control && mission_control_is_animating(server->mission_control)) ||
+        mc_animating || server->gesture_animating || server->workspace_animating || server->gesture_in_progress ||
         (server->osd && server->osd->visible) ||
         (server->notifications && server->notifications->count > 0) ||
         wlr_scene_output_needs_frame(output->scene_output)) {
@@ -389,19 +390,26 @@ static aurade_view_t *server_view_resize_at(aurade_server_t *server, double lx, 
                                             aurade_view_t *view_at_cursor, uint32_t *out_edges) {
     if (!server) return NULL;
 
-    // If the cursor is currently over an active window surface, that window is in front
-    // of everything else at (lx, ly). An occluded background window's edges must NEVER be
-    // reachable through a foreground window!
-    if (view_at_cursor) {
-        if (view_at_cursor->workspace != server->current_workspace ||
-            view_at_cursor->minimized || view_at_cursor->maximized) {
-            return NULL;
-        }
-        int vx = view_at_cursor->x, vy = view_at_cursor->y;
-        int vw = view_at_cursor->width, vh = view_at_cursor->height;
-        if (vw <= 0 || vh <= 0) return NULL;
+    // Only the currently active/focused window can be resized by its edges!
+    // Background windows must NEVER intercept cursor or steal clicks from foreground windows.
+    aurade_view_t *view = server->focused_view;
+    if (!view || view->workspace != server->current_workspace ||
+        view->minimized || view->maximized) {
+        return NULL;
+    }
 
-        // Check if within the inner resize margin of view_at_cursor
+    // If the cursor is currently over another window surface, that window is in front.
+    // Background edges must NEVER be reachable through any foreground window!
+    if (view_at_cursor && view_at_cursor != view) {
+        return NULL;
+    }
+
+    int vx = view->x, vy = view->y;
+    int vw = view->width, vh = view->height;
+    if (vw <= 0 || vh <= 0) return NULL;
+
+    // Check inner resize margin of the focused window
+    if (view_at_cursor == view) {
         if (lx >= vx && lx <= vx + vw && ly >= vy && ly <= vy + vh &&
             !(lx > vx + RESIZE_MARGIN_IN && lx < vx + vw - RESIZE_MARGIN_IN &&
               ly > vy + RESIZE_MARGIN_IN && ly < vy + vh - RESIZE_MARGIN_IN)) {
@@ -412,55 +420,26 @@ static aurade_view_t *server_view_resize_at(aurade_server_t *server, double lx, 
             if (ly >= vy + vh - RESIZE_MARGIN_IN) edges |= WLR_EDGE_BOTTOM;
             if (edges != 0) {
                 if (out_edges) *out_edges = edges;
-                return view_at_cursor;
+                return view;
             }
         }
-        // Cursor is over view_at_cursor's interior content: no resize!
         return NULL;
     }
 
-    // Cursor is not over any window surface (empty space / outer margin).
-    // First priority: focused window's outer margin.
-    if (server->focused_view &&
-        server->focused_view->workspace == server->current_workspace &&
-        !server->focused_view->minimized && !server->focused_view->maximized) {
-        aurade_view_t *view = server->focused_view;
-        int vx = view->x, vy = view->y, vw = view->width, vh = view->height;
-        if (vw > 0 && vh > 0 &&
-            lx >= vx - RESIZE_MARGIN_OUT && lx <= vx + vw + RESIZE_MARGIN_OUT &&
-            ly >= vy - RESIZE_MARGIN_OUT && ly <= vy + vh + RESIZE_MARGIN_OUT) {
-            uint32_t edges = 0;
-            if (lx < vx) edges |= WLR_EDGE_LEFT;
-            if (lx > vx + vw) edges |= WLR_EDGE_RIGHT;
-            if (ly < vy) edges |= WLR_EDGE_TOP;
-            if (ly > vy + vh) edges |= WLR_EDGE_BOTTOM;
-            if (edges != 0) {
-                if (out_edges) *out_edges = edges;
-                return view;
-            }
+    // Check outer resize margin of the focused window (cursor is slightly outside the surface)
+    if (lx >= vx - RESIZE_MARGIN_OUT && lx <= vx + vw + RESIZE_MARGIN_OUT &&
+        ly >= vy - RESIZE_MARGIN_OUT && ly <= vy + vh + RESIZE_MARGIN_OUT) {
+        uint32_t edges = 0;
+        if (lx < vx) edges |= WLR_EDGE_LEFT;
+        if (lx > vx + vw) edges |= WLR_EDGE_RIGHT;
+        if (ly < vy) edges |= WLR_EDGE_TOP;
+        if (ly > vy + vh) edges |= WLR_EDGE_BOTTOM;
+        if (edges != 0) {
+            if (out_edges) *out_edges = edges;
+            return view;
         }
     }
 
-    // Next: any visible window in z-order whose outer margin contains (lx, ly)
-    aurade_view_t *view;
-    wl_list_for_each(view, &server->views, link) {
-        if (view == server->focused_view) continue;
-        if (view->workspace != server->current_workspace || view->minimized || view->maximized) continue;
-        int vx = view->x, vy = view->y, vw = view->width, vh = view->height;
-        if (vw <= 0 || vh <= 0) continue;
-        if (lx >= vx - RESIZE_MARGIN_OUT && lx <= vx + vw + RESIZE_MARGIN_OUT &&
-            ly >= vy - RESIZE_MARGIN_OUT && ly <= vy + vh + RESIZE_MARGIN_OUT) {
-            uint32_t edges = 0;
-            if (lx < vx) edges |= WLR_EDGE_LEFT;
-            if (lx > vx + vw) edges |= WLR_EDGE_RIGHT;
-            if (ly < vy) edges |= WLR_EDGE_TOP;
-            if (ly > vy + vh) edges |= WLR_EDGE_BOTTOM;
-            if (edges != 0) {
-                if (out_edges) *out_edges = edges;
-                return view;
-            }
-        }
-    }
     return NULL;
 }
 
@@ -3589,8 +3568,9 @@ if (server.config_inotify_fd >= 0) {
 
     setenv("WAYLAND_DISPLAY", socket_name, 1);
     setenv("XDG_CURRENT_DESKTOP", "AuraDE", 1);
-    system("dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP 2>/dev/null &");
-    system("systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP 2>/dev/null &");
+    // Sync session environment with D-Bus (portable for all init systems: OpenRC, runit, systemd, s6)
+    system("dbus-update-activation-environment --all 2>/dev/null &");
+    system("if command -v systemctl >/dev/null 2>&1; then systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP 2>/dev/null & fi");
     printf("[AuraDE] Running on WAYLAND_DISPLAY=%s\n", socket_name);
     printf("[AuraDE] macOS Gestures Active: Swipe Up (Mission Control), Down (Exposé), Horizontal (Spaces), Pinch In (Launchpad), Spread (Show Desktop)\n");
     fflush(stdout);

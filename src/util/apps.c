@@ -9,6 +9,7 @@
 #include <ctype.h>
 #include <librsvg/rsvg.h>
 #include <pwd.h>
+#include <fcntl.h>
 
 static void clean_exec_field(char *exec) {
     // Remove %f, %F, %u, %U, etc.
@@ -392,12 +393,101 @@ bool app_launch_command(const char *command) {
     if (pid == 0) {
         // Child process
         setsid();
+        int devnull = open("/dev/null", O_RDWR);
+        if (devnull >= 0) {
+            dup2(devnull, STDIN_FILENO);
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            if (devnull > 2) close(devnull);
+        }
         setenv("XCURSOR_THEME", "Aura-Circle", 1);
         setenv("XCURSOR_SIZE", "24", 1);
         execl("/bin/sh", "sh", "-c", command, (char *)NULL);
         _exit(127);
     }
     return true;
+}
+
+bool app_launch_settings(const char *page) {
+    char cmd[1024];
+    char script_path[512] = {0};
+
+    // 1. Check relative to current working directory
+    if (access("settings/aurade_settings.py", R_OK) == 0) {
+        snprintf(script_path, sizeof(script_path), "settings/aurade_settings.py");
+    } else {
+        // 2. Check relative to running executable (/proc/self/exe)
+        char exe[512];
+        ssize_t len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+        if (len > 0) {
+            exe[len] = '\0';
+            char *last_slash = strrchr(exe, '/');
+            if (last_slash) {
+                *last_slash = '\0';
+                char candidate[1024];
+                snprintf(candidate, sizeof(candidate), "%s/settings/aurade_settings.py", exe);
+                if (access(candidate, R_OK) == 0) {
+                    snprintf(script_path, sizeof(script_path), "%s", candidate);
+                }
+            }
+        }
+    }
+
+    // 3. Check system install paths
+    if (!script_path[0]) {
+        if (access("/usr/share/aurade/aurade_settings.py", R_OK) == 0) {
+            snprintf(script_path, sizeof(script_path), "/usr/share/aurade/aurade_settings.py");
+        } else if (access("/usr/local/share/aurade/aurade_settings.py", R_OK) == 0) {
+            snprintf(script_path, sizeof(script_path), "/usr/local/share/aurade/aurade_settings.py");
+        }
+    }
+
+    if (script_path[0]) {
+        if (page && *page) {
+            snprintf(cmd, sizeof(cmd), "python3 \"%s\" %s >/dev/null 2>&1 &", script_path, page);
+        } else {
+            snprintf(cmd, sizeof(cmd), "python3 \"%s\" >/dev/null 2>&1 &", script_path);
+        }
+    } else {
+        if (page && *page) {
+            snprintf(cmd, sizeof(cmd), "aurade-settings %s 2>/dev/null || python3 -m aurade_settings %s >/dev/null 2>&1 &", page, page);
+        } else {
+            snprintf(cmd, sizeof(cmd), "aurade-settings 2>/dev/null || python3 -m aurade_settings >/dev/null 2>&1 &");
+        }
+    }
+
+    return app_launch_command(cmd);
+}
+
+bool app_launch_aura_connect(void) {
+    char cmd[1024];
+    char script_path[512] = {0};
+
+    if (access("../aura-connect/linux/aura_connect_app.py", R_OK) == 0) {
+        snprintf(script_path, sizeof(script_path), "../aura-connect/linux/aura_connect_app.py");
+    } else {
+        char exe[512];
+        ssize_t len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+        if (len > 0) {
+            exe[len] = '\0';
+            char *last_slash = strrchr(exe, '/');
+            if (last_slash) {
+                *last_slash = '\0';
+                char candidate[1024];
+                snprintf(candidate, sizeof(candidate), "%s/../aura-connect/linux/aura_connect_app.py", exe);
+                if (access(candidate, R_OK) == 0) {
+                    snprintf(script_path, sizeof(script_path), "%s", candidate);
+                }
+            }
+        }
+    }
+
+    if (script_path[0]) {
+        snprintf(cmd, sizeof(cmd), "python3 \"%s\" >/dev/null 2>&1 &", script_path);
+    } else {
+        snprintf(cmd, sizeof(cmd), "aura-connect 2>/dev/null || python3 -m aura_connect >/dev/null 2>&1 &");
+    }
+    return app_launch_command(cmd);
 }
 
 desktop_app_t *apps_find(desktop_apps_t *list, const char *name) {

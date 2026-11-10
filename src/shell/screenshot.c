@@ -18,6 +18,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <pwd.h>
 #include <xkbcommon/xkbcommon.h>
 
 #define SHOT_FONT "Inter"
@@ -784,7 +785,10 @@ static int recording_timer_cb(void *data) {
 static void start_wf_recorder(aurade_screenshot_t *shot, int x, int y, int w, int h) {
     char dir[512];
     const char *home = getenv("HOME");
-    if (!home) home = "/home/user";
+    if (!home || !*home) {
+        struct passwd *pw = getpwuid(getuid());
+        home = pw ? pw->pw_dir : "/tmp";
+    }
     snprintf(dir, sizeof(dir), "%s/Videos/Recordings", home);
     mkdir(dir, 0755);
 

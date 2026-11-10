@@ -3213,11 +3213,11 @@ static bool cc_handle_subpage_click(aurade_control_center_t *cc, double px, doub
 
     if (cc_sub_hit(px, py, cc->sub_settings_rect)) {
         if (cc->current_page == CC_PAGE_WIFI) {
-            app_launch_command("python3 /home/user/AI/de/settings/aurade_settings.py wifi &");
+            app_launch_settings("wifi");
         } else if (cc->current_page == CC_PAGE_BLUETOOTH) {
-            app_launch_command("python3 /home/user/AI/de/settings/aurade_settings.py bluetooth &");
+            app_launch_settings("bluetooth");
         } else if (cc->current_page == CC_PAGE_SOUND) {
-            app_launch_command("python3 /home/user/AI/de/settings/aurade_settings.py sound &");
+            app_launch_settings("sound");
         }
         dismiss_control_center(cc);
         return true;
@@ -3460,7 +3460,7 @@ bool control_center_handle_click(aurade_control_center_t *cc, double x, double y
             break;
         case CC_MODULE_AURA_CONNECT:
             cc->aura_connect_enabled = true;
-            app_launch_command("python3 /home/user/AI/aura-connect/linux/aura_connect_app.py &");
+            app_launch_aura_connect();
             dismiss_control_center(cc);
             return true;
         case CC_MODULE_SCREEN_KEYBOARD:
@@ -3472,7 +3472,7 @@ bool control_center_handle_click(aurade_control_center_t *cc, double x, double y
             }
             break;
         case CC_MODULE_DISPLAY_DETAIL:
-            app_launch_command("python3 /home/user/AI/de/settings/aurade_settings.py displays &");
+            app_launch_settings("displays");
             dismiss_control_center(cc);
             return true;
         case CC_MODULE_DISPLAY:
@@ -3501,11 +3501,11 @@ bool control_center_handle_click(aurade_control_center_t *cc, double x, double y
             media_command(cc, "playerctl next");
             break;
         case CC_MODULE_BATTERY:
-            app_launch_command("python3 /home/user/AI/de/settings/aurade_settings.py power &");
+            app_launch_settings("power");
             dismiss_control_center(cc);
             return true;
         case CC_MODULE_USER:
-            app_launch_command("python3 /home/user/AI/de/settings/aurade_settings.py user &");
+            app_launch_settings("user");
             dismiss_control_center(cc);
             return true;
         case CC_MODULE_ACCESSIBILITY:
@@ -3515,7 +3515,7 @@ bool control_center_handle_click(aurade_control_center_t *cc, double x, double y
             }
             break;
         case CC_MODULE_SETTINGS:
-            app_launch_command("python3 /home/user/AI/de/settings/aurade_settings.py &");
+            app_launch_settings(NULL);
             dismiss_control_center(cc);
             return true;
         default:
