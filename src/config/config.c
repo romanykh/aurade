@@ -116,7 +116,7 @@ aurade_config_t config_get_defaults(void) {
         .blur_topbar = true,
         .blur_launchpad = true,
         .blur_workspace_overview = true,
-        .blur_windows = true,
+        .blur_windows = false,
         .blur_strength = 1.0,
 
         // Topbar

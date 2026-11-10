@@ -95,7 +95,7 @@ DEFAULTS = {
         "topbar": True,
         "launchpad": True,
         "workspace_overview": True,
-        "windows": True,
+        "windows": False,
         "strength": 1.0,
     },
     "music_pill": {
