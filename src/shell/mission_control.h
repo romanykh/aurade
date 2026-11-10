@@ -34,11 +34,13 @@ typedef struct {
 
 typedef struct {
     bool active;
+    bool is_return;
     aurade_view_t *view;
     int from_workspace;
     int to_workspace;
     double start_x, start_y;
     double target_x, target_y;
+    double start_scale, target_scale;
     double progress;
 } mc_window_drop_anim_t;
 

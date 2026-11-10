@@ -279,7 +279,7 @@ static void mc_paint_wallpaper_thumb(cairo_t *cr, aurade_mission_control_t *mc,
             cairo_translate(cr, x, y);
             cairo_scale(cr, w / (double)bw, h / (double)bh);
             cairo_set_source_surface(cr, mc->wallpaper_thumb, 0, 0);
-            cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
+            cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
             cairo_pattern_set_extend(cairo_get_source(cr), CAIRO_EXTEND_PAD);
             cairo_paint_with_alpha(cr, alpha);
             cairo_restore(cr);
@@ -918,7 +918,8 @@ void mission_control_handle_motion(aurade_mission_control_t *mc, double x, doubl
             mc->is_dragging = true;
             wlr_scene_node_reparent(&mc->dragged_view->scene_tree->node, mc->server->dock_tree);
             wlr_scene_node_raise_to_top(&mc->dragged_view->scene_tree->node);
-            mission_control_render(mc);
+            view_set_opacity(mc->dragged_view, 0.92f);
+            mc->needs_render = true;
         }
 
         if (mc->is_dragging) {
@@ -1077,15 +1078,28 @@ bool mission_control_handle_release(aurade_mission_control_t *mc, double x, doub
             double sx = bar.bar_x + bar.pad_x + target_ws * (bar.thumb_w + bar.gap);
             double sy = bar.bar_y + bar.pad_top;
 
+            double scr_w = (double)(mc->screen_width > 0 ? mc->screen_width : 1920);
+            double thumb_scale = bar.thumb_w / scr_w;
+            double win_thumb_w = (double)dragged->width * thumb_scale;
+            double win_thumb_h = (double)dragged->height * thumb_scale;
+
+            double s_scale = (dragged->current_scale > 0.01) ? dragged->current_scale : 0.35;
+            if (drag_slot >= 0 && drag_slot < mc->slot_count && mc->slots[drag_slot].view == dragged) {
+                if (mc->slots[drag_slot].scale > 0.01) s_scale = mc->slots[drag_slot].scale;
+            }
+
             mc->drop_anim.active = true;
+            mc->drop_anim.is_return = false;
             mc->drop_anim.view = dragged;
             mc->drop_anim.from_workspace = old_ws;
             mc->drop_anim.to_workspace = target_ws;
             mc->drop_anim.progress = 0.0;
             mc->drop_anim.start_x = (double)round(x - mc->drag_offset_x);
             mc->drop_anim.start_y = (double)round(y - mc->drag_offset_y);
-            mc->drop_anim.target_x = sx + (bar.thumb_w - (double)dragged->width * 0.15) / 2.0;
-            mc->drop_anim.target_y = sy + (bar.thumb_h - (double)dragged->height * 0.15) / 2.0;
+            mc->drop_anim.target_x = sx + (bar.thumb_w - win_thumb_w) / 2.0;
+            mc->drop_anim.target_y = sy + (bar.thumb_h - win_thumb_h) / 2.0;
+            mc->drop_anim.start_scale = s_scale;
+            mc->drop_anim.target_scale = thumb_scale;
 
             wlr_scene_node_reparent(&dragged->scene_tree->node, mc->server->dock_tree);
             wlr_scene_node_raise_to_top(&dragged->scene_tree->node);
@@ -1111,15 +1125,39 @@ bool mission_control_handle_release(aurade_mission_control_t *mc, double x, doub
                 }
             }
             mc_start_relayout_animation(mc, old_ws);
-            mc->spaces_bar_dirty = true;
-            mission_control_render(mc);
+            mc->needs_render = true;
             schedule_all_outputs(mc->server);
             return true;
         } else {
-            wlr_scene_node_reparent(&dragged->scene_tree->node,
-                                    mc->server->workspace_trees[dragged->workspace]);
-            mc_apply_slots_scene_state(mc, ep);
-            mission_control_render(mc);
+            // Smooth return flight back to slot!
+            int target_rx = 0, target_ry = 0;
+            double target_scale = 1.0;
+            if (drag_slot >= 0 && drag_slot < mc->slot_count && mc->slots[drag_slot].view == dragged) {
+                mc_slot_current_rect(mc, drag_slot, ep, &target_rx, NULL, &target_ry, NULL, NULL, &target_scale);
+            } else {
+                target_rx = (int)round(dragged->x);
+                target_ry = (int)round(dragged->y);
+            }
+
+            double s_scale = (dragged->current_scale > 0.01) ? dragged->current_scale : target_scale;
+
+            mc->drop_anim.active = true;
+            mc->drop_anim.is_return = true;
+            mc->drop_anim.view = dragged;
+            mc->drop_anim.from_workspace = dragged->workspace;
+            mc->drop_anim.to_workspace = dragged->workspace;
+            mc->drop_anim.progress = 0.0;
+            mc->drop_anim.start_x = (double)round(x - mc->drag_offset_x);
+            mc->drop_anim.start_y = (double)round(y - mc->drag_offset_y);
+            mc->drop_anim.target_x = (double)target_rx;
+            mc->drop_anim.target_y = (double)target_ry;
+            mc->drop_anim.start_scale = s_scale;
+            mc->drop_anim.target_scale = target_scale;
+
+            wlr_scene_node_reparent(&dragged->scene_tree->node, mc->server->dock_tree);
+            wlr_scene_node_raise_to_top(&dragged->scene_tree->node);
+
+            mc->needs_render = true;
             schedule_all_outputs(mc->server);
             return true;
         }
@@ -1487,27 +1525,38 @@ void mission_control_tick(aurade_mission_control_t *mc, double dt) {
         if (dv && dv->scene_tree) {
             double cur_x = mc_lerp(mc->drop_anim.start_x, mc->drop_anim.target_x, t);
             double cur_y = mc_lerp(mc->drop_anim.start_y, mc->drop_anim.target_y, t);
-            double cur_scale = mc_lerp(1.0, 0.15, t);
+            double cur_scale = mc_lerp(mc->drop_anim.start_scale, mc->drop_anim.target_scale, t);
             wlr_scene_node_set_position(&dv->scene_tree->node, (int)round(cur_x), (int)round(cur_y));
             view_set_scale(dv, cur_scale, cur_scale);
-            view_set_opacity(dv, (float)fmax(0.0, 1.0 - t));
+            if (!mc->drop_anim.is_return) {
+                view_set_opacity(dv, (float)fmax(0.0, 1.0 - t));
+            } else {
+                view_set_opacity(dv, (float)mc_lerp(0.92, 1.0, t));
+            }
         }
         if (mc->drop_anim.progress >= 1.0) {
             if (dv && dv->scene_tree) {
                 wlr_scene_node_reparent(&dv->scene_tree->node,
                                         mc->server->workspace_trees[mc->drop_anim.to_workspace]);
-                view_set_scale(dv, 1.0, 1.0);
                 view_set_opacity(dv, 1.0f);
+                if (!mc->drop_anim.is_return) {
+                    view_set_scale(dv, 1.0, 1.0);
+                } else {
+                    view_set_scale(dv, mc->drop_anim.target_scale, mc->drop_anim.target_scale);
+                }
             }
             int to_ws = mc->drop_anim.to_workspace;
+            bool was_return = mc->drop_anim.is_return;
             mc->drop_anim.active = false;
             mc->drop_anim.view = NULL;
-            if (mc->server->config.tiling_enabled) {
-                workspace_relayout_tiling(mc->server, to_ws);
+            if (!was_return) {
+                if (mc->server->config.tiling_enabled) {
+                    workspace_relayout_tiling(mc->server, to_ws);
+                }
+                mc->spaces_bar_dirty = true;
+                mc_compute_layout(mc);
+                mc_init_slot_metadata(mc);
             }
-            mc->spaces_bar_dirty = true;
-            mc_compute_layout(mc);
-            mc_init_slot_metadata(mc);
         }
     }
 
@@ -1536,7 +1585,7 @@ void mission_control_tick(aurade_mission_control_t *mc, double dt) {
 
     double ep = mc_ease_out_cubic(mc->progress);
     mc_apply_slots_scene_state(mc, ep);
-    mission_control_render(mc);
+    mc->needs_render = true;
     schedule_all_outputs(mc->server);
 }
 

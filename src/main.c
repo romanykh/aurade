@@ -274,7 +274,7 @@ static void output_frame(struct wl_listener *listener, void *data) {
 
     if (view_animating || dock_animating || topbar_animating || launchpad_animating ||
         server->gesture_animating || server->workspace_animating || server->gesture_in_progress ||
-        (server->mission_control && server->mission_control->ws_animating) ||
+        (server->mission_control && mission_control_is_animating(server->mission_control)) ||
         (server->osd && server->osd->visible) ||
         (server->notifications && server->notifications->count > 0) ||
         wlr_scene_output_needs_frame(output->scene_output)) {
