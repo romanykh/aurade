@@ -447,7 +447,9 @@ void view_update_blur(aurade_view_t *view) {
         (view->server->mission_control && view->server->mission_control->active) ||
         (view->server->launchpad && view->server->launchpad->active)
     );
-    bool enabled = view->server->config.blur_windows &&
+    const char *app_id = view_get_app_id(view);
+    bool is_settings = (app_id && (strcasestr(app_id, "settings") != NULL || strcasestr(app_id, "aurade-settings") != NULL));
+    bool enabled = (view->server->config.blur_windows || is_settings) &&
                    !pause_blur &&
                    !view->minimized &&
                    (view->scene_tree && view->scene_tree->node.enabled) &&

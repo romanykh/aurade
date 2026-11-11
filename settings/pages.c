@@ -145,7 +145,7 @@ GtkWidget *build_page_wifi(void) {
     // 3. Known / Available Networks Card
     GtkWidget *c_nets = ui_card(page, "AVAILABLE NETWORKS");
     char scan_buf[4096] = "";
-    if (run_cmd_capture("nmcli -t -f IN-USE,SSID,SIGNAL,SECURITY dev wifi list 2>/dev/null | head -n 12", scan_buf, sizeof(scan_buf))) {
+    if (run_cmd_capture("nmcli dev wifi list --rescan no -t -f IN-USE,SSID,SIGNAL,SECURITY 2>/dev/null | head -n 12", scan_buf, sizeof(scan_buf))) {
         char *line = strtok(scan_buf, "\n");
         int count = 0;
         while (line && count < 8) {

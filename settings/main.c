@@ -17,20 +17,22 @@ typedef struct {
     const char *badge_class;
     GtkWidget *(*builder)(void);
     GtkWidget *row_widget;
+    GtkWidget *scroll_widget;
+    bool built;
 } page_meta_t;
 
 static page_meta_t PAGES[] = {
-    { "wifi",        "Wi-Fi",            "network-wireless-symbolic",             "badge-wifi",        build_page_wifi,        NULL },
-    { "bluetooth",   "Bluetooth",        "bluetooth-symbolic",                    "badge-bluetooth",   build_page_bluetooth,   NULL },
-    { "sound",       "Sound",            "audio-volume-high-symbolic",            "badge-sound",       build_page_sound,       NULL },
-    { "display",     "Displays",         "video-display-symbolic",                "badge-display",     build_page_display,     NULL },
-    { "workspaces",  "Workspaces",       "view-grid-symbolic",                    "badge-workspaces",  build_page_workspaces,  NULL },
-    { "mouse",       "Mouse & Touchpad", "input-mouse-symbolic",                  "badge-mouse",       build_page_mouse,       NULL },
-    { "keyboard",    "Keyboard",         "input-keyboard-symbolic",               "badge-keyboard",    build_page_keyboard,    NULL },
-    { "appearance",  "Appearance",       "preferences-desktop-wallpaper-symbolic","badge-appearance", build_page_appearance,  NULL },
-    { "dock",        "Dock",             "view-paged-symbolic",                   "badge-dock",        build_page_dock,        NULL },
-    { "gestures",    "Gestures",         "input-touchpad-symbolic",               "badge-gestures",    build_page_gestures,    NULL },
-    { "about",       "About",            "help-about-symbolic",                   "badge-about",       build_page_about,       NULL },
+    { "wifi",        "Wi-Fi",            "network-wireless-symbolic",             "badge-wifi",        build_page_wifi,        NULL, NULL, false },
+    { "bluetooth",   "Bluetooth",        "bluetooth-symbolic",                    "badge-bluetooth",   build_page_bluetooth,   NULL, NULL, false },
+    { "sound",       "Sound",            "audio-volume-high-symbolic",            "badge-sound",       build_page_sound,       NULL, NULL, false },
+    { "display",     "Displays",         "video-display-symbolic",                "badge-display",     build_page_display,     NULL, NULL, false },
+    { "workspaces",  "Workspaces",       "view-grid-symbolic",                    "badge-workspaces",  build_page_workspaces,  NULL, NULL, false },
+    { "mouse",       "Mouse & Touchpad", "input-mouse-symbolic",                  "badge-mouse",       build_page_mouse,       NULL, NULL, false },
+    { "keyboard",    "Keyboard",         "input-keyboard-symbolic",               "badge-keyboard",    build_page_keyboard,    NULL, NULL, false },
+    { "appearance",  "Appearance",       "preferences-desktop-wallpaper-symbolic","badge-appearance", build_page_appearance,  NULL, NULL, false },
+    { "dock",        "Dock",             "view-paged-symbolic",                   "badge-dock",        build_page_dock,        NULL, NULL, false },
+    { "gestures",    "Gestures",         "input-touchpad-symbolic",               "badge-gestures",    build_page_gestures,    NULL, NULL, false },
+    { "about",       "About",            "help-about-symbolic",                   "badge-about",       build_page_about,       NULL, NULL, false },
 };
 static const int PAGES_COUNT = sizeof(PAGES) / sizeof(PAGES[0]);
 
@@ -79,12 +81,52 @@ void settings_reset_defaults(void) {
     apply_theme(g_config.dark_mode);
 }
 
+static void ensure_page_built(int idx) {
+    if (idx < 0 || idx >= PAGES_COUNT) return;
+    if (PAGES[idx].built) return;
+
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_propagate_natural_width(GTK_SCROLLED_WINDOW(scroll), FALSE);
+    gtk_scrolled_window_set_min_content_width(GTK_SCROLLED_WINDOW(scroll), 100);
+    gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 100);
+
+    GtkWidget *page_content = PAGES[idx].builder();
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), page_content);
+    gtk_stack_add_named(GTK_STACK(g_stack), scroll, PAGES[idx].id);
+
+    PAGES[idx].scroll_widget = scroll;
+    PAGES[idx].built = true;
+}
+
+static void select_page_by_index(int idx) {
+    if (idx < 0 || idx >= PAGES_COUNT) return;
+    ensure_page_built(idx);
+    if (g_sidebar_list && PAGES[idx].row_widget) {
+        gtk_list_box_select_row(GTK_LIST_BOX(g_sidebar_list), GTK_LIST_BOX_ROW(PAGES[idx].row_widget));
+    }
+    if (g_stack) {
+        gtk_stack_set_visible_child_name(GTK_STACK(g_stack), PAGES[idx].id);
+    }
+}
+
+static void select_page_by_id(const char *page_id) {
+    if (!page_id || !*page_id) return;
+    for (int i = 0; i < PAGES_COUNT; i++) {
+        if (strcmp(PAGES[i].id, page_id) == 0 ||
+            (strcmp(page_id, "displays") == 0 && strcmp(PAGES[i].id, "display") == 0)) {
+            select_page_by_index(i);
+            return;
+        }
+    }
+}
+
 static void on_sidebar_row_selected(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
     (void)box; (void)user_data;
     if (!row) return;
     int idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "page_idx"));
     if (idx >= 0 && idx < PAGES_COUNT) {
-        gtk_stack_set_visible_child_name(GTK_STACK(g_stack), PAGES[idx].id);
+        select_page_by_index(idx);
     }
 }
 
@@ -174,6 +216,15 @@ static GtkWidget *build_sidebar(void) {
 static void on_app_activate(GtkApplication *app, gpointer user_data) {
     (void)user_data;
 
+    // If already running, switch to target page and present window
+    if (g_main_window) {
+        if (g_target_page[0]) {
+            select_page_by_id(g_target_page);
+        }
+        gtk_window_present(GTK_WINDOW(g_main_window));
+        return;
+    }
+
     // Load configuration
     if (!config_load(&g_config, NULL)) {
         g_config = config_get_defaults();
@@ -208,27 +259,18 @@ static void on_app_activate(GtkApplication *app, gpointer user_data) {
 
     // Main Layout (HBox: Sidebar + Scrolled Stack)
     GtkWidget *main_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_add_css_class(main_hbox, "main-hbox");
 
     GtkWidget *sidebar = build_sidebar();
     gtk_box_append(GTK_BOX(main_hbox), sidebar);
 
     // Content Stack
     g_stack = gtk_stack_new();
+    gtk_widget_add_css_class(g_stack, "content-stack");
     gtk_stack_set_transition_type(GTK_STACK(g_stack), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
     gtk_stack_set_transition_duration(GTK_STACK(g_stack), 150);
     gtk_stack_set_hhomogeneous(GTK_STACK(g_stack), FALSE);
     gtk_stack_set_vhomogeneous(GTK_STACK(g_stack), FALSE);
-
-    for (int i = 0; i < PAGES_COUNT; i++) {
-        GtkWidget *scroll = gtk_scrolled_window_new();
-        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-        gtk_scrolled_window_set_propagate_natural_width(GTK_SCROLLED_WINDOW(scroll), FALSE);
-        gtk_scrolled_window_set_min_content_width(GTK_SCROLLED_WINDOW(scroll), 100);
-        gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 100);
-        GtkWidget *page_content = PAGES[i].builder();
-        gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), page_content);
-        gtk_stack_add_named(GTK_STACK(g_stack), scroll, PAGES[i].id);
-    }
 
     gtk_widget_set_hexpand(g_stack, TRUE);
     gtk_widget_set_vexpand(g_stack, TRUE);
@@ -236,7 +278,7 @@ static void on_app_activate(GtkApplication *app, gpointer user_data) {
 
     gtk_window_set_child(GTK_WINDOW(g_main_window), main_hbox);
 
-    // Select target page or default to first
+    // Select target page or default to first (lazy builds that page only)
     int target_idx = 0;
     if (g_target_page[0]) {
         for (int i = 0; i < PAGES_COUNT; i++) {
@@ -248,12 +290,30 @@ static void on_app_activate(GtkApplication *app, gpointer user_data) {
         }
     }
 
-    if (PAGES[target_idx].row_widget) {
-        gtk_list_box_select_row(GTK_LIST_BOX(g_sidebar_list), GTK_LIST_BOX_ROW(PAGES[target_idx].row_widget));
-    }
-    gtk_stack_set_visible_child_name(GTK_STACK(g_stack), PAGES[target_idx].id);
+    select_page_by_index(target_idx);
 
     gtk_window_present(GTK_WINDOW(g_main_window));
+}
+
+static int on_app_command_line(GApplication *app, GApplicationCommandLine *cmdline, gpointer user_data) {
+    (void)user_data;
+    int argc = 0;
+    char **argv = g_application_command_line_get_arguments(cmdline, &argc);
+    const char *target = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] != '-') {
+            target = argv[i];
+            break;
+        }
+    }
+    if (target && *target) {
+        strncpy(g_target_page, target, sizeof(g_target_page) - 1);
+        g_target_page[sizeof(g_target_page) - 1] = '\0';
+    }
+    g_strfreev(argv);
+
+    g_application_activate(app);
+    return 0;
 }
 
 int main(int argc, char *argv[]) {
@@ -265,9 +325,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    GtkApplication *app = gtk_application_new("com.aurade.settings", G_APPLICATION_DEFAULT_FLAGS);
+    GtkApplication *app = gtk_application_new("com.aurade.settings", G_APPLICATION_HANDLES_COMMAND_LINE);
     g_signal_connect(app, "activate", G_CALLBACK(on_app_activate), NULL);
-    int status = g_application_run(G_APPLICATION(app), 0, NULL);
+    g_signal_connect(app, "command-line", G_CALLBACK(on_app_command_line), NULL);
+    int status = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);
     return status;
 }
