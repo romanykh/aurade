@@ -246,11 +246,11 @@ aurade_topbar_t *topbar_create(aurade_server_t *server) {
     if (bar->blur_node) {
         wlr_scene_node_set_position(&bar->blur_node->node, 0, 0);
         wlr_scene_node_place_below(&bar->blur_node->node, &bar->scene_buffer->node);
-        bool tb_glass = (server->config.blur_topbar || server->config.liquid_glass);
-        float tb_str = server->config.blur_topbar ? (float)server->config.blur_strength : 0.0f;
+        bool tb_blur = server->config.blur_topbar;
+        float tb_str = tb_blur ? (float)server->config.blur_strength : 0.0f;
         wlr_scene_blur_set_strength(bar->blur_node, tb_str);
-        wlr_scene_blur_set_liquid_glass(bar->blur_node, server->config.liquid_glass);
-        wlr_scene_node_set_enabled(&bar->blur_node->node, tb_glass);
+        wlr_scene_blur_set_liquid_glass(bar->blur_node, false);
+        wlr_scene_node_set_enabled(&bar->blur_node->node, tb_blur);
     }
 
     bar->power_menu_state = POWER_MENU_CLOSED;
@@ -290,8 +290,8 @@ void topbar_resize(aurade_topbar_t *bar, int width) {
     cairo_buffer_resize(bar->buffer, width, bar->height);
     if (bar->blur_node) {
         wlr_scene_blur_set_size(bar->blur_node, width, bar->height);
-        bool tb_glass = bar->server && (bar->server->config.blur_topbar || bar->server->config.liquid_glass);
-        wlr_scene_node_set_enabled(&bar->blur_node->node, tb_glass);
+        bool tb_blur = bar->server && bar->server->config.blur_topbar;
+        wlr_scene_node_set_enabled(&bar->blur_node->node, tb_blur);
     }
     topbar_render(bar);
 }
@@ -314,13 +314,11 @@ void topbar_render(aurade_topbar_t *bar) {
     cairo_buffer_clear(bar->buffer);
 
     if (bar->blur_node) {
-        bool tb_glass = bar->server && (bar->server->config.blur_topbar || bar->server->config.liquid_glass);
-        float tb_str = (bar->server && bar->server->config.blur_topbar) ? (float)bar->server->config.blur_strength : 0.0f;
+        bool tb_blur = bar->server && bar->server->config.blur_topbar;
+        float tb_str = tb_blur ? (float)bar->server->config.blur_strength : 0.0f;
         wlr_scene_blur_set_strength(bar->blur_node, tb_str);
-        if (bar->server) {
-            wlr_scene_blur_set_liquid_glass(bar->blur_node, bar->server->config.liquid_glass);
-        }
-        wlr_scene_node_set_enabled(&bar->blur_node->node, tb_glass);
+        wlr_scene_blur_set_liquid_glass(bar->blur_node, false);
+        wlr_scene_node_set_enabled(&bar->blur_node->node, tb_blur);
     }
 
     // Topbar rendered as pure soft vignette shading ("просто затінення")

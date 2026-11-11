@@ -433,9 +433,16 @@ static void view_scale_buffer_iterator(struct wlr_scene_buffer *scene_buffer,
 
 void view_update_blur(aurade_view_t *view) {
     if (!view || !view->blur_node || !view->server) return;
-    bool win_glass = (view->server->config.blur_windows || view->server->config.liquid_glass);
-    float win_str = view->server->config.blur_windows ? (float)view->server->config.blur_strength : 0.0f;
-    bool enabled = win_glass &&
+    bool pause_blur = (
+        view->server->gesture_mode != GESTURE_MODE_IDLE ||
+        view->server->gesture_in_progress ||
+        view->server->gesture_animating ||
+        view->server->workspace_animating ||
+        (view->server->mission_control && view->server->mission_control->active) ||
+        (view->server->launchpad && view->server->launchpad->active)
+    );
+    bool enabled = view->server->config.blur_windows &&
+                   !pause_blur &&
                    !view->minimized &&
                    (view->scene_tree && view->scene_tree->node.enabled) &&
                    view->width > 0 && view->height > 0;
@@ -451,12 +458,8 @@ void view_update_blur(aurade_view_t *view) {
         int max_r = (bw < bh ? bw : bh) / 4;
         if (rad > max_r) rad = max_r;
         wlr_scene_blur_set_corner_radius(view->blur_node, rad);
-        if (view->server->config.liquid_glass) {
-            wlr_scene_blur_set_liquid_glass(view->blur_node, true);
-        } else {
-            wlr_scene_blur_set_liquid_glass(view->blur_node, false);
-        }
-        wlr_scene_blur_set_strength(view->blur_node, win_str);
+        wlr_scene_blur_set_liquid_glass(view->blur_node, false);
+        wlr_scene_blur_set_strength(view->blur_node, (float)view->server->config.blur_strength);
         if (view->content_tree) {
             wlr_scene_node_place_below(&view->blur_node->node, &view->content_tree->node);
         }

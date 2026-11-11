@@ -267,6 +267,12 @@ void server_switch_workspace(aurade_server_t *server, int target_workspace, bool
     spring_simulation_start(&server->workspace_spring, &ws_cfg,
                             cur_offset, 0.0, 0.0);
     server->workspace_animating = true;
+    if (server->views.next && server->views.prev) {
+        aurade_view_t *view_it;
+        wl_list_for_each(view_it, &server->views, link) {
+            view_update_blur(view_it);
+        }
+    }
     server_update_workspace_positions(server);
     if (server->dock) {
         dock_update_visibility(server->dock);
@@ -286,6 +292,7 @@ void server_step_workspace_spring(aurade_server_t *server, double dt) {
     if (!still_animating) {
         server->workspace_animating = false;
         server->workspace_offset = 0.0;
+        server_update_blur_config(server);
     }
 
     server_update_workspace_positions(server);

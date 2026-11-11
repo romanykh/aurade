@@ -408,7 +408,8 @@ void dock_apply_slide(aurade_dock_t *dock) {
         bool pause_blur = dock->server && (
             dock->server->gesture_mode != GESTURE_MODE_IDLE ||
             dock->server->gesture_in_progress ||
-            dock->server->gesture_animating
+            dock->server->gesture_animating ||
+            dock->server->workspace_animating
         );
         double dock_op = dock->server ? dock->server->config.dock_opacity : 0.85;
         bool dock_glass = dock->server && (dock->server->config.blur_dock || dock->server->config.liquid_glass);
@@ -1397,7 +1398,8 @@ void dock_render(aurade_dock_t *dock) {
         bool pause_blur = dock->server && (
             dock->server->gesture_mode != GESTURE_MODE_IDLE ||
             dock->server->gesture_in_progress ||
-            dock->server->gesture_animating
+            dock->server->gesture_animating ||
+            dock->server->workspace_animating
         );
         wlr_scene_node_set_enabled(&dock->blur_node->node,
                                    dock->enabled && dock->hide_progress < 0.999 &&

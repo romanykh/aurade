@@ -80,12 +80,20 @@ void server_update_blur_config(aurade_server_t *server) {
 
     wlr_scene_set_blur_data(server->scene, passes, eff_rad, noise, brightness, contrast, saturation);
 
+    bool pause_blur = (
+        server->gesture_mode != GESTURE_MODE_IDLE ||
+        server->gesture_in_progress ||
+        server->gesture_animating ||
+        server->workspace_animating
+    );
+
     if (server->dock && server->dock->blur_node) {
         bool dock_glass = (server->config.blur_dock || server->config.liquid_glass);
         float dock_str = server->config.blur_dock ? (float)str : 0.0f;
         wlr_scene_blur_set_liquid_glass(server->dock->blur_node, server->config.liquid_glass);
         wlr_scene_blur_set_strength(server->dock->blur_node, dock_str);
         wlr_scene_node_set_enabled(&server->dock->blur_node->node,
+                                   !pause_blur &&
                                    server->dock->enabled &&
                                    server->dock->hide_progress < 0.999 &&
                                    dock_glass &&
@@ -93,11 +101,11 @@ void server_update_blur_config(aurade_server_t *server) {
     }
     if (server->topbar) {
         if (server->topbar->blur_node) {
-            bool topbar_glass = (server->config.blur_topbar || server->config.liquid_glass);
-            float topbar_str = server->config.blur_topbar ? (float)str : 0.0f;
-            wlr_scene_blur_set_liquid_glass(server->topbar->blur_node, server->config.liquid_glass);
+            bool topbar_blur = server->config.blur_topbar;
+            float topbar_str = topbar_blur ? (float)str : 0.0f;
+            wlr_scene_blur_set_liquid_glass(server->topbar->blur_node, false);
             wlr_scene_blur_set_strength(server->topbar->blur_node, topbar_str);
-            wlr_scene_node_set_enabled(&server->topbar->blur_node->node, topbar_glass);
+            wlr_scene_node_set_enabled(&server->topbar->blur_node->node, topbar_blur && !pause_blur);
         }
         if (server->topbar->power_menu_blur_node) {
             bool pm_glass = (server->config.blur_power_menu || server->config.liquid_glass);
@@ -106,7 +114,7 @@ void server_update_blur_config(aurade_server_t *server) {
             wlr_scene_blur_set_strength(server->topbar->power_menu_blur_node, pm_str);
             bool pm_open = topbar_power_menu_is_open(server->topbar);
             wlr_scene_node_set_enabled(&server->topbar->power_menu_blur_node->node,
-                                       pm_open && pm_glass);
+                                       pm_open && pm_glass && !pause_blur);
         }
     }
     if (server->control_center && server->control_center->blur_node) {
@@ -2682,6 +2690,16 @@ void server_handle_gesture_begin(aurade_server_t *server, gesture_action_type_t 
             server->gesture_mode = GESTURE_MODE_IDLE;
             break;
     }
+
+    if (server->views.next && server->views.prev) {
+        aurade_view_t *view_it;
+        wl_list_for_each(view_it, &server->views, link) {
+            view_update_blur(view_it);
+        }
+    }
+    if (server->dock) {
+        dock_apply_slide(server->dock);
+    }
 }
 
 void server_handle_gesture_update(aurade_server_t *server, double delta_x, double delta_y, double scale) {
@@ -3379,6 +3397,10 @@ void server_tick_animations(aurade_server_t *server, double dt) {
             default:
                 server->gesture_animating = false;
                 break;
+        }
+
+        if (!active) {
+            server_update_blur_config(server);
         }
     }
 
