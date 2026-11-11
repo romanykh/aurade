@@ -716,6 +716,10 @@ void mission_control_update_progress(aurade_mission_control_t *mc, double progre
         wlr_scene_node_set_enabled(&mc->scene_buffer->node, false);
         mc->needs_render = false;
         server_update_workspace_positions(mc->server);
+        if (mc->server && !mc->server->gesture_in_progress && !mc->server->gesture_animating) {
+            mc->active = false;
+            mc->server->gesture_mode = GESTURE_MODE_IDLE;
+        }
         return;
     }
 

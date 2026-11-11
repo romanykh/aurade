@@ -1172,11 +1172,29 @@ static void cursor_motion_absolute(struct wl_listener *listener, void *data) {
 // Animate the current overlay back to closed. Used by Escape, outside clicks,
 // and by the opposite/toggle gesture while an overlay is already open.
 static void gesture_spring_close(aurade_server_t *server) {
-    if (server->gesture_mode == GESTURE_MODE_IDLE) return;
-    if (server->gesture_animating) return;
+    if (server->gesture_mode == GESTURE_MODE_IDLE) {
+        if (server->mission_control && server->mission_control->active) {
+            mission_control_end(server->mission_control, false);
+            schedule_all_outputs(server);
+        }
+        if (server->launchpad && server->launchpad->active) {
+            launchpad_end(server->launchpad, false);
+            schedule_all_outputs(server);
+        }
+        return;
+    }
+    if (server->gesture_animating) {
+        if (server->gesture_spring.target_pos != 0.0) {
+            spring_simulation_start(&server->gesture_spring, &server->config.spring,
+                                    server->gesture_progress, 0.0, 0.0);
+            server->gesture_is_closing = true;
+        }
+        return;
+    }
     if (server->gesture_mode == GESTURE_MODE_WORKSPACE_CAROUSEL) return;
 
     double cur_p = server->gesture_progress;
+    server->gesture_is_closing = true;
     spring_simulation_start(&server->gesture_spring, &server->config.spring,
                             cur_p > 0.01 ? cur_p : 1.0, 0.0, 0.0);
     server->gesture_animating = true;
@@ -1476,7 +1494,9 @@ static void cursor_button(struct wl_listener *listener, void *data) {
     }
     if (server->mission_control && server->mission_control->active) {
         if (left) {
-            mission_control_handle_press(server->mission_control, lx, ly);
+            if (!mission_control_handle_press(server->mission_control, lx, ly)) {
+                close_overlay(server);
+            }
             schedule_all_outputs(server);
         } else {
             close_overlay(server);
@@ -2059,7 +2079,9 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
         }
 
         // Escape dismisses any open overlay (Mission Control, Launchpad, ...).
-        if (sym == XKB_KEY_Escape && server->gesture_mode != GESTURE_MODE_IDLE) {
+        if (sym == XKB_KEY_Escape && (server->gesture_mode != GESTURE_MODE_IDLE ||
+            (server->mission_control && server->mission_control->active) ||
+            (server->launchpad && server->launchpad->active))) {
             close_overlay(server);
             return;
         }
@@ -2188,7 +2210,8 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
             return;
         }
         if (sym == XKB_KEY_F3) {
-            if (server->gesture_mode == GESTURE_MODE_MISSION_CONTROL) {
+            if (server->gesture_mode == GESTURE_MODE_MISSION_CONTROL ||
+                (server->mission_control && server->mission_control->active)) {
                 close_overlay(server);
             } else {
                 server_handle_gesture_begin(server, ACTION_MISSION_CONTROL);
@@ -2472,19 +2495,38 @@ void server_handle_gesture_begin(aurade_server_t *server, gesture_action_type_t 
 
         // Swiping while Mission Control is open: swiping down closes, swiping left/right switches workspaces continuously
         if (cur == GESTURE_MODE_MISSION_CONTROL) {
-            if (action == ACTION_APP_EXPOSE || action == ACTION_MISSION_CONTROL) {
+            // If Mission Control was already animating closed (target_pos == 0.0), snap close it cleanly
+            // so any subsequent gesture (workspace swipe, Launchpad, show desktop) applies to desktop!
+            if (server->gesture_animating && server->gesture_spring.target_pos == 0.0) {
+                mission_control_end(server->mission_control, false);
+                server->gesture_mode = GESTURE_MODE_IDLE;
+                server->gesture_progress = 0.0;
+                server->gesture_animating = false;
+                server->gesture_is_closing = false;
+                cur = GESTURE_MODE_IDLE;
+            } else if (action == ACTION_APP_EXPOSE || action == ACTION_MISSION_CONTROL) {
                 server->gesture_in_progress = true;
                 server->gesture_animating = false;
                 server->gesture_is_closing = true;
                 server->gesture_start_progress = server->gesture_progress > 0.0 ? server->gesture_progress : 1.0;
                 return;
             } else if (action == ACTION_WORKSPACE_NEXT || action == ACTION_WORKSPACE_PREV) {
-                if (server->mission_control) {
+                if (server->mission_control && server->mission_control->active) {
                     server->gesture_in_progress = true;
                     server->gesture_animating = false;
                     mission_control_ws_gesture_begin(server->mission_control);
+                    return;
                 }
-                return;
+            } else {
+                // Any other gesture while in Mission Control: cleanly end Mission Control first
+                if (server->mission_control && server->mission_control->active) {
+                    mission_control_end(server->mission_control, false);
+                    server->gesture_mode = GESTURE_MODE_IDLE;
+                    server->gesture_progress = 0.0;
+                    server->gesture_animating = false;
+                    server->gesture_is_closing = false;
+                    cur = GESTURE_MODE_IDLE;
+                }
             }
         }
 
@@ -2509,17 +2551,19 @@ void server_handle_gesture_begin(aurade_server_t *server, gesture_action_type_t 
             }
         }
 
-        bool toggle =
-            (cur == GESTURE_MODE_CONTROL_CENTER && action == ACTION_CONTROL_CENTER) ||
-            (cur == GESTURE_MODE_SHOW_DESKTOP   && action == ACTION_SHOW_DESKTOP);
+        if (cur != GESTURE_MODE_IDLE) {
+            bool toggle =
+                (cur == GESTURE_MODE_CONTROL_CENTER && action == ACTION_CONTROL_CENTER) ||
+                (cur == GESTURE_MODE_SHOW_DESKTOP   && action == ACTION_SHOW_DESKTOP);
 
-        if (toggle) {
-            if (!server->gesture_animating) {
-                fprintf(stderr, "[AuraDE] Gesture: closing overlay (mode=%d)\n", cur);
-                gesture_spring_close(server);
+            if (toggle) {
+                if (!server->gesture_animating) {
+                    fprintf(stderr, "[AuraDE] Gesture: closing overlay (mode=%d)\n", cur);
+                    gesture_spring_close(server);
+                }
             }
+            return;
         }
-        return;
     }
 
     server->gesture_in_progress = true;
@@ -2599,8 +2643,17 @@ void server_handle_gesture_update(aurade_server_t *server, double delta_x, doubl
     switch (server->gesture_mode) {
         case GESTURE_MODE_MISSION_CONTROL: {
             if (server->mission_control && server->mission_control->ws_gesture_active) {
-                mission_control_ws_gesture_update(server->mission_control, delta_x);
-                break;
+                // If during a workspace swipe inside Mission Control the user pulls downwards to close,
+                // seamlessly transition to closing Mission Control instead of getting trapped in horizontal swipe!
+                if (delta_y > 45.0 && fabs(delta_y) > fabs(delta_x) * 1.2) {
+                    server->mission_control->ws_gesture_active = false;
+                    server->mission_control->ws_slide_offset = 0.0;
+                    server->gesture_is_closing = true;
+                    server->gesture_start_progress = 1.0;
+                } else {
+                    mission_control_ws_gesture_update(server->mission_control, delta_x);
+                    break;
+                }
             }
             double p;
             if (server->gesture_is_closing) {
@@ -2704,6 +2757,17 @@ void server_handle_gesture_end(aurade_server_t *server, bool cancelled, double v
     if (server->gesture_mode == GESTURE_MODE_MISSION_CONTROL &&
         server->mission_control && server->mission_control->ws_gesture_active) {
         mission_control_ws_gesture_end(server->mission_control, cancelled, velocity_x);
+        if (server->gesture_is_closing || server->gesture_progress < 0.85) {
+            spring_simulation_start(&server->gesture_spring, &server->config.spring,
+                                    server->gesture_progress, 0.0, 0.0);
+            server->gesture_animating = true;
+            server->gesture_is_closing = true;
+        } else if (server->gesture_progress < 0.999) {
+            spring_simulation_start(&server->gesture_spring, &server->config.spring,
+                                    server->gesture_progress, 1.0, 0.0);
+            server->gesture_animating = true;
+            server->gesture_is_closing = false;
+        }
         return;
     }
 
@@ -2832,7 +2896,11 @@ void server_handle_gesture_end(aurade_server_t *server, bool cancelled, double v
             }
         }
     } else {
-        target_p = server->gesture_is_closing ? 1.0 : 0.0;
+        if (server->gesture_is_closing) {
+            target_p = (cur_p <= 0.40) ? 0.0 : 1.0;
+        } else {
+            target_p = (cur_p >= 0.60) ? 1.0 : 0.0;
+        }
     }
 
     spring_simulation_start(&server->gesture_spring, &server->config.spring,
