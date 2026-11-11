@@ -428,6 +428,12 @@ static void view_scale_buffer_iterator(struct wlr_scene_buffer *scene_buffer,
         if (scene_buffer->opacity != target_alpha) {
             wlr_scene_buffer_set_opacity(scene_buffer, target_alpha);
         }
+        if (target_alpha < 0.999f) {
+            pixman_region32_t empty;
+            pixman_region32_init(&empty);
+            wlr_scene_buffer_set_opaque_region(scene_buffer, &empty);
+            pixman_region32_fini(&empty);
+        }
     }
 }
 
@@ -529,6 +535,12 @@ static void view_opacity_buffer_iterator(struct wlr_scene_buffer *scene_buffer,
     struct view_opacity_data *data = user_data;
     if (!scene_buffer) return;
     wlr_scene_buffer_set_opacity(scene_buffer, data->opacity);
+    if (data->opacity < 0.999f) {
+        pixman_region32_t empty;
+        pixman_region32_init(&empty);
+        wlr_scene_buffer_set_opaque_region(scene_buffer, &empty);
+        pixman_region32_fini(&empty);
+    }
 }
 
 void view_set_opacity(aurade_view_t *view, float opacity) {
@@ -551,16 +563,6 @@ void view_anim_settle(aurade_view_t *view) {
     if (prev == VIEW_ANIM_MINIMIZE) {
         view->minimized = true;
         wlr_scene_node_set_enabled(&view->scene_tree->node, false);
-    } else if (prev == VIEW_ANIM_CLOSE) {
-        wlr_scene_node_set_enabled(&view->scene_tree->node, false);
-        view_set_scale(view, 1.0, 1.0);
-        view_set_opacity(view, 1.0f);
-        if (view->xdg_toplevel) {
-            wlr_xdg_toplevel_send_close(view->xdg_toplevel);
-        } else if (view->xwayland_surface) {
-            wlr_xwayland_surface_close(view->xwayland_surface);
-        }
-        return;
     } else {
         wlr_scene_node_set_enabled(&view->scene_tree->node, !view->minimized);
     }
@@ -759,41 +761,6 @@ void server_tick_view_animations(aurade_server_t *server, double dt) {
                 }
                 break;
             }
-            case VIEW_ANIM_CLOSE: {
-                // p: 0.0 -> 1.0 (macOS window close pop & fade)
-                double p_clamp = p < 0.0 ? 0.0 : (p > 1.0 ? 1.0 : p);
-                // Snappy scale-down pop: 1.0 -> 0.88
-                double scale = 1.0 - 0.12 * p_clamp;
-                if (scale < 0.1) scale = 0.1;
-                // Smooth cubic ease out opacity: 1.0 -> 0.0
-                double opacity = 1.0 - (p_clamp * p_clamp * (3.0 - 2.0 * p_clamp));
-                if (opacity < 0.0) opacity = 0.0;
-                if (opacity > 1.0) opacity = 1.0;
-
-                double cur_w = view->anim_start_w * scale;
-                double cur_h = view->anim_start_h * scale;
-                double start_cx = view->anim_start_x + view->anim_start_w / 2.0;
-                double start_cy = view->anim_start_y + view->anim_start_h / 2.0;
-                int render_x = (int)round(start_cx - cur_w / 2.0);
-                int render_y = (int)round(start_cy - cur_h / 2.0);
-
-                wlr_scene_node_set_position(&view->scene_tree->node, render_x, render_y);
-                view_set_scale(view, scale, scale);
-                view_set_opacity(view, (float)opacity);
-
-                if (!active) {
-                    view->anim_type = VIEW_ANIM_NONE;
-                    wlr_scene_node_set_enabled(&view->scene_tree->node, false);
-                    view_set_scale(view, 1.0, 1.0);
-                    view_set_opacity(view, 1.0f);
-                    if (view->xdg_toplevel) {
-                        wlr_xdg_toplevel_send_close(view->xdg_toplevel);
-                    } else if (view->xwayland_surface) {
-                        wlr_xwayland_surface_close(view->xwayland_surface);
-                    }
-                }
-                break;
-            }
             case VIEW_ANIM_GEOMETRY: {
                 // p: 0.0 -> 1.0 (smooth rectangle interpolation)
                 double p_clamp = p < 0.0 ? 0.0 : (p > 1.0 ? 1.0 : p);
@@ -833,6 +800,45 @@ void server_tick_view_animations(aurade_server_t *server, double dt) {
             default:
                 break;
         }
+    }
+
+    aurade_close_anim_t *canim, *canim_tmp;
+    wl_list_for_each_safe(canim, canim_tmp, &server->close_anims, link) {
+        canim->elapsed += dt;
+        double p = canim->elapsed / canim->duration;
+        if (p >= 1.0) {
+            wlr_scene_node_destroy(&canim->scene_buffer->node);
+            wlr_buffer_unlock(canim->buffer);
+            wl_list_remove(&canim->link);
+            free(canim);
+            continue;
+        }
+
+        // Snappy scale pop (1.0 -> 0.85) and smooth cubic fade out (1.0 -> 0.0)
+        double scale = 1.0 - 0.15 * p;
+        if (scale < 0.1) scale = 0.1;
+        double opacity = 1.0 - (p * p * (3.0 - 2.0 * p));
+        if (opacity < 0.0) opacity = 0.0;
+        if (opacity > 1.0) opacity = 1.0;
+
+        int cur_w = (int)round(canim->width * scale);
+        int cur_h = (int)round(canim->height * scale);
+        if (cur_w < 1) cur_w = 1;
+        if (cur_h < 1) cur_h = 1;
+
+        double cx = canim->start_x + canim->width / 2.0;
+        double cy = canim->start_y + canim->height / 2.0;
+        int rx = (int)round(cx - cur_w / 2.0);
+        int ry = (int)round(cy - cur_h / 2.0);
+
+        int max_r = (cur_w < cur_h ? cur_w : cur_h) / 4;
+        int rad = 12;
+        if (rad > max_r) rad = max_r;
+        wlr_scene_buffer_set_corner_radius(canim->scene_buffer, rad);
+
+        wlr_scene_node_set_position(&canim->scene_buffer->node, rx, ry);
+        wlr_scene_buffer_set_dest_size(canim->scene_buffer, cur_w, cur_h);
+        wlr_scene_buffer_set_opacity(canim->scene_buffer, (float)opacity);
     }
 }
 
@@ -1596,6 +1602,9 @@ void view_minimize(aurade_view_t *view) {
             }
         }
     }
+    if (view->scene_tree) {
+        wlr_scene_node_raise_to_top(&view->scene_tree->node);
+    }
     if (view->server->config.tiling_enabled) {
         workspace_relayout_tiling(view->server, view->workspace);
     }
@@ -1670,77 +1679,103 @@ void view_restore(aurade_view_t *view) {
     dock_refresh(view->server);
 }
 
+struct find_buffer_data {
+    struct wlr_scene_buffer *best_buffer;
+    int max_area;
+};
+
+static void find_largest_buffer_iterator(struct wlr_scene_buffer *scene_buffer,
+                                         int sx, int sy, void *user_data) {
+    (void)sx; (void)sy;
+    struct find_buffer_data *data = user_data;
+    if (!scene_buffer || !scene_buffer->buffer) return;
+    int area = scene_buffer->buffer->width * scene_buffer->buffer->height;
+    if (area > data->max_area) {
+        data->max_area = area;
+        data->best_buffer = scene_buffer;
+    }
+}
+
+void view_spawn_close_animation(aurade_view_t *view) {
+    if (!view || !view->server || !view->scene_tree) return;
+    if (view->minimized || view->anim_type == VIEW_ANIM_MINIMIZE) return;
+    if (view->width < 50 || view->height < 50) return;
+    if (view->workspace < 0 || view->workspace >= MAX_WORKSPACES) return;
+    if (!view->server->workspace_trees[view->workspace]) return;
+    if ((view->server->mission_control && view->server->mission_control->active) ||
+        (view->server->launchpad && view->server->launchpad->active)) return;
+    if (view->workspace != view->server->current_workspace) return;
+
+    struct find_buffer_data find_data = { .best_buffer = NULL, .max_area = 0 };
+    wlr_scene_node_for_each_buffer(&view->scene_tree->node, find_largest_buffer_iterator, &find_data);
+    if (!find_data.best_buffer || !find_data.best_buffer->buffer) return;
+
+    struct wlr_buffer *locked_buf = wlr_buffer_lock(find_data.best_buffer->buffer);
+    if (!locked_buf) return;
+
+    struct wlr_scene_buffer *ghost_scene = wlr_scene_buffer_create(view->server->workspace_trees[view->workspace], locked_buf);
+    if (!ghost_scene) {
+        wlr_buffer_unlock(locked_buf);
+        return;
+    }
+
+    int w = view->width;
+    int h = view->height;
+    if (w <= 0 && find_data.best_buffer->dst_width > 0) w = find_data.best_buffer->dst_width;
+    if (h <= 0 && find_data.best_buffer->dst_height > 0) h = find_data.best_buffer->dst_height;
+    if (w <= 0) w = locked_buf->width;
+    if (h <= 0) h = locked_buf->height;
+
+    wlr_scene_node_set_position(&ghost_scene->node, view->x, view->y);
+    wlr_scene_buffer_set_dest_size(ghost_scene, w, h);
+    wlr_scene_buffer_set_filter_mode(ghost_scene, WLR_SCALE_FILTER_BILINEAR);
+
+    if (find_data.best_buffer->src_box.width > 0 && find_data.best_buffer->src_box.height > 0) {
+        wlr_scene_buffer_set_source_box(ghost_scene, &find_data.best_buffer->src_box);
+    }
+    wlr_scene_buffer_set_transform(ghost_scene, find_data.best_buffer->transform);
+
+    int rad = 12;
+    int max_r = (w < h ? w : h) / 4;
+    if (rad > max_r) rad = max_r;
+    wlr_scene_buffer_set_corner_radius(ghost_scene, rad);
+
+    pixman_region32_t empty;
+    pixman_region32_init(&empty);
+    wlr_scene_buffer_set_opaque_region(ghost_scene, &empty);
+    pixman_region32_fini(&empty);
+
+    wlr_scene_buffer_set_opacity(ghost_scene, 1.0f);
+    wlr_scene_node_raise_to_top(&ghost_scene->node);
+
+    aurade_close_anim_t *anim = calloc(1, sizeof(*anim));
+    if (!anim) {
+        wlr_scene_node_destroy(&ghost_scene->node);
+        wlr_buffer_unlock(locked_buf);
+        return;
+    }
+
+    anim->server = view->server;
+    anim->scene_buffer = ghost_scene;
+    anim->buffer = locked_buf;
+    anim->start_x = (double)view->x;
+    anim->start_y = (double)view->y;
+    anim->width = (double)w;
+    anim->height = (double)h;
+    anim->elapsed = 0.0;
+    anim->duration = 0.18; // 180ms smooth macOS close pop & fade
+
+    wl_list_insert(&view->server->close_anims, &anim->link);
+    schedule_all_outputs(view->server);
+}
+
 void view_close(aurade_view_t *view) {
     if (!view) return;
-
-    // If already closing, force immediate close
-    if (view->anim_type == VIEW_ANIM_CLOSE) {
-        if (view->xdg_toplevel) {
-            wlr_xdg_toplevel_send_close(view->xdg_toplevel);
-        } else if (view->xwayland_surface) {
-            wlr_xwayland_surface_close(view->xwayland_surface);
-        }
-        return;
+    if (view->xdg_toplevel) {
+        wlr_xdg_toplevel_send_close(view->xdg_toplevel);
+    } else if (view->xwayland_surface) {
+        wlr_xwayland_surface_close(view->xwayland_surface);
     }
-
-    // If minimized, invisible, or inside mission control, close immediately
-    if (view->minimized || !view->scene_tree || !view->scene_tree->node.enabled ||
-        (view->server && view->server->mission_control && view->server->mission_control->active)) {
-        if (view->xdg_toplevel) {
-            wlr_xdg_toplevel_send_close(view->xdg_toplevel);
-        } else if (view->xwayland_surface) {
-            wlr_xwayland_surface_close(view->xwayland_surface);
-        }
-        return;
-    }
-
-    // Start macOS pop & fade closing animation
-    view->anim_type = VIEW_ANIM_CLOSE;
-    view->anim_start_x = view->x;
-    view->anim_start_y = view->y;
-    view->anim_start_w = view->width;
-    view->anim_start_h = view->height;
-
-    if (view->blur_node) {
-        wlr_scene_node_set_enabled(&view->blur_node->node, false);
-    }
-
-    spring_config_t close_cfg = {
-        .mass = 1.0,
-        .stiffness = 450.0,
-        .damping = 0.92,
-        .velocity_threshold = 0.01,
-        .position_threshold = 0.001,
-    };
-    spring_simulation_start(&view->anim_spring, &close_cfg, 0.0, 1.0, 0.0);
-
-    // Yield keyboard focus to the next visible window on this workspace immediately
-    if (view->server->focused_view == view) {
-        view->server->focused_view = NULL;
-        aurade_view_t *other;
-        bool found = false;
-        wl_list_for_each(other, &view->server->views, link) {
-            if (other != view && !other->minimized &&
-                other->anim_type != VIEW_ANIM_MINIMIZE &&
-                other->anim_type != VIEW_ANIM_CLOSE &&
-                other->workspace == view->server->current_workspace) {
-                view_focus(other);
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            wlr_seat_keyboard_clear_focus(view->server->seat);
-            if (view->server->topbar) {
-                topbar_set_active_app(view->server->topbar, "Finder");
-            }
-        }
-    }
-    if (view->server->config.tiling_enabled) {
-        workspace_relayout_tiling(view->server, view->workspace);
-    }
-    schedule_all_outputs(view->server);
-    dock_refresh(view->server);
 }
 
 static void xdg_surface_commit_debug(struct wl_listener *listener, void *data) {
@@ -1994,6 +2029,8 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
     (void)data;
     aurade_view_t *view = wl_container_of(listener, view, unmap);
     int ws = view->workspace;
+
+    view_spawn_close_animation(view);
 
     // Unmap is the first half of a close (destroy follows), but some clients
     // withdraw a window and keep the toplevel alive. Hide the whole view so no

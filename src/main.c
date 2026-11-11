@@ -336,8 +336,9 @@ static void output_frame(struct wl_listener *listener, void *data) {
         (mission_control_is_animating(server->mission_control) || server->mission_control->needs_render);
     bool osd_animating = server->osd && osd_is_animating(server->osd);
     bool notif_animating = server->notifications && notifications_is_animating(server->notifications);
+    bool close_animating = !wl_list_empty(&server->close_anims);
 
-    if (view_animating || dock_animating || topbar_animating || launchpad_animating || lockscreen_animating ||
+    if (view_animating || close_animating || dock_animating || topbar_animating || launchpad_animating || lockscreen_animating ||
         mc_animating || server->gesture_animating || server->workspace_animating || server->gesture_in_progress ||
         osd_animating || notif_animating ||
         wlr_scene_output_needs_frame(output->scene_output)) {
@@ -2012,6 +2013,16 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
                                                        group, 0, &base_syms);
     }
 
+    // Latin group 0, level 0 symbol (e.g. Q, W, M, F, V) so global Super shortcuts
+    // work reliably regardless of the active keyboard layout (e.g. Ukrainian, Greek, Russian).
+    const xkb_keysym_t *latin_syms = NULL;
+    int n_latin_syms = 0;
+    if (keyboard->keymap) {
+        n_latin_syms = xkb_keymap_key_get_syms_by_level(keyboard->keymap, keycode,
+                                                        0, 0, &latin_syms);
+    }
+    xkb_keysym_t latin_sym = (n_latin_syms > 0) ? latin_syms[0] : XKB_KEY_NoSymbol;
+
     bool pressed = event->state == WL_KEYBOARD_KEY_STATE_PRESSED;
     bool super = xkb_state_mod_name_is_active(keyboard->xkb_state, XKB_MOD_NAME_LOGO,
                                               XKB_STATE_MODS_EFFECTIVE) > 0;
@@ -2147,9 +2158,9 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
         }
 
         // Lock screen activation shortcuts: Super+L, Ctrl+Alt+L, or Ctrl+Super+Q (macOS standard)
-        if ((super && (sym == XKB_KEY_l || sym == XKB_KEY_L)) ||
-            (ctrl && alt && (sym == XKB_KEY_l || sym == XKB_KEY_L)) ||
-            (ctrl && super && (sym == XKB_KEY_q || sym == XKB_KEY_Q))) {
+        if ((super && (sym == XKB_KEY_l || sym == XKB_KEY_L || latin_sym == XKB_KEY_l || latin_sym == XKB_KEY_L)) ||
+            (ctrl && alt && (sym == XKB_KEY_l || sym == XKB_KEY_L || latin_sym == XKB_KEY_l || latin_sym == XKB_KEY_L)) ||
+            (ctrl && super && (sym == XKB_KEY_q || sym == XKB_KEY_Q || latin_sym == XKB_KEY_q || latin_sym == XKB_KEY_Q))) {
             server_lock_screen(server);
             return;
         }
@@ -2163,11 +2174,11 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 
         // Global macOS-style shortcuts.
         if (super) {
-            if (shift && (sym == XKB_KEY_s || sym == XKB_KEY_S)) {
+            if (shift && (sym == XKB_KEY_s || sym == XKB_KEY_S || latin_sym == XKB_KEY_s || latin_sym == XKB_KEY_S)) {
                 if (server->screenshot) screenshot_begin(server->screenshot);
                 return;
             }
-            if (shift && (sym == XKB_KEY_r || sym == XKB_KEY_R)) {
+            if (shift && (sym == XKB_KEY_r || sym == XKB_KEY_R || latin_sym == XKB_KEY_r || latin_sym == XKB_KEY_R)) {
                 if (server->screenshot) screenshot_begin_video(server->screenshot);
                 return;
             }
@@ -2175,7 +2186,8 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
                 if (server->screenshot) screenshot_begin(server->screenshot);
                 return;
             }
-            if (sym == XKB_KEY_q || sym == XKB_KEY_Q || sym == XKB_KEY_w || sym == XKB_KEY_W) {
+            if (sym == XKB_KEY_q || sym == XKB_KEY_Q || latin_sym == XKB_KEY_q || latin_sym == XKB_KEY_Q ||
+                sym == XKB_KEY_w || sym == XKB_KEY_W || latin_sym == XKB_KEY_w || latin_sym == XKB_KEY_W) {
                 if (server->focused_view) view_close(server->focused_view);
                 return;
             }
@@ -2206,6 +2218,19 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
                     server_switch_workspace(server, ws, true);
                 }
                 return;
+            }
+            if (latin_sym == XKB_KEY_q || latin_sym == XKB_KEY_Q ||
+                latin_sym == XKB_KEY_w || latin_sym == XKB_KEY_W) {
+                if (server->focused_view) { view_close(server->focused_view); return; }
+            }
+            if (latin_sym == XKB_KEY_m || latin_sym == XKB_KEY_M) {
+                if (server->focused_view) { view_minimize(server->focused_view); return; }
+            }
+            if (latin_sym == XKB_KEY_f || latin_sym == XKB_KEY_F) {
+                if (server->focused_view) { view_toggle_maximize(server->focused_view); return; }
+            }
+            if (latin_sym == XKB_KEY_v || latin_sym == XKB_KEY_V) {
+                if (server->focused_view) { view_toggle_floating(server->focused_view); return; }
             }
             switch (sym) {
                 case XKB_KEY_Return:
@@ -3506,6 +3531,7 @@ int main(int argc, char *argv[]) {
 
     aurade_server_t server = {0};
     wl_list_init(&server.views);
+    wl_list_init(&server.close_anims);
     wl_list_init(&server.outputs);
     wl_list_init(&server.input_devices);
     config_load(&server.config, NULL);
@@ -3739,6 +3765,13 @@ if (server.config_inotify_fd >= 0) {
     wl_display_run(server.wl_display);
 
     // Cleanup
+    aurade_close_anim_t *canim, *canim_tmp;
+    wl_list_for_each_safe(canim, canim_tmp, &server.close_anims, link) {
+        wlr_scene_node_destroy(&canim->scene_buffer->node);
+        wlr_buffer_unlock(canim->buffer);
+        wl_list_remove(&canim->link);
+        free(canim);
+    }
     if (server.audio_subscribe_source) wl_event_source_remove(server.audio_subscribe_source);
     if (server.audio_subscribe_fd >= 0) close(server.audio_subscribe_fd);
     if (server.audio_subscribe_pid > 0) kill(server.audio_subscribe_pid, SIGTERM);

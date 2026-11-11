@@ -15,6 +15,7 @@
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_output_layout.h>
+#include <wlr/types/wlr_buffer.h>
 #include <scenefx/types/wlr_scene.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_xdg_decoration_v1.h>
@@ -142,6 +143,17 @@ typedef struct aurade_view {
     struct wl_listener content_tree_destroy;
 } aurade_view_t;
 
+typedef struct aurade_close_anim {
+    struct wl_list link;
+    struct aurade_server *server;
+    struct wlr_scene_buffer *scene_buffer;
+    struct wlr_buffer *buffer;
+    double start_x, start_y;
+    double width, height;
+    double elapsed;
+    double duration;
+} aurade_close_anim_t;
+
 typedef struct aurade_output {
     struct wl_list link;
     struct aurade_server *server;
@@ -254,6 +266,7 @@ typedef struct aurade_server {
 
     // Views
     struct wl_list views;
+    struct wl_list close_anims;
     uint64_t next_view_id;
     aurade_view_t *grabbed_view;
     cursor_mode_t cursor_mode;
@@ -344,6 +357,7 @@ float view_get_target_opacity(aurade_view_t *view);
 float view_effective_alpha(aurade_view_t *view);
 void server_export_running_windows(aurade_server_t *server);
 void server_tick_view_animations(aurade_server_t *server, double dt);
+void view_spawn_close_animation(aurade_view_t *view);
 aurade_view_t *server_view_at(aurade_server_t *server, double lx, double ly,
                               struct wlr_surface **surface, double *sx, double *sy);
 

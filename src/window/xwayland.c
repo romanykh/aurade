@@ -200,6 +200,8 @@ static void xwayland_surface_unmap(struct wl_listener *listener, void *data) {
     struct wlr_xwayland_surface *xsurface = view->xwayland_surface;
     int ws = view->workspace;
 
+    view_spawn_close_animation(view);
+
     if (view->scene_tree) {
         wlr_scene_node_set_enabled(&view->scene_tree->node, false);
     }
