@@ -44,10 +44,26 @@ void cairo_buffer_apply_to_scene(cairo_buffer_t *buf, struct wlr_scene_buffer *s
 void draw_rounded_rect(cairo_t *cr, double x, double y, double w, double h, double r);
 
 /**
+ * Register global wallpaper surface for Liquid Glass optical refraction sampling.
+ */
+void cairo_buffer_set_wallpaper_surface(cairo_surface_t *surf);
+cairo_surface_t *cairo_buffer_get_wallpaper_surface(void);
+
+/**
+ * Configure global Liquid Glass mode.
+ */
+void cairo_buffer_set_liquid_glass_enabled(bool enabled);
+bool cairo_buffer_get_liquid_glass_enabled(void);
+
+/**
  * Draw a modern macOS frosted glass panel with subtle top-highlight border.
  */
 void draw_glass_panel(cairo_t *cr, double x, double y, double w, double h, double r,
                       double r_bg, double g_bg, double b_bg, double a_bg);
+
+void draw_glass_panel_at(cairo_t *cr, double x, double y, double w, double h, double r,
+                         double screen_x, double screen_y,
+                         double r_bg, double g_bg, double b_bg, double a_bg);
 
 /**
  * Draw Apple Liquid Glass refractive edge cushion (Fresnel lens perimeter glow,
@@ -55,6 +71,19 @@ void draw_glass_panel(cairo_t *cr, double x, double y, double w, double h, doubl
  */
 void draw_refractive_glass_rim(cairo_t *cr, double x, double y, double w, double h,
                                double r, double edge_a);
+
+/**
+ * Draw Apple Liquid Glass with true optical lens magnification (лупа),
+ * Snell's law peripheral barrel refraction (викривлення), chromatic dispersion,
+ * soft focus transmission, and specular caustics.
+ */
+void draw_liquid_glass_lens(cairo_t *target_cr,
+                           cairo_surface_t *bg_surf,
+                           double panel_x, double panel_y,
+                           double panel_w, double panel_h,
+                           double panel_r,
+                           double screen_x, double screen_y,
+                           double mag, double edge_a);
 
 /**
  * Draw a smooth multi-layered drop shadow for windows and floating cards.

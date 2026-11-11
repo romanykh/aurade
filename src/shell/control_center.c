@@ -530,38 +530,59 @@ static void cc_icon(cairo_t *cr, cc_icon_kind_t kind, double cx, double cy, doub
 // Panel chrome
 // ---------------------------------------------------------------------------
 
-static void cc_draw_panel(cairo_t *cr, double w, double h, const cc_theme_t *t) {
+static void cc_draw_panel(cairo_t *cr, double w, double h, const cc_theme_t *t,
+                          const aurade_control_center_t *cc) {
     cairo_save(cr);
 
-    // 1. Refractive gradient panel fill (crystal clear liquid glass)
-    draw_rounded_rect(cr, 0.0, 0.0, w, h, CC_RADIUS);
-    cairo_pattern_t *g = cairo_pattern_create_linear(0, 0, 0, h);
-    cairo_pattern_add_color_stop_rgba(g, 0.0, t->panel_top.r, t->panel_top.g,
-                                      t->panel_top.b, t->panel_top.a);
-    cairo_pattern_add_color_stop_rgba(g, 1.0, t->panel_bottom.r, t->panel_bottom.g,
-                                      t->panel_bottom.b, t->panel_bottom.a);
-    cairo_set_source(cr, g);
-    cairo_fill(cr);
-    cairo_pattern_destroy(g);
+    cairo_surface_t *bg_surf = cairo_buffer_get_wallpaper_surface();
+    double scr_x = cc ? (double)(cc->screen_width - CC_MARGIN_RIGHT - CC_WIDTH) : 0.0;
+    double scr_y = TOPBAR_HEIGHT + CC_MARGIN_TOP;
 
-    // 2. Caustic surface sheen across top 35% of panel
-    cairo_save(cr);
-    draw_rounded_rect(cr, 0.0, 0.0, w, h, CC_RADIUS);
-    cairo_clip(cr);
-    double sheen_h = h * 0.35;
-    if (sheen_h > 90.0) sheen_h = 90.0;
-    cairo_pattern_t *sheen = cairo_pattern_create_linear(0, 0, 0, sheen_h);
-    cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, t->dark ? 0.14 : 0.28);
-    cairo_pattern_add_color_stop_rgba(sheen, 0.60, 1.0, 1.0, 1.0, t->dark ? 0.04 : 0.08);
-    cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
-    cairo_rectangle(cr, 0, 0, w, sheen_h);
-    cairo_set_source(cr, sheen);
-    cairo_fill(cr);
-    cairo_pattern_destroy(sheen);
-    cairo_restore(cr);
+    if (cc && cc->server && cc->server->config.liquid_glass && bg_surf) {
+        // Apple Liquid Glass optical lens magnification (лупа 1.18x) & peripheral curvature refraction
+        draw_liquid_glass_lens(cr, bg_surf, 0.0, 0.0, w, h, CC_RADIUS,
+                               scr_x, scr_y, 1.18, t->dark ? 0.70 : 0.85);
+        // Translucent theme tone
+        draw_rounded_rect(cr, 0.0, 0.0, w, h, CC_RADIUS);
+        cairo_pattern_t *g = cairo_pattern_create_linear(0, 0, 0, h);
+        cairo_pattern_add_color_stop_rgba(g, 0.0, t->panel_top.r, t->panel_top.g,
+                                          t->panel_top.b, t->panel_top.a * 0.40);
+        cairo_pattern_add_color_stop_rgba(g, 1.0, t->panel_bottom.r, t->panel_bottom.g,
+                                          t->panel_bottom.b, t->panel_bottom.a * 0.40);
+        cairo_set_source(cr, g);
+        cairo_fill(cr);
+        cairo_pattern_destroy(g);
+    } else {
+        // 1. Refractive gradient panel fill (crystal clear liquid glass)
+        draw_rounded_rect(cr, 0.0, 0.0, w, h, CC_RADIUS);
+        cairo_pattern_t *g = cairo_pattern_create_linear(0, 0, 0, h);
+        cairo_pattern_add_color_stop_rgba(g, 0.0, t->panel_top.r, t->panel_top.g,
+                                          t->panel_top.b, t->panel_top.a);
+        cairo_pattern_add_color_stop_rgba(g, 1.0, t->panel_bottom.r, t->panel_bottom.g,
+                                          t->panel_bottom.b, t->panel_bottom.a);
+        cairo_set_source(cr, g);
+        cairo_fill(cr);
+        cairo_pattern_destroy(g);
 
-    // 3. Apple Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
-    draw_refractive_glass_rim(cr, 0.0, 0.0, w, h, CC_RADIUS, t->dark ? 0.55 : 0.85);
+        // 2. Caustic surface sheen across top 35% of panel
+        cairo_save(cr);
+        draw_rounded_rect(cr, 0.0, 0.0, w, h, CC_RADIUS);
+        cairo_clip(cr);
+        double sheen_h = h * 0.35;
+        if (sheen_h > 90.0) sheen_h = 90.0;
+        cairo_pattern_t *sheen = cairo_pattern_create_linear(0, 0, 0, sheen_h);
+        cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, t->dark ? 0.14 : 0.28);
+        cairo_pattern_add_color_stop_rgba(sheen, 0.60, 1.0, 1.0, 1.0, t->dark ? 0.04 : 0.08);
+        cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
+        cairo_rectangle(cr, 0, 0, w, sheen_h);
+        cairo_set_source(cr, sheen);
+        cairo_fill(cr);
+        cairo_pattern_destroy(sheen);
+        cairo_restore(cr);
+
+        // 3. Apple Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
+        draw_refractive_glass_rim(cr, 0.0, 0.0, w, h, CC_RADIUS, t->dark ? 0.55 : 0.85);
+    }
 
     cairo_restore(cr);
 }
@@ -3209,7 +3230,7 @@ void control_center_render(aurade_control_center_t *cc) {
     cairo_save(cr);
     cairo_translate(cr, CC_SHADOW_PAD, CC_SHADOW_PAD);
 
-    cc_draw_panel(cr, CC_WIDTH, panel_h, &theme);
+    cc_draw_panel(cr, CC_WIDTH, panel_h, &theme, cc);
 
     // Clip content to rounded panel bounds for smooth page slide/height transitions
     draw_rounded_rect(cr, 0.0, 0.0, CC_WIDTH, panel_h, CC_RADIUS);

@@ -1690,7 +1690,24 @@ void dock_render(aurade_dock_t *dock) {
         dock->pill_r = pill_r;
         draw_drop_shadow(cr, pill_x, pill_local_y, used, pill_h, pill_r, 20.0, 0.55 * dock_op);
 
-        if (dock->server && dock->server->config.blur_dock) {
+        cairo_surface_t *bg_surf = cairo_buffer_get_wallpaper_surface();
+        if (!bg_surf && dock->server && dock->server->wallpaper && dock->server->wallpaper->buffer) {
+            bg_surf = dock->server->wallpaper->buffer->surface;
+        }
+        double scr_x = pill_x;
+        double scr_y = (dock->screen_height - dock->buffer_height) + pill_local_y;
+
+        if (dock->server && dock->server->config.liquid_glass && bg_surf) {
+            cairo_save(cr);
+            // Apple Liquid Glass with true optical lens magnification (лупа 1.25x) & peripheral curvature refraction
+            draw_liquid_glass_lens(cr, bg_surf, pill_x, pill_local_y, used, pill_h, pill_r,
+                                   scr_x, scr_y, 1.25, 0.95 * dock_op);
+            // Subtle dark contrast tint for icon readability
+            draw_rounded_rect(cr, pill_x, pill_local_y, used, pill_h, pill_r);
+            cairo_set_source_rgba(cr, 0.08, 0.09, 0.12, 0.20 * dock_op);
+            cairo_fill(cr);
+            cairo_restore(cr);
+        } else if (dock->server && dock->server->config.blur_dock) {
             cairo_save(cr);
 
             // 1. Refractive depth gradient body tint overlay (translucent)
@@ -1722,8 +1739,8 @@ void dock_render(aurade_dock_t *dock) {
 
             cairo_restore(cr);
         } else {
-            draw_glass_panel(cr, pill_x, pill_local_y, used, pill_h, pill_r,
-                             0.10, 0.11, 0.14, 0.78 * dock_op);
+            draw_glass_panel_at(cr, pill_x, pill_local_y, used, pill_h, pill_r,
+                                scr_x, scr_y, 0.10, 0.11, 0.14, 0.78 * dock_op);
         }
 
         // Separators drawn crisply with physical cut-glass groove

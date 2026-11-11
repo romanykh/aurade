@@ -206,8 +206,215 @@ void draw_refractive_glass_rim(cairo_t *cr, double x, double y, double w, double
     cairo_restore(cr);
 }
 
-void draw_glass_panel(cairo_t *cr, double x, double y, double w, double h, double r,
-                      double r_bg, double g_bg, double b_bg, double a_bg) {
+static cairo_surface_t *s_wallpaper_surface = NULL;
+static bool s_liquid_glass_enabled = false;
+
+void cairo_buffer_set_wallpaper_surface(cairo_surface_t *surf) {
+    s_wallpaper_surface = surf;
+}
+
+cairo_surface_t *cairo_buffer_get_wallpaper_surface(void) {
+    return s_wallpaper_surface;
+}
+
+void cairo_buffer_set_liquid_glass_enabled(bool enabled) {
+    s_liquid_glass_enabled = enabled;
+}
+
+bool cairo_buffer_get_liquid_glass_enabled(void) {
+    return s_liquid_glass_enabled;
+}
+
+void draw_liquid_glass_lens(cairo_t *target_cr,
+                           cairo_surface_t *bg_surf,
+                           double panel_x, double panel_y,
+                           double panel_w, double panel_h,
+                           double panel_r,
+                           double screen_x, double screen_y,
+                           double mag, double edge_a) {
+    if (!target_cr || !bg_surf || panel_w <= 0.0 || panel_h <= 0.0 || edge_a <= 0.01) return;
+
+    int iw = (int)ceil(panel_w);
+    int ih = (int)ceil(panel_h);
+    if (iw < 4 || ih < 4) return;
+
+    cairo_surface_flush(bg_surf);
+    int bg_w = cairo_image_surface_get_width(bg_surf);
+    int bg_h = cairo_image_surface_get_height(bg_surf);
+    int bg_stride = cairo_image_surface_get_stride(bg_surf);
+    uint32_t *bg_data = (uint32_t *)cairo_image_surface_get_data(bg_surf);
+    if (!bg_data || bg_w <= 0 || bg_h <= 0) return;
+
+    cairo_surface_t *lens_surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, iw, ih);
+    cairo_surface_flush(lens_surf);
+    int lens_stride = cairo_image_surface_get_stride(lens_surf);
+    uint32_t *lens_data = (uint32_t *)cairo_image_surface_get_data(lens_surf);
+    if (!lens_data) {
+        cairo_surface_destroy(lens_surf);
+        return;
+    }
+
+    float hw = (float)(panel_w * 0.5);
+    float hh = (float)(panel_h * 0.5);
+    float cx = hw;
+    float cy = hh;
+    float r = (float)panel_r;
+    if (r > hw) r = hw;
+    if (r > hh) r = hh;
+    if (r < 2.0f) r = 2.0f;
+    float inv_r = 1.0f / r;
+
+    float safe_mag = mag < 1.05f ? 1.05f : (mag > 2.0f ? 2.0f : (float)mag);
+    float bx = hw - r;
+    float by = hh - r;
+    float mag_pull = 1.0f - (1.0f / safe_mag);
+    float max_bg_x = (float)(bg_w - 2);
+    float max_bg_y = (float)(bg_h - 2);
+    float edge_alpha = (float)edge_a;
+
+    for (int y = 0; y < ih; y++) {
+        uint32_t *row = (uint32_t *)((uint8_t *)lens_data + y * lens_stride);
+        float ly = (y + 0.5f) - cy;
+        float abs_ly = fabsf(ly);
+        float qy = abs_ly - by;
+        float dy = qy > 0.0f ? qy : 0.0f;
+        float sign_y = ly >= 0.0f ? 1.0f : -1.0f;
+
+        for (int x = 0; x < iw; x++) {
+            float lx = (x + 0.5f) - cx;
+            float abs_lx = fabsf(lx);
+            float qx = abs_lx - bx;
+            float dx = qx > 0.0f ? qx : 0.0f;
+            float sign_x = lx >= 0.0f ? 1.0f : -1.0f;
+
+            float dist_outside;
+            float nx = 0.0f, ny = 0.0f;
+
+            if (qx > 0.0f && qy > 0.0f) {
+                float corner_dist = sqrtf(dx * dx + dy * dy);
+                dist_outside = corner_dist - r;
+                if (corner_dist > 1e-4f) {
+                    float inv_c = 1.0f / corner_dist;
+                    nx = (dx * inv_c) * sign_x;
+                    ny = (dy * inv_c) * sign_y;
+                }
+            } else {
+                float max_q = qx > qy ? qx : qy;
+                dist_outside = max_q - r;
+                if (qx > qy) nx = sign_x;
+                else ny = sign_y;
+            }
+
+            if (dist_outside >= 1.0f) {
+                row[x] = 0;
+                continue;
+            }
+
+            float dist_inside = -dist_outside;
+            float alpha = dist_inside > 1.0f ? 1.0f : (dist_inside < 0.0f ? 0.0f : dist_inside);
+            float norm_depth = dist_inside * inv_r;
+            if (norm_depth > 1.0f) norm_depth = 1.0f;
+
+            // 1. Center Magnification (лупа)
+            float pull = 1.0f - mag_pull * norm_depth;
+            float sample_lx = lx * pull;
+            float sample_ly = ly * pull;
+
+            // 2. Peripheral Curved Refraction (Snell's Law edge warping)
+            float one_minus_d = 1.0f - norm_depth;
+            float sin_approx = norm_depth * (1.570796f - 0.645f * norm_depth * norm_depth);
+            float refract_intensity = 24.0f * one_minus_d * sin_approx;
+            sample_lx += nx * refract_intensity;
+            sample_ly += ny * refract_intensity;
+
+            float bg_x = (float)screen_x + cx + sample_lx;
+            float bg_y = (float)screen_y + cy + sample_ly;
+            if (bg_x < 0.0f) bg_x = 0.0f;
+            else if (bg_x > max_bg_x) bg_x = max_bg_x;
+            if (bg_y < 0.0f) bg_y = 0.0f;
+            else if (bg_y > max_bg_y) bg_y = max_bg_y;
+
+            // Bilinear sampling
+            int isx = (int)bg_x;
+            int isy = (int)bg_y;
+            float fx = bg_x - (float)isx;
+            float fy = bg_y - (float)isy;
+
+            uint32_t *p_row0 = (uint32_t *)((uint8_t *)bg_data + isy * bg_stride);
+            uint32_t *p_row1 = (uint32_t *)((uint8_t *)bg_data + (isy + 1) * bg_stride);
+            uint32_t p00 = p_row0[isx];
+            uint32_t p10 = p_row0[isx + 1];
+            uint32_t p01 = p_row1[isx];
+            uint32_t p11 = p_row1[isx + 1];
+
+            float w00 = (1.0f - fx) * (1.0f - fy);
+            float w10 = fx * (1.0f - fy);
+            float w01 = (1.0f - fx) * fy;
+            float w11 = fx * fy;
+
+            float b = w00 * (p00 & 0xFF) + w10 * (p10 & 0xFF) + w01 * (p01 & 0xFF) + w11 * (p11 & 0xFF);
+            float g = w00 * ((p00 >> 8) & 0xFF) + w10 * ((p10 >> 8) & 0xFF) + w01 * ((p01 >> 8) & 0xFF) + w11 * ((p11 >> 8) & 0xFF);
+            float red = w00 * ((p00 >> 16) & 0xFF) + w10 * ((p10 >> 16) & 0xFF) + w01 * ((p01 >> 16) & 0xFF) + w11 * ((p11 >> 16) & 0xFF);
+
+            // Subtle chromatic dispersion at curved edge
+            if (norm_depth < 0.65f) {
+                float fringe = (1.0f - norm_depth * 1.538f) * 2.0f;
+                int rx = (int)(bg_x + nx * fringe);
+                int ry = (int)(bg_y + ny * fringe);
+                if (rx >= 0 && rx < bg_w && ry >= 0 && ry < bg_h) {
+                    uint32_t pr = *(uint32_t *)((uint8_t *)bg_data + ry * bg_stride + rx * 4);
+                    red = red * 0.72f + ((pr >> 16) & 0xFF) * 0.28f;
+                }
+                int bx_i = (int)(bg_x - nx * fringe);
+                int by_i = (int)(bg_y - ny * fringe);
+                if (bx_i >= 0 && bx_i < bg_w && by_i >= 0 && by_i < bg_h) {
+                    uint32_t pb = *(uint32_t *)((uint8_t *)bg_data + by_i * bg_stride + bx_i * 4);
+                    b = b * 0.72f + (pb & 0xFF) * 0.28f;
+                }
+            }
+
+            // Crystal glass neutral glow
+            float fresnel = one_minus_d * one_minus_d * 0.28f * edge_alpha;
+            float top_sheen = 0.0f;
+            if (ly < 0.0f && norm_depth > 0.10f) {
+                float sheen_depth = (-ly) / hh;
+                top_sheen = sheen_depth * sheen_depth * 0.10f * edge_alpha;
+            }
+
+            float glow = (fresnel + top_sheen) * 255.0f;
+            red = red * 1.01f + glow;
+            g = g * 1.01f + glow;
+            b = b * 1.02f + glow;
+
+            if (red > 255.0f) red = 255.0f;
+            if (g > 255.0f) g = 255.0f;
+            if (b > 255.0f) b = 255.0f;
+
+            uint32_t a_byte = (uint32_t)lroundf(alpha * 255.0f);
+            uint32_t r_byte = (uint32_t)lroundf(red * alpha);
+            uint32_t g_byte = (uint32_t)lroundf(g * alpha);
+            uint32_t b_byte = (uint32_t)lroundf(b * alpha);
+
+            row[x] = (a_byte << 24) | (r_byte << 16) | (g_byte << 8) | b_byte;
+        }
+    }
+
+    cairo_surface_mark_dirty(lens_surf);
+
+    cairo_save(target_cr);
+    cairo_set_source_surface(target_cr, lens_surf, panel_x, panel_y);
+    cairo_paint(target_cr);
+    cairo_restore(target_cr);
+
+    cairo_surface_destroy(lens_surf);
+
+    // Apply specular caustics and rim cushion on top
+    draw_refractive_glass_rim(target_cr, panel_x, panel_y, panel_w, panel_h, panel_r, edge_a);
+}
+
+void draw_glass_panel_at(cairo_t *cr, double x, double y, double w, double h, double r,
+                         double screen_x, double screen_y,
+                         double r_bg, double g_bg, double b_bg, double a_bg) {
     if (w <= 0.0 || h <= 0.0) return;
     if (r > w / 2.0) r = w / 2.0;
     if (r > h / 2.0) r = h / 2.0;
@@ -215,49 +422,63 @@ void draw_glass_panel(cairo_t *cr, double x, double y, double w, double h, doubl
 
     double edge_a = a_bg > 1.0 ? 1.0 : (a_bg < 0.0 ? 0.0 : a_bg);
 
-    // 1. Refractive depth gradient body fill (translucent, crystal clear glass)
-    cairo_pattern_t *body_pat = cairo_pattern_create_linear(x, y, x, y + h);
-    double top_r = r_bg * 1.15; if (top_r > 1.0) top_r = 1.0;
-    double top_g = g_bg * 1.15; if (top_g > 1.0) top_g = 1.0;
-    double top_b = b_bg * 1.22; if (top_b > 1.0) top_b = 1.0;
-    double bot_r = r_bg * 0.88;
-    double bot_g = g_bg * 0.88;
-    double bot_b = b_bg * 0.92;
-    double top_a = a_bg * 0.82;
-    double bot_a = a_bg * 0.98;
-
-    cairo_pattern_add_color_stop_rgba(body_pat, 0.0, top_r, top_g, top_b, top_a);
-    cairo_pattern_add_color_stop_rgba(body_pat, 1.0, bot_r, bot_g, bot_b, bot_a);
-
-    draw_rounded_rect(cr, x, y, w, h, r);
-    cairo_set_source(cr, body_pat);
-    cairo_fill(cr);
-    cairo_pattern_destroy(body_pat);
-
-    // 2. Caustic surface sheen wash across the top ~38% of the glass
-    if (h > 6.0 && edge_a > 0.05) {
-        cairo_save(cr);
+    if (s_liquid_glass_enabled && s_wallpaper_surface) {
+        draw_liquid_glass_lens(cr, s_wallpaper_surface, x, y, w, h, r,
+                               screen_x, screen_y, 1.20, edge_a);
+        // Subtle body tint overlay
         draw_rounded_rect(cr, x, y, w, h, r);
-        cairo_clip(cr);
-
-        double sheen_h = h * 0.38;
-        if (sheen_h > 45.0) sheen_h = 45.0;
-        if (sheen_h < 4.0) sheen_h = 4.0;
-        cairo_pattern_t *sheen = cairo_pattern_create_linear(x, y, x, y + sheen_h);
-        cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.16 * edge_a);
-        cairo_pattern_add_color_stop_rgba(sheen, 0.6, 1.0, 1.0, 1.0, 0.04 * edge_a);
-        cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
-        cairo_rectangle(cr, x, y, w, sheen_h);
-        cairo_set_source(cr, sheen);
+        cairo_set_source_rgba(cr, r_bg, g_bg, b_bg, a_bg * 0.25);
         cairo_fill(cr);
-        cairo_pattern_destroy(sheen);
-        cairo_restore(cr);
+    } else {
+        // 1. Refractive depth gradient body fill (translucent, crystal clear glass)
+        cairo_pattern_t *body_pat = cairo_pattern_create_linear(x, y, x, y + h);
+        double top_r = r_bg * 1.15; if (top_r > 1.0) top_r = 1.0;
+        double top_g = g_bg * 1.15; if (top_g > 1.0) top_g = 1.0;
+        double top_b = b_bg * 1.22; if (top_b > 1.0) top_b = 1.0;
+        double bot_r = r_bg * 0.88;
+        double bot_g = g_bg * 0.88;
+        double bot_b = b_bg * 0.92;
+        double top_a = a_bg * 0.82;
+        double bot_a = a_bg * 0.98;
+
+        cairo_pattern_add_color_stop_rgba(body_pat, 0.0, top_r, top_g, top_b, top_a);
+        cairo_pattern_add_color_stop_rgba(body_pat, 1.0, bot_r, bot_g, bot_b, bot_a);
+
+        draw_rounded_rect(cr, x, y, w, h, r);
+        cairo_set_source(cr, body_pat);
+        cairo_fill(cr);
+        cairo_pattern_destroy(body_pat);
+
+        // 2. Caustic surface sheen wash across the top ~38% of the glass
+        if (h > 6.0 && edge_a > 0.05) {
+            cairo_save(cr);
+            draw_rounded_rect(cr, x, y, w, h, r);
+            cairo_clip(cr);
+
+            double sheen_h = h * 0.38;
+            if (sheen_h > 45.0) sheen_h = 45.0;
+            if (sheen_h < 4.0) sheen_h = 4.0;
+            cairo_pattern_t *sheen = cairo_pattern_create_linear(x, y, x, y + sheen_h);
+            cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.16 * edge_a);
+            cairo_pattern_add_color_stop_rgba(sheen, 0.6, 1.0, 1.0, 1.0, 0.04 * edge_a);
+            cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
+            cairo_rectangle(cr, x, y, w, sheen_h);
+            cairo_set_source(cr, sheen);
+            cairo_fill(cr);
+            cairo_pattern_destroy(sheen);
+            cairo_restore(cr);
+        }
+
+        // 3. Apple Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
+        draw_refractive_glass_rim(cr, x, y, w, h, r, edge_a);
     }
 
-    // 3. Apple Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
-    draw_refractive_glass_rim(cr, x, y, w, h, r, edge_a);
-
     cairo_restore(cr);
+}
+
+void draw_glass_panel(cairo_t *cr, double x, double y, double w, double h, double r,
+                      double r_bg, double g_bg, double b_bg, double a_bg) {
+    draw_glass_panel_at(cr, x, y, w, h, r, x, y, r_bg, g_bg, b_bg, a_bg);
 }
 
 void draw_drop_shadow(cairo_t *cr, double x, double y, double w, double h,

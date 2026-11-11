@@ -65,6 +65,7 @@ static void crash_handler(int sig) {
 // Config reload watcher callback
 void server_update_blur_config(aurade_server_t *server) {
     if (!server || !server->scene) return;
+    cairo_buffer_set_liquid_glass_enabled(server->config.liquid_glass);
     double str = server->config.blur_strength > 0.05 ? server->config.blur_strength : 1.0;
     // Dual-Kawase with 2 passes & radius 3.5 is ideal for integrated GPUs (Intel UHD):
     // delivers smooth frosted glass while reducing GPU fragment fill rate by ~65%.

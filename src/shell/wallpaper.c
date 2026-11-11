@@ -350,6 +350,7 @@ static void render_wallpaper_graphics(aurade_wallpaper_t *wp) {
     }
 
     cairo_buffer_apply_to_scene(wp->buffer, wp->scene_buffer);
+    cairo_buffer_set_wallpaper_surface(wp->buffer ? wp->buffer->surface : NULL);
     rebuild_blurred_copy(wp);
     update_blurred_scene_buffer(wp);
 }
@@ -419,6 +420,7 @@ void wallpaper_draw_backdrop(aurade_wallpaper_t *wp, cairo_t *cr,
 
 void wallpaper_destroy(aurade_wallpaper_t *wp) {
     if (!wp) return;
+    cairo_buffer_set_wallpaper_surface(NULL);
     if (wp->blurred) cairo_surface_destroy(wp->blurred);
     if (wp->blurred_scene_buffer) wlr_scene_node_destroy(&wp->blurred_scene_buffer->node);
     if (wp->blurred_buffer) wlr_buffer_drop(&wp->blurred_buffer->base);
