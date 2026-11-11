@@ -1024,7 +1024,6 @@ static void on_music_pill_pos_changed(int idx, gpointer user_data) {
 }
 
 static void on_blur_windows_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_windows = active; }
-static void on_blur_dock_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_dock = active; }
 static void on_blur_control_center_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_control_center = active; }
 static void on_blur_power_menu_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_power_menu = active; }
 static void on_blur_notifications_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_notifications = active; }
@@ -1032,7 +1031,11 @@ static void on_blur_lockscreen_toggled(bool active, gpointer user_data) { (void)
 static void on_blur_topbar_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_topbar = active; }
 static void on_blur_launchpad_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_launchpad = active; }
 static void on_blur_overview_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_workspace_overview = active; }
-static void on_liquid_glass_toggled(bool active, gpointer user_data) { (void)user_data; g_config.liquid_glass = active; }
+static void on_liquid_glass_toggled(bool active, gpointer user_data) {
+    (void)user_data;
+    g_config.liquid_glass = active;
+    g_config.blur_dock = active;
+}
 static void on_blur_strength_changed(double val, gpointer user_data) { (void)user_data; g_config.blur_strength = val; }
 static void on_blur_radius_changed(double val, gpointer user_data) { (void)user_data; g_config.blur_radius = (int)lround(val); }
 static void on_blur_passes_changed(double val, gpointer user_data) { (void)user_data; g_config.blur_passes = (int)lround(val); }
@@ -1295,8 +1298,8 @@ GtkWidget *build_page_appearance(void) {
     GtkWidget *sw_win_b = ui_switch(g_config.blur_windows, on_blur_windows_toggled, NULL);
     ui_add_row(c_blur, "Window Blur", "Frosted glass backdrop effect under client windows", sw_win_b, "preferences-system-windows-symbolic", "badge-appearance");
 
-    GtkWidget *sw_dock_b = ui_switch(g_config.blur_dock, on_blur_dock_toggled, NULL);
-    ui_add_row(c_blur, "Dock Blur", "Frosted glass blur under the application dock", sw_dock_b, "view-paged-symbolic", "badge-dock");
+    GtkWidget *sw_dock_b = ui_switch(g_config.liquid_glass || g_config.blur_dock, on_liquid_glass_toggled, NULL);
+    ui_add_row(c_blur, "Dock Glass & Blur", "Liquid glass and frosted backdrop blur under the dock", sw_dock_b, "view-paged-symbolic", "badge-dock");
 
     GtkWidget *sw_cc_b = ui_switch(g_config.blur_control_center, on_blur_control_center_toggled, NULL);
     ui_add_row(c_blur, "Control Center Blur", "Frosted glass blur under the macOS Control Center panel", sw_cc_b, "preferences-system-symbolic", "badge-appearance");
@@ -1385,11 +1388,8 @@ GtkWidget *build_page_dock(void) {
     GtkWidget *sw_en = ui_switch(g_config.dock_enabled, on_dock_enabled_toggled, NULL);
     ui_add_row(c_behave, "Show the Dock", "Display the application dock along the bottom edge", sw_en, "view-paged-symbolic", "badge-dock");
 
-    GtkWidget *sw_dock_blur = ui_switch(g_config.blur_dock, on_blur_dock_toggled, NULL);
-    ui_add_row(c_behave, "Frosted Glass Blur", "Enable frosted glass blur effect under the dock", sw_dock_blur, "preferences-desktop-wallpaper-symbolic", "badge-appearance");
-
-    GtkWidget *sw_dock_lg = ui_switch(g_config.liquid_glass, on_liquid_glass_toggled, NULL);
-    ui_add_row(c_behave, "Liquid Glass Aesthetic", "Multi-layer specular highlights, caustics, and diagonal refractive borders", sw_dock_lg, "applications-graphics-symbolic", "badge-appearance");
+    GtkWidget *sw_dock_lg = ui_switch(g_config.liquid_glass || g_config.blur_dock, on_liquid_glass_toggled, NULL);
+    ui_add_row(c_behave, "Liquid Glass & Blur Effect", "Multi-layer specular highlights, refractive borders, and frosted backdrop blur", sw_dock_lg, "applications-graphics-symbolic", "badge-appearance");
 
     GtkWidget *sc_bst = ui_scale(g_config.blur_strength > 0.0 ? g_config.blur_strength : 1.0, 0.20, 2.50, 0.10, 1, on_blur_strength_changed, NULL);
     ui_add_row(c_behave, "Blur Strength", "Adjust the intensity and diffusion radius of the frosted glass blur", sc_bst, "preferences-desktop-theme-symbolic", "badge-appearance");

@@ -401,7 +401,13 @@ bool config_load(aurade_config_t *cfg, const char *path) {
     struct json_object *blur = NULL;
     if (json_object_object_get_ex(root, "blur", &blur)) {
         struct json_object *v;
+        if (json_object_object_get_ex(blur, "liquid_glass", &v)) cfg->liquid_glass = json_object_get_boolean(v);
+        else cfg->liquid_glass = true;
+
         if (json_object_object_get_ex(blur, "dock", &v)) cfg->blur_dock = json_object_get_boolean(v);
+        else cfg->blur_dock = cfg->liquid_glass;
+        if (cfg->liquid_glass) cfg->blur_dock = true;
+
         if (json_object_object_get_ex(blur, "control_center", &v)) cfg->blur_control_center = json_object_get_boolean(v);
         if (json_object_object_get_ex(blur, "power_menu", &v)) cfg->blur_power_menu = json_object_get_boolean(v);
         if (json_object_object_get_ex(blur, "notifications", &v)) cfg->blur_notifications = json_object_get_boolean(v);
@@ -411,8 +417,6 @@ bool config_load(aurade_config_t *cfg, const char *path) {
         if (json_object_object_get_ex(blur, "workspace_overview", &v)) cfg->blur_workspace_overview = json_object_get_boolean(v);
         if (json_object_object_get_ex(blur, "windows", &v)) cfg->blur_windows = json_object_get_boolean(v);
         else if (json_object_object_get_ex(blur, "window", &v)) cfg->blur_windows = json_object_get_boolean(v);
-        if (json_object_object_get_ex(blur, "liquid_glass", &v)) cfg->liquid_glass = json_object_get_boolean(v);
-        else cfg->liquid_glass = true;
         if (json_object_object_get_ex(blur, "strength", &v)) {
             double s = json_object_get_double(v);
             if (s >= 0.05 && s <= 3.0) cfg->blur_strength = s;
@@ -567,7 +571,7 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     json_object_object_add(root, "music_pill", mp);
 
     struct json_object *blur = json_object_new_object();
-    json_object_object_add(blur, "dock", json_object_new_boolean(cfg->blur_dock));
+    json_object_object_add(blur, "dock", json_object_new_boolean(cfg->liquid_glass || cfg->blur_dock));
     json_object_object_add(blur, "control_center", json_object_new_boolean(cfg->blur_control_center));
     json_object_object_add(blur, "power_menu", json_object_new_boolean(cfg->blur_power_menu));
     json_object_object_add(blur, "notifications", json_object_new_boolean(cfg->blur_notifications));

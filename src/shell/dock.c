@@ -413,7 +413,7 @@ void dock_apply_slide(aurade_dock_t *dock) {
         );
         double dock_op = dock->server ? dock->server->config.dock_opacity : 0.85;
         bool dock_glass = dock->server && (dock->server->config.blur_dock || dock->server->config.liquid_glass);
-        float dock_str = (dock->server && dock->server->config.blur_dock) ? (float)dock->server->config.blur_strength : 0.0f;
+        float dock_str = dock->server ? (float)(dock->server->config.blur_strength > 0.05 ? dock->server->config.blur_strength : 1.0) : 1.0f;
         wlr_scene_blur_set_strength(dock->blur_node, dock_str);
         wlr_scene_node_set_enabled(&dock->blur_node->node,
                                    visible &&
@@ -1393,7 +1393,7 @@ void dock_render(aurade_dock_t *dock) {
             wlr_scene_blur_set_liquid_glass(dock->blur_node, false);
         }
         bool dock_glass = dock->server && (dock->server->config.blur_dock || dock->server->config.liquid_glass);
-        float dock_str = (dock->server && dock->server->config.blur_dock) ? (float)dock->server->config.blur_strength : 0.0f;
+        float dock_str = dock->server ? (float)(dock->server->config.blur_strength > 0.05 ? dock->server->config.blur_strength : 1.0) : 1.0f;
         wlr_scene_blur_set_strength(dock->blur_node, dock_str);
         bool pause_blur = dock->server && (
             dock->server->gesture_mode != GESTURE_MODE_IDLE ||

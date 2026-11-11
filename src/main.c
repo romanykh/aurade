@@ -89,7 +89,7 @@ void server_update_blur_config(aurade_server_t *server) {
 
     if (server->dock && server->dock->blur_node) {
         bool dock_glass = (server->config.blur_dock || server->config.liquid_glass);
-        float dock_str = server->config.blur_dock ? (float)str : 0.0f;
+        float dock_str = (float)str;
         wlr_scene_blur_set_liquid_glass(server->dock->blur_node, server->config.liquid_glass);
         wlr_scene_blur_set_strength(server->dock->blur_node, dock_str);
         wlr_scene_node_set_enabled(&server->dock->blur_node->node,
