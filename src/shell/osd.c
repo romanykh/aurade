@@ -35,8 +35,20 @@ aurade_osd_t *osd_create(aurade_server_t *server) {
     return osd;
 }
 
+static int osd_fade_timer_cb(void *data) {
+    aurade_osd_t *osd = data;
+    if (!osd || !osd->visible) return 0;
+    osd->timer = 0.0;
+    if (osd->server) schedule_all_outputs(osd->server);
+    return 0;
+}
+
 void osd_destroy(aurade_osd_t *osd) {
     if (!osd) return;
+    if (osd->fade_timer) {
+        wl_event_source_remove(osd->fade_timer);
+        osd->fade_timer = NULL;
+    }
     if (osd->buffer) {
         wlr_buffer_drop(&osd->buffer->base);
     }
@@ -54,6 +66,17 @@ void osd_resize(aurade_osd_t *osd, int width, int height) {
     }
 }
 
+static void osd_arm_fade_timer(aurade_osd_t *osd, int delay_ms) {
+    if (!osd || !osd->server || !osd->server->wl_display) return;
+    if (!osd->fade_timer) {
+        struct wl_event_loop *loop = wl_display_get_event_loop(osd->server->wl_display);
+        osd->fade_timer = wl_event_loop_add_timer(loop, osd_fade_timer_cb, osd);
+    }
+    if (osd->fade_timer) {
+        wl_event_source_timer_update(osd->fade_timer, delay_ms);
+    }
+}
+
 void osd_show_volume(aurade_osd_t *osd, double level, bool muted) {
     if (!osd) return;
     if (level < 0.0) level = 0.0;
@@ -65,6 +88,8 @@ void osd_show_volume(aurade_osd_t *osd, double level, bool muted) {
     osd->alpha = 1.0;
     osd->timer = 1.35;
     osd->visible = true;
+
+    osd_arm_fade_timer(osd, 1350);
 
     if (osd->scene_buffer) {
         wlr_scene_node_set_enabled(&osd->scene_buffer->node, true);
@@ -86,6 +111,8 @@ void osd_show_brightness(aurade_osd_t *osd, double level) {
     osd->timer = 1.35;
     osd->visible = true;
 
+    osd_arm_fade_timer(osd, 1350);
+
     if (osd->scene_buffer) {
         wlr_scene_node_set_enabled(&osd->scene_buffer->node, true);
         wlr_scene_node_raise_to_top(&osd->scene_buffer->node);
@@ -94,23 +121,28 @@ void osd_show_brightness(aurade_osd_t *osd, double level) {
     if (osd->server) schedule_all_outputs(osd->server);
 }
 
+bool osd_is_animating(const aurade_osd_t *osd) {
+    if (!osd || !osd->visible) return false;
+    return osd->timer <= 0.0; // Only animating when actively fading out
+}
+
 void osd_tick(aurade_osd_t *osd, double dt) {
     if (!osd || !osd->visible) return;
 
     if (osd->timer > 0.0) {
-        osd->timer -= dt;
-    } else {
-        osd->alpha -= dt * 3.8; // Smooth fade out in ~0.26s
-        if (osd->alpha <= 0.0) {
-            osd->alpha = 0.0;
-            osd->visible = false;
-            if (osd->scene_buffer) {
-                wlr_scene_node_set_enabled(&osd->scene_buffer->node, false);
-            }
-            return;
-        }
-        osd_render(osd);
+        return; // Handled reactively by fade_timer without burning VBlank frames
     }
+
+    osd->alpha -= dt * 3.8; // Smooth fade out in ~0.26s
+    if (osd->alpha <= 0.0) {
+        osd->alpha = 0.0;
+        osd->visible = false;
+        if (osd->scene_buffer) {
+            wlr_scene_node_set_enabled(&osd->scene_buffer->node, false);
+        }
+        return;
+    }
+    osd_render(osd);
 }
 
 void osd_render(aurade_osd_t *osd) {

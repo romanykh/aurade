@@ -517,6 +517,10 @@ void notifications_destroy(aurade_notifications_t *notif) {
         g_main_loop_unref(notif->dbus_loop);
     }
 
+    if (notif->dismiss_timer) {
+        wl_event_source_remove(notif->dismiss_timer);
+        notif->dismiss_timer = NULL;
+    }
     if (notif->event_source) {
         wl_event_source_remove(notif->event_source);
         notif->event_source = NULL;
@@ -546,6 +550,56 @@ void notifications_resize(aurade_notifications_t *notif, int width, int height) 
     int pos_y = 36;
     if (notif->scene_buffer) {
         wlr_scene_node_set_position(&notif->scene_buffer->node, pos_x, pos_y);
+    }
+}
+
+bool notifications_is_animating(const aurade_notifications_t *notif) {
+    if (!notif || notif->count <= 0) return false;
+    for (int i = 0; i < notif->count; i++) {
+        const notification_item_t *item = &notif->items[i];
+        if (item->slide_progress < 1.0 || item->alpha < 1.0) return true;
+        if (item->dismissing) return true;
+    }
+    return false;
+}
+
+static int notifications_dismiss_timer_cb(void *data) {
+    aurade_notifications_t *notif = data;
+    if (!notif || notif->count <= 0) return 0;
+    bool any_dismissing = false;
+    for (int i = 0; i < notif->count; i++) {
+        notification_item_t *item = &notif->items[i];
+        if (!item->hover && !item->dismissing) {
+            item->dismissing = true;
+            any_dismissing = true;
+        }
+    }
+    if (any_dismissing && notif->server) {
+        schedule_all_outputs(notif->server);
+    }
+    return 0;
+}
+
+static void notifications_arm_dismiss_timer(aurade_notifications_t *notif) {
+    if (!notif || notif->count <= 0 || !notif->server || !notif->server->wl_display) return;
+    if (!notif->dismiss_timer) {
+        struct wl_event_loop *loop = wl_display_get_event_loop(notif->server->wl_display);
+        notif->dismiss_timer = wl_event_loop_add_timer(loop, notifications_dismiss_timer_cb, notif);
+    }
+    double min_timer = 9999.0;
+    for (int i = 0; i < notif->count; i++) {
+        if (!notif->items[i].hover && !notif->items[i].dismissing) {
+            if (notif->items[i].timer < min_timer) {
+                min_timer = notif->items[i].timer;
+            }
+        }
+    }
+    if (min_timer < 9000.0) {
+        int delay = (int)(min_timer * 1000.0);
+        if (delay < 16) delay = 16;
+        wl_event_source_timer_update(notif->dismiss_timer, delay);
+    } else {
+        if (notif->dismiss_timer) wl_event_source_timer_update(notif->dismiss_timer, 0);
     }
 }
 
@@ -602,7 +656,13 @@ void notifications_tick(aurade_notifications_t *notif, double dt) {
             notifications_render(notif);
             if (notif->server) schedule_all_outputs(notif->server);
         }
+        if (!notifications_is_animating(notif)) {
+            notifications_arm_dismiss_timer(notif);
+        }
     } else {
+        if (notif->dismiss_timer) {
+            wl_event_source_timer_update(notif->dismiss_timer, 0);
+        }
         if (notif->scene_buffer) {
             wlr_scene_node_set_enabled(&notif->scene_buffer->node, false);
         }
@@ -835,6 +895,7 @@ bool notifications_handle_motion(aurade_notifications_t *notif, double mouse_x, 
     if (state_changed) {
         notifications_render(notif);
         if (notif->server) schedule_all_outputs(notif->server);
+        notifications_arm_dismiss_timer(notif);
     }
     return notifications_pointer_owns(notif, mouse_x, mouse_y);
 }

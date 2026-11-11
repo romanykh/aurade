@@ -24,6 +24,7 @@ typedef struct aurade_osd {
     double alpha;       // 0.0 to 1.0
     double timer;       // countdown in seconds
     bool visible;
+    struct wl_event_source *fade_timer;
 } aurade_osd_t;
 
 aurade_osd_t *osd_create(aurade_server_t *server);
@@ -33,5 +34,6 @@ void osd_show_volume(aurade_osd_t *osd, double level, bool muted);
 void osd_show_brightness(aurade_osd_t *osd, double level);
 void osd_tick(aurade_osd_t *osd, double dt);
 void osd_render(aurade_osd_t *osd);
+bool osd_is_animating(const aurade_osd_t *osd);
 
 #endif

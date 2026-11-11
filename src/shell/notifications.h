@@ -44,6 +44,7 @@ typedef struct aurade_notifications {
     int pipe_read_fd;
     int pipe_write_fd;
     struct wl_event_source *event_source;
+    struct wl_event_source *dismiss_timer;
 
     // D-Bus thread and state
     pthread_t dbus_thread;
@@ -63,6 +64,7 @@ void notifications_destroy(aurade_notifications_t *notif);
 void notifications_resize(aurade_notifications_t *notif, int width, int height);
 void notifications_tick(aurade_notifications_t *notif, double dt);
 void notifications_render(aurade_notifications_t *notif);
+bool notifications_is_animating(const aurade_notifications_t *notif);
 bool notifications_handle_motion(aurade_notifications_t *notif, double mouse_x, double mouse_y);
 bool notifications_handle_click(aurade_notifications_t *notif, double mouse_x, double mouse_y);
 bool notifications_pointer_owns(aurade_notifications_t *notif, double x, double y);

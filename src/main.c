@@ -211,7 +211,6 @@ static int config_inotify_handler(int fd, uint32_t mask, void *data) {
 static int clock_tick(void *data) {
     aurade_server_t *server = data;
     if (server->topbar) topbar_render(server->topbar);
-    server_check_audio_sink(server);
     if (server->clock_timer) wl_event_source_timer_update(server->clock_timer, 1000);
     return 0;
 }
@@ -279,11 +278,12 @@ static void output_frame(struct wl_listener *listener, void *data) {
         (lockscreen_is_animating(server->lockscreen) || server->lockscreen->needs_render);
     bool mc_animating = server->mission_control &&
         (mission_control_is_animating(server->mission_control) || server->mission_control->needs_render);
+    bool osd_animating = server->osd && osd_is_animating(server->osd);
+    bool notif_animating = server->notifications && notifications_is_animating(server->notifications);
 
     if (view_animating || dock_animating || topbar_animating || launchpad_animating || lockscreen_animating ||
         mc_animating || server->gesture_animating || server->workspace_animating || server->gesture_in_progress ||
-        (server->osd && server->osd->visible) ||
-        (server->notifications && server->notifications->count > 0) ||
+        osd_animating || notif_animating ||
         wlr_scene_output_needs_frame(output->scene_output)) {
         wlr_output_schedule_frame(output->wlr_output);
     }
@@ -2438,10 +2438,11 @@ static void server_new_input(struct wl_listener *listener, void *data) {
 
     if (device->type == WLR_INPUT_DEVICE_KEYBOARD) {
         struct wlr_keyboard *keyboard = wlr_keyboard_from_input_device(device);
-        struct xkb_keymap *keymap = create_keymap(server);
-        if (keymap) {
-            wlr_keyboard_set_keymap(keyboard, keymap);
-            xkb_keymap_unref(keymap);
+        if (!server->keymap) {
+            server->keymap = create_keymap(server);
+        }
+        if (server->keymap) {
+            wlr_keyboard_set_keymap(keyboard, server->keymap);
         }
 
         wlr_keyboard_set_repeat_info(keyboard, 25, 400);
@@ -3251,6 +3252,7 @@ static void server_init_audio_monitor(aurade_server_t *server, struct wl_event_l
                                                               WL_EVENT_READABLE,
                                                               audio_subscribe_handler,
                                                               server);
+        server_check_audio_sink(server);
     } else {
         close(pipefd[0]);
         close(pipefd[1]);
@@ -3658,6 +3660,7 @@ if (server.config_inotify_fd >= 0) {
     if (server.audio_subscribe_pid > 0) kill(server.audio_subscribe_pid, SIGTERM);
 
     server_finish_xwayland(&server);
+    if (server.keymap) xkb_keymap_unref(server.keymap);
     if (server.notifications) notifications_destroy(server.notifications);
     if (server.lockscreen) lockscreen_destroy(server.lockscreen);
     if (server.osd) osd_destroy(server.osd);

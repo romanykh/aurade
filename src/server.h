@@ -233,6 +233,7 @@ typedef struct aurade_server {
     struct wl_list outputs;
     struct wl_listener new_output;
     struct wl_list input_devices;
+    struct xkb_keymap *keymap;
 
     // Primary output dimensions. Kept in sync so shell geometry and workspace
     // sliding are correct on non-1920x1080 screens.

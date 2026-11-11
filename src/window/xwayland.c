@@ -592,6 +592,8 @@ void server_init_xwayland(aurade_server_t *server) {
 
 void server_finish_xwayland(aurade_server_t *server) {
     if (!server || !server->xwayland) return;
+    safe_remove_listener(&server->xwayland_ready);
+    safe_remove_listener(&server->xwayland_new_surface);
     wlr_xwayland_destroy(server->xwayland);
     server->xwayland = NULL;
 }
