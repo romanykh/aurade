@@ -111,27 +111,88 @@ void draw_rounded_rect(cairo_t *cr, double x, double y, double w, double h, doub
 
 void draw_glass_panel(cairo_t *cr, double x, double y, double w, double h, double r,
                       double r_bg, double g_bg, double b_bg, double a_bg) {
+    if (w <= 0.0 || h <= 0.0) return;
+    if (r > w / 2.0) r = w / 2.0;
+    if (r > h / 2.0) r = h / 2.0;
     cairo_save(cr);
-
-    // Fill background glass body
-    draw_rounded_rect(cr, x, y, w, h, r);
-    cairo_set_source_rgba(cr, r_bg, g_bg, b_bg, a_bg);
-    cairo_fill_preserve(cr);
 
     double edge_a = a_bg > 1.0 ? 1.0 : (a_bg < 0.0 ? 0.0 : a_bg);
 
-    // Subtle outer border (translucent white/specular highlight)
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.15 * edge_a);
-    cairo_set_line_width(cr, 1.0);
-    cairo_stroke(cr);
+    // 1. Refractive depth gradient body fill (optical density absorption)
+    cairo_pattern_t *body_pat = cairo_pattern_create_linear(x, y, x, y + h);
+    double top_r = r_bg * 1.15; if (top_r > 1.0) top_r = 1.0;
+    double top_g = g_bg * 1.15; if (top_g > 1.0) top_g = 1.0;
+    double top_b = b_bg * 1.22; if (top_b > 1.0) top_b = 1.0;
+    double bot_r = r_bg * 0.88;
+    double bot_g = g_bg * 0.88;
+    double bot_b = b_bg * 0.92;
+    double top_a = a_bg * 0.90;
+    double bot_a = a_bg * 1.06; if (bot_a > 1.0) bot_a = 1.0;
 
-    // Top edge highlight line (macOS light reflection on glass)
-    cairo_new_path(cr);
-    cairo_move_to(cr, x + r, y + 0.5);
-    cairo_line_to(cr, x + w - r, y + 0.5);
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.28 * edge_a);
+    cairo_pattern_add_color_stop_rgba(body_pat, 0.0, top_r, top_g, top_b, top_a);
+    cairo_pattern_add_color_stop_rgba(body_pat, 1.0, bot_r, bot_g, bot_b, bot_a);
+
+    draw_rounded_rect(cr, x, y, w, h, r);
+    cairo_set_source(cr, body_pat);
+    cairo_fill_preserve(cr);
+    cairo_pattern_destroy(body_pat);
+
+    // 2. Specular border gradient (diagonal light strike: top-left bright, bottom-right subtle)
+    cairo_pattern_t *border_pat = cairo_pattern_create_linear(x, y, x + w, y + h);
+    cairo_pattern_add_color_stop_rgba(border_pat, 0.0, 1.0, 1.0, 1.0, 0.45 * edge_a);
+    cairo_pattern_add_color_stop_rgba(border_pat, 0.35, 1.0, 1.0, 1.0, 0.22 * edge_a);
+    cairo_pattern_add_color_stop_rgba(border_pat, 0.70, 1.0, 1.0, 1.0, 0.12 * edge_a);
+    cairo_pattern_add_color_stop_rgba(border_pat, 1.0, 1.0, 1.0, 1.0, 0.06 * edge_a);
+
+    cairo_set_source(cr, border_pat);
     cairo_set_line_width(cr, 1.0);
     cairo_stroke(cr);
+    cairo_pattern_destroy(border_pat);
+
+    // 3. Caustic surface sheen wash across the top ~40% of the glass
+    if (h > 6.0 && edge_a > 0.05) {
+        cairo_save(cr);
+        draw_rounded_rect(cr, x, y, w, h, r);
+        cairo_clip(cr);
+
+        double sheen_h = h * 0.42;
+        if (sheen_h > 48.0) sheen_h = 48.0;
+        if (sheen_h < 4.0) sheen_h = 4.0;
+        cairo_pattern_t *sheen = cairo_pattern_create_linear(x, y, x, y + sheen_h);
+        cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.14 * edge_a);
+        cairo_pattern_add_color_stop_rgba(sheen, 0.5, 1.0, 1.0, 1.0, 0.05 * edge_a);
+        cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
+        cairo_rectangle(cr, x, y, w, sheen_h);
+        cairo_set_source(cr, sheen);
+        cairo_fill(cr);
+        cairo_pattern_destroy(sheen);
+        cairo_restore(cr);
+    }
+
+    // 4. Crisp top-edge specular crest (micro-bevel light reflection)
+    if (w > 2.0 * r && edge_a > 0.05) {
+        cairo_new_path(cr);
+        cairo_move_to(cr, x + r, y + 0.5);
+        cairo_line_to(cr, x + w - r, y + 0.5);
+        cairo_pattern_t *crest = cairo_pattern_create_linear(x + r, y, x + w - r, y);
+        cairo_pattern_add_color_stop_rgba(crest, 0.0, 1.0, 1.0, 1.0, 0.20 * edge_a);
+        cairo_pattern_add_color_stop_rgba(crest, 0.5, 1.0, 1.0, 1.0, 0.48 * edge_a);
+        cairo_pattern_add_color_stop_rgba(crest, 1.0, 1.0, 1.0, 1.0, 0.20 * edge_a);
+        cairo_set_source(cr, crest);
+        cairo_set_line_width(cr, 1.0);
+        cairo_stroke(cr);
+        cairo_pattern_destroy(crest);
+    }
+
+    // 5. Bottom grounding edge (dark hairline rim for physical plate thickness)
+    if (w > 2.0 * r && h > 8.0 && edge_a > 0.10) {
+        cairo_new_path(cr);
+        cairo_move_to(cr, x + r, y + h - 0.5);
+        cairo_line_to(cr, x + w - r, y + h - 0.5);
+        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.28 * edge_a);
+        cairo_set_line_width(cr, 1.0);
+        cairo_stroke(cr);
+    }
 
     cairo_restore(cr);
 }

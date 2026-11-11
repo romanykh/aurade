@@ -407,11 +407,41 @@ static void draw_circle(cairo_t *cr, double cx, double cy, double r) {
 
 static void cc_card(cairo_t *cr, cc_rect_t r, cc_color_t fill, cc_color_t border) {
     draw_rounded_rect(cr, r.x, r.y, r.w, r.h, CC_CARD_RADIUS);
-    cc_set(cr, fill);
+
+    // Subtle top-to-bottom refraction gradient
+    cairo_pattern_t *g = cairo_pattern_create_linear(r.x, r.y, r.x, r.y + r.h);
+    double top_a = fill.a * 0.90;
+    double bot_a = fill.a * 1.10;
+    if (bot_a > 1.0) bot_a = 1.0;
+    double tr = fill.r * 1.12 > 1.0 ? 1.0 : fill.r * 1.12;
+    double tg = fill.g * 1.12 > 1.0 ? 1.0 : fill.g * 1.12;
+    double tb = fill.b * 1.16 > 1.0 ? 1.0 : fill.b * 1.16;
+    cairo_pattern_add_color_stop_rgba(g, 0.0, tr, tg, tb, top_a);
+    cairo_pattern_add_color_stop_rgba(g, 1.0, fill.r * 0.90, fill.g * 0.90, fill.b * 0.92, bot_a);
+    cairo_set_source(cr, g);
     cairo_fill_preserve(cr);
+    cairo_pattern_destroy(g);
+
+    // Diagonal specular border
+    cairo_pattern_t *bg_stroke = cairo_pattern_create_linear(r.x, r.y, r.x + r.w, r.y + r.h);
+    double edge_top_a = border.a * 1.6; if (edge_top_a > 1.0) edge_top_a = 1.0;
+    cairo_pattern_add_color_stop_rgba(bg_stroke, 0.0, 1.0, 1.0, 1.0, edge_top_a);
+    cairo_pattern_add_color_stop_rgba(bg_stroke, 0.40, border.r, border.g, border.b, border.a);
+    cairo_pattern_add_color_stop_rgba(bg_stroke, 1.0, border.r, border.g, border.b, border.a * 0.45);
+    cairo_set_source(cr, bg_stroke);
     cairo_set_line_width(cr, 1.0);
-    cc_set(cr, border);
     cairo_stroke(cr);
+    cairo_pattern_destroy(bg_stroke);
+
+    // Micro top highlight line
+    if (r.w > 2.0 * CC_CARD_RADIUS) {
+        cairo_new_path(cr);
+        cairo_move_to(cr, r.x + CC_CARD_RADIUS, r.y + 0.5);
+        cairo_line_to(cr, r.x + r.w - CC_CARD_RADIUS, r.y + 0.5);
+        double crest_a = border.a * 1.25; if (crest_a > 1.0) crest_a = 1.0;
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, crest_a);
+        cairo_stroke(cr);
+    }
 }
 
 static void __attribute__((unused)) cc_card_gradient(cairo_t *cr, cc_rect_t r, cc_color_t top, cc_color_t bottom) {
@@ -500,6 +530,7 @@ static void cc_icon(cairo_t *cr, cc_icon_kind_t kind, double cx, double cy, doub
 static void cc_draw_panel(cairo_t *cr, double w, double h, const cc_theme_t *t) {
     cairo_save(cr);
 
+    // 1. Refractive gradient panel fill
     draw_rounded_rect(cr, 0.0, 0.0, w, h, CC_RADIUS);
     cairo_pattern_t *g = cairo_pattern_create_linear(0, 0, 0, h);
     cairo_pattern_add_color_stop_rgba(g, 0.0, t->panel_top.r, t->panel_top.g,
@@ -510,16 +541,57 @@ static void cc_draw_panel(cairo_t *cr, double w, double h, const cc_theme_t *t) 
     cairo_fill(cr);
     cairo_pattern_destroy(g);
 
-    // Hairline rim plus a brighter top edge: the classic macOS glass cue.
+    // 2. Caustic surface sheen across top 35% of panel
+    cairo_save(cr);
+    draw_rounded_rect(cr, 0.0, 0.0, w, h, CC_RADIUS);
+    cairo_clip(cr);
+    double sheen_h = h * 0.35;
+    if (sheen_h > 90.0) sheen_h = 90.0;
+    cairo_pattern_t *sheen = cairo_pattern_create_linear(0, 0, 0, sheen_h);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, t->dark ? 0.12 : 0.25);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.60, 1.0, 1.0, 1.0, t->dark ? 0.04 : 0.08);
+    cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
+    cairo_rectangle(cr, 0, 0, w, sheen_h);
+    cairo_set_source(cr, sheen);
+    cairo_fill(cr);
+    cairo_pattern_destroy(sheen);
+    cairo_restore(cr);
+
+    // 3. Diagonal specular border gradient
     draw_rounded_rect(cr, 0.5, 0.5, w - 1.0, h - 1.0, CC_RADIUS - 0.5);
-    cc_set(cr, t->border);
+    cairo_pattern_t *bg_stroke = cairo_pattern_create_linear(0, 0, w, h);
+    if (t->dark) {
+        cairo_pattern_add_color_stop_rgba(bg_stroke, 0.0, 1.0, 1.0, 1.0, 0.42);
+        cairo_pattern_add_color_stop_rgba(bg_stroke, 0.35, 1.0, 1.0, 1.0, 0.18);
+        cairo_pattern_add_color_stop_rgba(bg_stroke, 0.70, 1.0, 1.0, 1.0, 0.10);
+        cairo_pattern_add_color_stop_rgba(bg_stroke, 1.0, 1.0, 1.0, 1.0, 0.05);
+    } else {
+        cairo_pattern_add_color_stop_rgba(bg_stroke, 0.0, 1.0, 1.0, 1.0, 0.95);
+        cairo_pattern_add_color_stop_rgba(bg_stroke, 0.50, 1.0, 1.0, 1.0, 0.75);
+        cairo_pattern_add_color_stop_rgba(bg_stroke, 1.0, 0.0, 0.0, 0.0, 0.08);
+    }
+    cairo_set_source(cr, bg_stroke);
     cairo_set_line_width(cr, 1.0);
     cairo_stroke(cr);
+    cairo_pattern_destroy(bg_stroke);
 
+    // 4. Top highlight crest
     cairo_new_path(cr);
     cairo_move_to(cr, CC_RADIUS, 1.0);
     cairo_line_to(cr, w - CC_RADIUS, 1.0);
-    cc_set(cr, t->highlight);
+    cairo_pattern_t *crest = cairo_pattern_create_linear(CC_RADIUS, 1.0, w - CC_RADIUS, 1.0);
+    cairo_pattern_add_color_stop_rgba(crest, 0.0, 1.0, 1.0, 1.0, t->dark ? 0.18 : 0.50);
+    cairo_pattern_add_color_stop_rgba(crest, 0.50, 1.0, 1.0, 1.0, t->dark ? 0.46 : 0.95);
+    cairo_pattern_add_color_stop_rgba(crest, 1.0, 1.0, 1.0, 1.0, t->dark ? 0.18 : 0.50);
+    cairo_set_source(cr, crest);
+    cairo_stroke(cr);
+    cairo_pattern_destroy(crest);
+
+    // 5. Bottom grounding edge
+    cairo_new_path(cr);
+    cairo_move_to(cr, CC_RADIUS, h - 1.0);
+    cairo_line_to(cr, w - CC_RADIUS, h - 1.0);
+    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, t->dark ? 0.30 : 0.12);
     cairo_stroke(cr);
 
     cairo_restore(cr);

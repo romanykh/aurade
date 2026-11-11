@@ -1688,47 +1688,97 @@ void dock_render(aurade_dock_t *dock) {
         double pill_r = 22.0;
         if (pill_r > pill_h / 2.0) pill_r = pill_h / 2.0;
         dock->pill_r = pill_r;
-        draw_drop_shadow(cr, pill_x, pill_local_y, used, pill_h, pill_r, 18.0, 0.5 * dock_op);
+        draw_drop_shadow(cr, pill_x, pill_local_y, used, pill_h, pill_r, 20.0, 0.55 * dock_op);
 
         if (dock->server && dock->server->config.blur_dock) {
-            // Dark frosted glass tint overlay
+            cairo_save(cr);
+
+            // 1. Refractive depth gradient body tint overlay
+            draw_rounded_rect(cr, pill_x, pill_local_y, used, pill_h, pill_r);
+            cairo_pattern_t *bg = cairo_pattern_create_linear(pill_x, pill_local_y, pill_x, pill_local_y + pill_h);
+            cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.14, 0.16, 0.22, 0.36 * dock_op);
+            cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.06, 0.07, 0.10, 0.50 * dock_op);
+            cairo_set_source(cr, bg);
+            cairo_fill_preserve(cr);
+            cairo_pattern_destroy(bg);
+
+            // 2. Caustic surface sheen wash across the top 42%
             cairo_save(cr);
             draw_rounded_rect(cr, pill_x, pill_local_y, used, pill_h, pill_r);
-            cairo_set_source_rgba(cr, 0.10, 0.11, 0.15, 0.42 * dock_op);
+            cairo_clip(cr);
+            double sheen_h = pill_h * 0.42;
+            cairo_pattern_t *sheen = cairo_pattern_create_linear(pill_x, pill_local_y, pill_x, pill_local_y + sheen_h);
+            cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.14 * dock_op);
+            cairo_pattern_add_color_stop_rgba(sheen, 0.6, 1.0, 1.0, 1.0, 0.04 * dock_op);
+            cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
+            cairo_rectangle(cr, pill_x, pill_local_y, used, sheen_h);
+            cairo_set_source(cr, sheen);
             cairo_fill(cr);
+            cairo_pattern_destroy(sheen);
             cairo_restore(cr);
 
-            // Subtle outer border & specular top highlight
-            cairo_save(cr);
-            draw_rounded_rect(cr, pill_x, pill_local_y, used, pill_h, pill_r);
-            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.22 * dock_op);
+            // 3. Diagonal specular border stroke
+            draw_rounded_rect(cr, pill_x + 0.5, pill_local_y + 0.5, used - 1.0, pill_h - 1.0, pill_r - 0.5);
+            cairo_pattern_t *border_pat = cairo_pattern_create_linear(pill_x, pill_local_y, pill_x + used, pill_local_y + pill_h);
+            cairo_pattern_add_color_stop_rgba(border_pat, 0.0, 1.0, 1.0, 1.0, 0.48 * dock_op);
+            cairo_pattern_add_color_stop_rgba(border_pat, 0.35, 1.0, 1.0, 1.0, 0.22 * dock_op);
+            cairo_pattern_add_color_stop_rgba(border_pat, 0.70, 1.0, 1.0, 1.0, 0.12 * dock_op);
+            cairo_pattern_add_color_stop_rgba(border_pat, 1.0, 1.0, 1.0, 1.0, 0.06 * dock_op);
+            cairo_set_source(cr, border_pat);
             cairo_set_line_width(cr, 1.0);
             cairo_stroke(cr);
+            cairo_pattern_destroy(border_pat);
 
+            // 4. Specular top crest highlight arc
             cairo_new_path(cr);
             cairo_move_to(cr, pill_x + pill_r, pill_local_y + 0.5);
             cairo_line_to(cr, pill_x + used - pill_r, pill_local_y + 0.5);
-            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.38 * dock_op);
+            cairo_pattern_t *crest = cairo_pattern_create_linear(pill_x + pill_r, pill_local_y, pill_x + used - pill_r, pill_local_y);
+            cairo_pattern_add_color_stop_rgba(crest, 0.0, 1.0, 1.0, 1.0, 0.22 * dock_op);
+            cairo_pattern_add_color_stop_rgba(crest, 0.5, 1.0, 1.0, 1.0, 0.52 * dock_op);
+            cairo_pattern_add_color_stop_rgba(crest, 1.0, 1.0, 1.0, 1.0, 0.22 * dock_op);
+            cairo_set_source(cr, crest);
             cairo_set_line_width(cr, 1.0);
             cairo_stroke(cr);
+            cairo_pattern_destroy(crest);
+
+            // 5. Bottom grounding edge hairline
+            cairo_new_path(cr);
+            cairo_move_to(cr, pill_x + pill_r, pill_local_y + pill_h - 0.5);
+            cairo_line_to(cr, pill_x + used - pill_r, pill_local_y + pill_h - 0.5);
+            cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.32 * dock_op);
+            cairo_set_line_width(cr, 1.0);
+            cairo_stroke(cr);
+
             cairo_restore(cr);
         } else {
             draw_glass_panel(cr, pill_x, pill_local_y, used, pill_h, pill_r,
-                             0.10, 0.11, 0.14, 0.75 * dock_op);
+                             0.10, 0.11, 0.14, 0.82 * dock_op);
         }
 
-        // Separators drawn crisply over frosted glass
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.18 * dock_op);
+        // Separators drawn crisply with physical cut-glass groove
         if (left_sep_x >= 0.0) {
             cairo_rectangle(cr, left_sep_x, pill_local_y + 14.0, 1.0, pill_h - 28.0);
+            cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.22 * dock_op);
+            cairo_fill(cr);
+            cairo_rectangle(cr, left_sep_x + 1.0, pill_local_y + 14.0, 1.0, pill_h - 28.0);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.24 * dock_op);
             cairo_fill(cr);
         }
         if (pinned_sep_x >= 0.0) {
             cairo_rectangle(cr, pinned_sep_x, pill_local_y + 14.0, 1.0, pill_h - 28.0);
+            cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.22 * dock_op);
+            cairo_fill(cr);
+            cairo_rectangle(cr, pinned_sep_x + 1.0, pill_local_y + 14.0, 1.0, pill_h - 28.0);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.24 * dock_op);
             cairo_fill(cr);
         }
         if (right_sep_x >= 0.0) {
             cairo_rectangle(cr, right_sep_x, pill_local_y + 14.0, 1.0, pill_h - 28.0);
+            cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.22 * dock_op);
+            cairo_fill(cr);
+            cairo_rectangle(cr, right_sep_x + 1.0, pill_local_y + 14.0, 1.0, pill_h - 28.0);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.24 * dock_op);
             cairo_fill(cr);
         }
     }

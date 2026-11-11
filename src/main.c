@@ -72,10 +72,17 @@ void server_update_blur_config(aurade_server_t *server) {
     if (passes < 1) passes = 1;
     if (passes > 4) passes = 4;
     int rad = (int)round(3.5 * str);
-    if (rad < 1) rad = 1;
-    // noise=0, brightness=1, contrast=1, saturation=1 completely bypasses the
-    // expensive fullscreen post-processing effects shader in SceneFX.
-    wlr_scene_set_blur_data(server->scene, passes, rad, 0.0f, 1.0f, 1.0f, 1.0f);
+    if (server->config.liquid_glass) {
+        // Apple Liquid Glass hardware vibrancy pipeline in SceneFX GLSL shader:
+        // - noise=0.022f: subtle tactile film micro-grain eliminates 8-bit color banding
+        // - brightness=1.04f: lifts dark backdrop values slightly under frosted glass
+        // - contrast=1.06f: crisp dynamic visual separation
+        // - saturation=1.35f: rich optical vibrancy that makes icons and text pop
+        wlr_scene_set_blur_data(server->scene, passes, rad, 0.022f, 1.04f, 1.06f, 1.35f);
+    } else {
+        // Flat standard frosted glass without vibrancy post-processing
+        wlr_scene_set_blur_data(server->scene, passes, rad, 0.0f, 1.0f, 1.0f, 1.0f);
+    }
 
     if (server->dock && server->dock->blur_node) {
         wlr_scene_node_set_enabled(&server->dock->blur_node->node,

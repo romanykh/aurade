@@ -1028,6 +1028,7 @@ static void on_blur_dock_toggled(bool active, gpointer user_data) { (void)user_d
 static void on_blur_topbar_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_topbar = active; }
 static void on_blur_launchpad_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_launchpad = active; }
 static void on_blur_overview_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_workspace_overview = active; }
+static void on_liquid_glass_toggled(bool active, gpointer user_data) { (void)user_data; g_config.liquid_glass = active; }
 static void on_blur_strength_changed(double val, gpointer user_data) { (void)user_data; g_config.blur_strength = val; }
 
 // Running Windows Opacity Helpers
@@ -1299,6 +1300,9 @@ GtkWidget *build_page_appearance(void) {
     GtkWidget *sw_ws_b = ui_switch(g_config.blur_workspace_overview, on_blur_overview_toggled, NULL);
     ui_add_row(c_blur, "Workspace Overview Blur", "Frosted wallpaper blur in Mission Control", sw_ws_b, "preferences-desktop-display-symbolic", "badge-appearance");
 
+    GtkWidget *sw_lg = ui_switch(g_config.liquid_glass, on_liquid_glass_toggled, NULL);
+    ui_add_row(c_blur, "Liquid Glass (Apple Vibrancy)", "Hardware vibrancy saturation boost, optical caustics, and specular refraction sheen", sw_lg, "applications-graphics-symbolic", "badge-appearance");
+
     GtkWidget *sc_bst = ui_scale(g_config.blur_strength > 0.0 ? g_config.blur_strength : 1.0, 0.20, 2.50, 0.10, 1, on_blur_strength_changed, NULL);
     ui_add_row(c_blur, "Blur Strength", "Adjust the intensity and diffusion radius of the frosted glass blur", sc_bst, "preferences-desktop-theme-symbolic", "badge-appearance");
 
@@ -1353,6 +1357,9 @@ GtkWidget *build_page_dock(void) {
 
     GtkWidget *sw_dock_blur = ui_switch(g_config.blur_dock, on_blur_dock_toggled, NULL);
     ui_add_row(c_behave, "Frosted Glass Blur", "Enable frosted glass blur effect under the dock", sw_dock_blur, "preferences-desktop-wallpaper-symbolic", "badge-appearance");
+
+    GtkWidget *sw_dock_lg = ui_switch(g_config.liquid_glass, on_liquid_glass_toggled, NULL);
+    ui_add_row(c_behave, "Liquid Glass Aesthetic", "Multi-layer specular highlights, caustics, and diagonal refractive borders", sw_dock_lg, "applications-graphics-symbolic", "badge-appearance");
 
     GtkWidget *sc_bst = ui_scale(g_config.blur_strength > 0.0 ? g_config.blur_strength : 1.0, 0.20, 2.50, 0.10, 1, on_blur_strength_changed, NULL);
     ui_add_row(c_behave, "Blur Strength", "Adjust the intensity and diffusion radius of the frosted glass blur", sc_bst, "preferences-desktop-theme-symbolic", "badge-appearance");

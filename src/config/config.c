@@ -119,6 +119,7 @@ aurade_config_t config_get_defaults(void) {
         .blur_workspace_overview = true,
         .blur_windows = false,
         .blur_strength = 1.0,
+        .liquid_glass = true,
 
         // Topbar
         .topbar_cpu_temp = true,
@@ -396,6 +397,8 @@ bool config_load(aurade_config_t *cfg, const char *path) {
         if (json_object_object_get_ex(blur, "workspace_overview", &v)) cfg->blur_workspace_overview = json_object_get_boolean(v);
         if (json_object_object_get_ex(blur, "windows", &v)) cfg->blur_windows = json_object_get_boolean(v);
         else if (json_object_object_get_ex(blur, "window", &v)) cfg->blur_windows = json_object_get_boolean(v);
+        if (json_object_object_get_ex(blur, "liquid_glass", &v)) cfg->liquid_glass = json_object_get_boolean(v);
+        else cfg->liquid_glass = true;
         if (json_object_object_get_ex(blur, "strength", &v)) {
             double s = json_object_get_double(v);
             if (s >= 0.1 && s <= 3.0) cfg->blur_strength = s;
@@ -531,6 +534,7 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     json_object_object_add(blur, "launchpad", json_object_new_boolean(cfg->blur_launchpad));
     json_object_object_add(blur, "workspace_overview", json_object_new_boolean(cfg->blur_workspace_overview));
     json_object_object_add(blur, "windows", json_object_new_boolean(cfg->blur_windows));
+    json_object_object_add(blur, "liquid_glass", json_object_new_boolean(cfg->liquid_glass));
     json_object_object_add(blur, "strength", json_object_new_double(cfg->blur_strength > 0.05 ? cfg->blur_strength : 1.0));
     json_object_object_add(root, "blur", blur);
 

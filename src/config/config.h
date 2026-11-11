@@ -109,6 +109,7 @@ typedef struct {
     bool blur_workspace_overview;
     bool blur_windows;
     double blur_strength;
+    bool liquid_glass;
 
     // Topbar Widgets
     bool topbar_cpu_temp;

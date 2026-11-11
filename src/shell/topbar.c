@@ -303,40 +303,68 @@ void topbar_render(aurade_topbar_t *bar) {
             wlr_scene_blur_set_size(bar->blur_node, w, h);
             wlr_scene_node_set_enabled(&bar->blur_node->node, true);
         }
-        // Translucent frosted glass tint overlay
+        // Liquid glass refractive gradient overlay
         cairo_pattern_t *bg = cairo_pattern_create_linear(0, 0, 0, h);
-        cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.09, 0.10, 0.14, 0.48);
-        cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.04, 0.05, 0.07, 0.58);
+        cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.12, 0.14, 0.20, 0.42);
+        cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.05, 0.06, 0.09, 0.56);
         cairo_set_source(cr, bg);
         cairo_rectangle(cr, 0, 0, w, h);
         cairo_fill(cr);
         cairo_pattern_destroy(bg);
 
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.16);
+        // Caustic surface sheen in top 10px
+        cairo_pattern_t *sheen = cairo_pattern_create_linear(0, 0, 0, 10.0);
+        cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.15);
+        cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
+        cairo_set_source(cr, sheen);
+        cairo_rectangle(cr, 0, 0, w, 10.0);
+        cairo_fill(cr);
+        cairo_pattern_destroy(sheen);
+
+        // Specular top highlight line
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.26);
         cairo_rectangle(cr, 0, 0, w, 0.5);
         cairo_fill(cr);
 
-        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.32);
+        // Bottom double-edge glass ledge (inner light reflection + shadow rim)
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.08);
+        cairo_rectangle(cr, 0, h - 2.0, w, 1.0);
+        cairo_fill(cr);
+
+        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.36);
         cairo_rectangle(cr, 0, h - 1.0, w, 1.0);
         cairo_fill(cr);
     } else {
         if (bar->blur_node) {
             wlr_scene_node_set_enabled(&bar->blur_node->node, false);
         }
-        // Translucent charcoal "vibrancy" bar with a soft top highlight.
+        // Translucent charcoal "vibrancy" bar with Liquid Glass depth
         cairo_pattern_t *bg = cairo_pattern_create_linear(0, 0, 0, h);
-        cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.10, 0.10, 0.12, 0.82);
-        cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.04, 0.04, 0.06, 0.88);
+        cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.12, 0.13, 0.17, 0.82);
+        cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.04, 0.05, 0.07, 0.90);
         cairo_set_source(cr, bg);
         cairo_rectangle(cr, 0, 0, w, h);
         cairo_fill(cr);
         cairo_pattern_destroy(bg);
 
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.10);
+        // Caustic surface sheen
+        cairo_pattern_t *sheen = cairo_pattern_create_linear(0, 0, 0, 10.0);
+        cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.12);
+        cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
+        cairo_set_source(cr, sheen);
+        cairo_rectangle(cr, 0, 0, w, 10.0);
+        cairo_fill(cr);
+        cairo_pattern_destroy(sheen);
+
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.18);
         cairo_rectangle(cr, 0, 0, w, 0.5);
         cairo_fill(cr);
 
-        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.28);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.06);
+        cairo_rectangle(cr, 0, h - 2.0, w, 1.0);
+        cairo_fill(cr);
+
+        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.32);
         cairo_rectangle(cr, 0, h - 1.0, w, 1.0);
         cairo_fill(cr);
     }
