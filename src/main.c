@@ -88,10 +88,15 @@ void server_update_blur_config(aurade_server_t *server) {
     }
 
     if (server->dock && server->dock->blur_node) {
+        if (server->config.liquid_glass) {
+            wlr_scene_blur_set_liquid_glass(server->dock->blur_node, true);
+        } else {
+            wlr_scene_blur_set_liquid_glass(server->dock->blur_node, false);
+        }
         wlr_scene_node_set_enabled(&server->dock->blur_node->node,
                                    server->dock->enabled &&
                                    server->dock->hide_progress < 0.999 &&
-                                   server->config.blur_dock);
+                                   (server->config.blur_dock || server->config.liquid_glass));
     }
     if (server->topbar && server->topbar->blur_node) {
         wlr_scene_node_set_enabled(&server->topbar->blur_node->node, server->config.blur_topbar);

@@ -400,6 +400,11 @@ void dock_apply_slide(aurade_dock_t *dock) {
         int bx = (int)round(dock->pill_x);
         int by = y + (int)round(dock->pill_local_y);
         wlr_scene_node_set_position(&dock->blur_node->node, bx, by);
+        if (dock->server && dock->server->config.liquid_glass) {
+            wlr_scene_blur_set_liquid_glass(dock->blur_node, true);
+        } else {
+            wlr_scene_blur_set_liquid_glass(dock->blur_node, false);
+        }
         bool pause_blur = dock->server && (
             dock->server->gesture_mode != GESTURE_MODE_IDLE ||
             dock->server->gesture_in_progress ||
@@ -407,7 +412,9 @@ void dock_apply_slide(aurade_dock_t *dock) {
         );
         double dock_op = dock->server ? dock->server->config.dock_opacity : 0.85;
         wlr_scene_node_set_enabled(&dock->blur_node->node,
-                                   visible && dock->server && dock->server->config.blur_dock && (dock_op > 0.05) && !pause_blur);
+                                   visible && dock->server &&
+                                   (dock->server->config.blur_dock || dock->server->config.liquid_glass) &&
+                                   (dock_op > 0.05) && !pause_blur);
     }
 }
 
@@ -1388,7 +1395,7 @@ void dock_render(aurade_dock_t *dock) {
         );
         wlr_scene_node_set_enabled(&dock->blur_node->node,
                                    dock->enabled && dock->hide_progress < 0.999 &&
-                                   dock->server && dock->server->config.blur_dock &&
+                                   dock->server && (dock->server->config.blur_dock || dock->server->config.liquid_glass) &&
                                    (dock_op > 0.05) &&
                                    !pause_blur);
     }

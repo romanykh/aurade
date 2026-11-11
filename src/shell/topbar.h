@@ -53,6 +53,7 @@ typedef struct aurade_topbar {
     int power_menu_confirm_hover;  // 0 = none, 1 = cancel, 2 = confirm
     cairo_buffer_t *power_menu_buffer;
     struct wlr_scene_buffer *power_menu_scene;
+    struct wlr_scene_blur *power_menu_blur_node;
 
     bool needs_render;
     struct wlr_scene_blur *blur_node;

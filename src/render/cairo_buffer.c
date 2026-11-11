@@ -416,22 +416,16 @@ void draw_glass_panel_at(cairo_t *cr, double x, double y, double w, double h, do
                          double screen_x, double screen_y,
                          double r_bg, double g_bg, double b_bg, double a_bg) {
     if (w <= 0.0 || h <= 0.0) return;
+    (void)screen_x;
+    (void)screen_y;
     if (r > w / 2.0) r = w / 2.0;
     if (r > h / 2.0) r = h / 2.0;
     cairo_save(cr);
 
     double edge_a = a_bg > 1.0 ? 1.0 : (a_bg < 0.0 ? 0.0 : a_bg);
 
-    if (s_liquid_glass_enabled && s_wallpaper_surface) {
-        draw_liquid_glass_lens(cr, s_wallpaper_surface, x, y, w, h, r,
-                               screen_x, screen_y, 1.20, edge_a);
-        // Subtle body tint overlay
-        draw_rounded_rect(cr, x, y, w, h, r);
-        cairo_set_source_rgba(cr, r_bg, g_bg, b_bg, a_bg * 0.25);
-        cairo_fill(cr);
-    } else {
-        // 1. Refractive depth gradient body fill (translucent, crystal clear glass)
-        cairo_pattern_t *body_pat = cairo_pattern_create_linear(x, y, x, y + h);
+    // 1. Refractive depth gradient body fill (translucent, crystal clear glass)
+    cairo_pattern_t *body_pat = cairo_pattern_create_linear(x, y, x, y + h);
         double top_r = r_bg * 1.15; if (top_r > 1.0) top_r = 1.0;
         double top_g = g_bg * 1.15; if (top_g > 1.0) top_g = 1.0;
         double top_b = b_bg * 1.22; if (top_b > 1.0) top_b = 1.0;
@@ -471,7 +465,6 @@ void draw_glass_panel_at(cairo_t *cr, double x, double y, double w, double h, do
 
         // 3. Apple Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
         draw_refractive_glass_rim(cr, x, y, w, h, r, edge_a);
-    }
 
     cairo_restore(cr);
 }

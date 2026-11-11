@@ -258,6 +258,22 @@ aurade_topbar_t *topbar_create(aurade_server_t *server) {
     wlr_scene_node_set_position(&bar->power_menu_scene->node,
                                 POWER_MENU_SCENE_X, POWER_MENU_SCENE_Y);
     wlr_scene_node_set_enabled(&bar->power_menu_scene->node, false);
+
+    bar->power_menu_blur_node = wlr_scene_blur_create(server->overlay_tree,
+                                                      (int)POWER_MENU_PANEL_W,
+                                                      (int)POWER_MENU_PANEL_H);
+    if (bar->power_menu_blur_node) {
+        wlr_scene_node_set_position(&bar->power_menu_blur_node->node,
+                                    (int)(POWER_MENU_SCENE_X + POWER_MENU_PANEL_X),
+                                    (int)(POWER_MENU_SCENE_Y + POWER_MENU_PANEL_Y));
+        wlr_scene_node_place_below(&bar->power_menu_blur_node->node,
+                                   &bar->power_menu_scene->node);
+        wlr_scene_node_set_enabled(&bar->power_menu_blur_node->node, false);
+        wlr_scene_blur_set_corner_radius(bar->power_menu_blur_node, 12);
+        if (server->config.liquid_glass) {
+            wlr_scene_blur_set_liquid_glass(bar->power_menu_blur_node, true);
+        }
+    }
     power_menu_render(bar);
 
     topbar_render(bar);
@@ -698,9 +714,38 @@ static void power_menu_render(aurade_topbar_t *bar) {
 
     draw_drop_shadow(cr, POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y,
                      POWER_MENU_PANEL_W, POWER_MENU_PANEL_H, 12.0, 10.0, 0.55);
-    draw_glass_panel(cr, POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y,
-                     POWER_MENU_PANEL_W, POWER_MENU_PANEL_H, 12.0,
-                     0.09, 0.09, 0.11, 0.95);
+
+    // 1. Refractive depth gradient body tint overlay (translucent)
+    draw_rounded_rect(cr, POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y,
+                      POWER_MENU_PANEL_W, POWER_MENU_PANEL_H, 12.0);
+    cairo_pattern_t *bg = cairo_pattern_create_linear(POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y,
+                                                      POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y + POWER_MENU_PANEL_H);
+    cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.12, 0.13, 0.17, 0.45);
+    cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.06, 0.07, 0.10, 0.65);
+    cairo_set_source(cr, bg);
+    cairo_fill(cr);
+    cairo_pattern_destroy(bg);
+
+    // 2. Caustic surface sheen wash across top 35%
+    cairo_save(cr);
+    draw_rounded_rect(cr, POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y,
+                      POWER_MENU_PANEL_W, POWER_MENU_PANEL_H, 12.0);
+    cairo_clip(cr);
+    double sheen_h = POWER_MENU_PANEL_H * 0.35;
+    cairo_pattern_t *sheen = cairo_pattern_create_linear(POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y,
+                                                        POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y + sheen_h);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.028);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.60, 1.0, 1.0, 1.0, 0.008);
+    cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
+    cairo_rectangle(cr, POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y, POWER_MENU_PANEL_W, sheen_h);
+    cairo_set_source(cr, sheen);
+    cairo_fill(cr);
+    cairo_pattern_destroy(sheen);
+    cairo_restore(cr);
+
+    // 3. Apple Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
+    draw_refractive_glass_rim(cr, POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y,
+                              POWER_MENU_PANEL_W, POWER_MENU_PANEL_H, 12.0, 0.70);
 
     if (bar->power_menu_state == POWER_MENU_OPEN) {
         for (int i = 0; i < POWER_MENU_ITEM_COUNT; i++) {
@@ -809,6 +854,18 @@ static void topbar_open_power_menu(aurade_topbar_t *bar) {
 
     wlr_scene_node_set_enabled(&bar->power_menu_scene->node, true);
     wlr_scene_node_raise_to_top(&bar->power_menu_scene->node);
+    if (bar->power_menu_blur_node) {
+        wlr_scene_node_set_position(&bar->power_menu_blur_node->node,
+                                    (int)(POWER_MENU_SCENE_X + POWER_MENU_PANEL_X),
+                                    (int)(POWER_MENU_SCENE_Y + POWER_MENU_PANEL_Y));
+        if (bar->server && bar->server->config.liquid_glass) {
+            wlr_scene_blur_set_liquid_glass(bar->power_menu_blur_node, true);
+        } else {
+            wlr_scene_blur_set_liquid_glass(bar->power_menu_blur_node, false);
+        }
+        wlr_scene_node_set_enabled(&bar->power_menu_blur_node->node, true);
+        wlr_scene_node_place_below(&bar->power_menu_blur_node->node, &bar->power_menu_scene->node);
+    }
     power_menu_render(bar);
     topbar_render(bar);
 }
@@ -828,6 +885,9 @@ void topbar_close_power_menu(aurade_topbar_t *bar) {
 
     if (bar->power_menu_scene) {
         wlr_scene_node_set_enabled(&bar->power_menu_scene->node, false);
+    }
+    if (bar->power_menu_blur_node) {
+        wlr_scene_node_set_enabled(&bar->power_menu_blur_node->node, false);
     }
     topbar_render(bar);
 }
@@ -997,6 +1057,10 @@ void topbar_destroy(aurade_topbar_t *bar) {
     if (bar->blur_node) {
         wlr_scene_node_destroy(&bar->blur_node->node);
         bar->blur_node = NULL;
+    }
+    if (bar->power_menu_blur_node) {
+        wlr_scene_node_destroy(&bar->power_menu_blur_node->node);
+        bar->power_menu_blur_node = NULL;
     }
     if (bar->power_menu_buffer) wlr_buffer_drop(&bar->power_menu_buffer->base);
     if (bar->buffer) wlr_buffer_drop(&bar->buffer->base);

@@ -801,7 +801,7 @@ void mission_control_end(aurade_mission_control_t *mc, bool opened) {
         }
         if (mc->server && mc->server->dock && mc->server->dock->blur_node) {
             wlr_scene_node_set_enabled(&mc->server->dock->blur_node->node,
-                                       mc->server->config.blur_dock);
+                                       mc->server->config.blur_dock || mc->server->config.liquid_glass);
         }
         if (mc->server && mc->server->popup_tree) {
             wlr_scene_node_set_enabled(&mc->server->popup_tree->node, true);
