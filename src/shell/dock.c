@@ -405,6 +405,9 @@ void dock_apply_slide(aurade_dock_t *dock) {
         } else {
             wlr_scene_blur_set_liquid_glass(dock->blur_node, false);
         }
+        if (dock->server) {
+            wlr_scene_blur_set_strength(dock->blur_node, (float)dock->server->config.blur_strength);
+        }
         bool pause_blur = dock->server && (
             dock->server->gesture_mode != GESTURE_MODE_IDLE ||
             dock->server->gesture_in_progress ||
@@ -413,7 +416,7 @@ void dock_apply_slide(aurade_dock_t *dock) {
         double dock_op = dock->server ? dock->server->config.dock_opacity : 0.85;
         wlr_scene_node_set_enabled(&dock->blur_node->node,
                                    visible && dock->server &&
-                                   (dock->server->config.blur_dock || dock->server->config.liquid_glass) &&
+                                   dock->server->config.blur_dock &&
                                    (dock_op > 0.05) && !pause_blur);
     }
 }
@@ -1388,6 +1391,9 @@ void dock_render(aurade_dock_t *dock) {
         } else {
             wlr_scene_blur_set_liquid_glass(dock->blur_node, false);
         }
+        if (dock->server) {
+            wlr_scene_blur_set_strength(dock->blur_node, (float)dock->server->config.blur_strength);
+        }
         bool pause_blur = dock->server && (
             dock->server->gesture_mode != GESTURE_MODE_IDLE ||
             dock->server->gesture_in_progress ||
@@ -1395,7 +1401,7 @@ void dock_render(aurade_dock_t *dock) {
         );
         wlr_scene_node_set_enabled(&dock->blur_node->node,
                                    dock->enabled && dock->hide_progress < 0.999 &&
-                                   dock->server && (dock->server->config.blur_dock || dock->server->config.liquid_glass) &&
+                                   dock->server && dock->server->config.blur_dock &&
                                    (dock_op > 0.05) &&
                                    !pause_blur);
     }
@@ -1709,7 +1715,7 @@ void dock_render(aurade_dock_t *dock) {
         double scr_x = pill_x;
         double scr_y = (dock->screen_height - dock->buffer_height) + pill_local_y;
 
-        if (dock->server && (dock->server->config.blur_dock || dock->server->config.liquid_glass)) {
+        if (dock->server && dock->server->config.blur_dock) {
             cairo_save(cr);
 
             // 1. Refractive depth gradient body tint overlay (translucent)

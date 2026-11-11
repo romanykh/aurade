@@ -67,39 +67,60 @@ void server_update_blur_config(aurade_server_t *server) {
     if (!server || !server->scene) return;
     cairo_buffer_set_liquid_glass_enabled(server->config.liquid_glass);
     double str = server->config.blur_strength > 0.05 ? server->config.blur_strength : 1.0;
-    // Dual-Kawase with 2 passes & radius 3.5 is ideal for integrated GPUs (Intel UHD):
-    // delivers smooth frosted glass while reducing GPU fragment fill rate by ~65%.
-    if (server->config.liquid_glass) {
-        // Apple Liquid Glass: delicate light blur accompanied by edge refraction
-        // - 2 passes with tight radius 2.0 creates a crystal-clear, soft frosted blur
-        //   where wallpaper details, photos, and background apps remain clearly recognizable
-        // - saturation 1.28f + brightness 1.02f + contrast 1.04f + micro-dither 0.015f
-        int lg_rad = (int)round(2.0 * str);
-        if (lg_rad < 1) lg_rad = 1;
-        wlr_scene_set_blur_data(server->scene, 2, lg_rad, 0.015f, 1.02f, 1.04f, 1.28f);
-    } else {
-        // Standard frosted glass
-        int std_passes = (int)round(2.0 * str);
-        if (std_passes < 1) std_passes = 1;
-        if (std_passes > 4) std_passes = 4;
-        int std_rad = (int)round(3.5 * str);
-        if (std_rad < 1) std_rad = 1;
-        wlr_scene_set_blur_data(server->scene, std_passes, std_rad, 0.0f, 1.0f, 1.0f, 1.0f);
-    }
+
+    int passes = server->config.blur_passes > 0 ? server->config.blur_passes : 2;
+    int base_rad = server->config.blur_radius > 0 ? server->config.blur_radius : (server->config.liquid_glass ? 2 : 3);
+    int eff_rad = (int)round(base_rad * str);
+    if (eff_rad < 1) eff_rad = 1;
+
+    float noise = (float)(server->config.blur_noise >= 0.0 ? server->config.blur_noise : (server->config.liquid_glass ? 0.015f : 0.0f));
+    float brightness = (float)(server->config.blur_brightness > 0.1 ? server->config.blur_brightness : (server->config.liquid_glass ? 1.02f : 1.0f));
+    float contrast = (float)(server->config.blur_contrast > 0.1 ? server->config.blur_contrast : (server->config.liquid_glass ? 1.04f : 1.0f));
+    float saturation = (float)(server->config.blur_saturation > 0.1 ? server->config.blur_saturation : (server->config.liquid_glass ? 1.25f : 1.0f));
+
+    wlr_scene_set_blur_data(server->scene, passes, eff_rad, noise, brightness, contrast, saturation);
 
     if (server->dock && server->dock->blur_node) {
-        if (server->config.liquid_glass) {
-            wlr_scene_blur_set_liquid_glass(server->dock->blur_node, true);
-        } else {
-            wlr_scene_blur_set_liquid_glass(server->dock->blur_node, false);
-        }
+        wlr_scene_blur_set_liquid_glass(server->dock->blur_node, server->config.liquid_glass);
+        wlr_scene_blur_set_strength(server->dock->blur_node, (float)str);
         wlr_scene_node_set_enabled(&server->dock->blur_node->node,
                                    server->dock->enabled &&
                                    server->dock->hide_progress < 0.999 &&
-                                   (server->config.blur_dock || server->config.liquid_glass));
+                                   server->config.blur_dock &&
+                                   (server->config.dock_opacity > 0.05));
     }
-    if (server->topbar && server->topbar->blur_node) {
-        wlr_scene_node_set_enabled(&server->topbar->blur_node->node, false);
+    if (server->topbar) {
+        if (server->topbar->blur_node) {
+            wlr_scene_blur_set_liquid_glass(server->topbar->blur_node, server->config.liquid_glass);
+            wlr_scene_blur_set_strength(server->topbar->blur_node, (float)str);
+            wlr_scene_node_set_enabled(&server->topbar->blur_node->node, server->config.blur_topbar);
+        }
+        if (server->topbar->power_menu_blur_node) {
+            wlr_scene_blur_set_liquid_glass(server->topbar->power_menu_blur_node, server->config.liquid_glass);
+            wlr_scene_blur_set_strength(server->topbar->power_menu_blur_node, (float)str);
+            bool pm_open = topbar_power_menu_is_open(server->topbar);
+            wlr_scene_node_set_enabled(&server->topbar->power_menu_blur_node->node,
+                                       pm_open && server->config.blur_power_menu);
+        }
+    }
+    if (server->control_center && server->control_center->blur_node) {
+        wlr_scene_blur_set_liquid_glass(server->control_center->blur_node, server->config.liquid_glass);
+        wlr_scene_blur_set_strength(server->control_center->blur_node, (float)str);
+        wlr_scene_node_set_enabled(&server->control_center->blur_node->node,
+                                   server->control_center->active &&
+                                   (server->control_center->progress > 0.05) &&
+                                   server->config.blur_control_center);
+    }
+    if (server->notifications) {
+        for (int i = 0; i < NOTIF_MAX_VISIBLE; i++) {
+            if (server->notifications->blur_nodes[i]) {
+                wlr_scene_blur_set_liquid_glass(server->notifications->blur_nodes[i], server->config.liquid_glass);
+                wlr_scene_blur_set_strength(server->notifications->blur_nodes[i], (float)str);
+                if (!server->config.blur_notifications) {
+                    wlr_scene_node_set_enabled(&server->notifications->blur_nodes[i]->node, false);
+                }
+            }
+        }
     }
     if (server->views.next && server->views.prev) {
         aurade_view_t *view_it;
@@ -171,6 +192,7 @@ static int config_inotify_handler(int fd, uint32_t mask, void *data) {
     char prev_wallpaper[512];
     snprintf(prev_wallpaper, sizeof(prev_wallpaper), "%s", server->config.wallpaper_path);
     double prev_blur_strength = server->config.blur_strength;
+    int prev_blur_radius = server->config.blur_radius;
     bool prev_tiling = server->config.tiling_enabled;
 
     // Re-add watch on config file in case it was replaced atomically
@@ -195,7 +217,8 @@ static int config_inotify_handler(int fd, uint32_t mask, void *data) {
         server_untile_all_workspaces(server);
     }
     if (server->wallpaper && (strcmp(prev_wallpaper, server->config.wallpaper_path) != 0 ||
-                              fabs(prev_blur_strength - server->config.blur_strength) > 0.01)) {
+                              fabs(prev_blur_strength - server->config.blur_strength) > 0.01 ||
+                              prev_blur_radius != server->config.blur_radius)) {
         wallpaper_reload(server->wallpaper);
     }
     if (server->dock) {
@@ -209,6 +232,7 @@ static int config_inotify_handler(int fd, uint32_t mask, void *data) {
     if (server->launchpad) launchpad_render(server->launchpad);
     if (server->mission_control) mission_control_render(server->mission_control);
     if (server->control_center) control_center_render(server->control_center);
+    if (server->notifications) notifications_render(server->notifications);
     if (server->music_pill) music_pill_update(server->music_pill);
     aurade_view_t *view_it;
     wl_list_for_each(view_it, &server->views, link) {

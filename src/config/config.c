@@ -114,11 +114,21 @@ aurade_config_t config_get_defaults(void) {
 
         // Blur effects
         .blur_dock = true,
-        .blur_topbar = true,
+        .blur_control_center = true,
+        .blur_power_menu = true,
+        .blur_notifications = true,
+        .blur_lockscreen = true,
+        .blur_topbar = false,
         .blur_launchpad = true,
         .blur_workspace_overview = true,
         .blur_windows = false,
         .blur_strength = 1.0,
+        .blur_radius = 3,
+        .blur_passes = 2,
+        .blur_saturation = 1.25,
+        .blur_brightness = 1.02,
+        .blur_contrast = 1.04,
+        .blur_noise = 0.015,
         .liquid_glass = true,
 
         // Topbar
@@ -392,6 +402,10 @@ bool config_load(aurade_config_t *cfg, const char *path) {
     if (json_object_object_get_ex(root, "blur", &blur)) {
         struct json_object *v;
         if (json_object_object_get_ex(blur, "dock", &v)) cfg->blur_dock = json_object_get_boolean(v);
+        if (json_object_object_get_ex(blur, "control_center", &v)) cfg->blur_control_center = json_object_get_boolean(v);
+        if (json_object_object_get_ex(blur, "power_menu", &v)) cfg->blur_power_menu = json_object_get_boolean(v);
+        if (json_object_object_get_ex(blur, "notifications", &v)) cfg->blur_notifications = json_object_get_boolean(v);
+        if (json_object_object_get_ex(blur, "lockscreen", &v)) cfg->blur_lockscreen = json_object_get_boolean(v);
         if (json_object_object_get_ex(blur, "topbar", &v)) cfg->blur_topbar = json_object_get_boolean(v);
         if (json_object_object_get_ex(blur, "launchpad", &v)) cfg->blur_launchpad = json_object_get_boolean(v);
         if (json_object_object_get_ex(blur, "workspace_overview", &v)) cfg->blur_workspace_overview = json_object_get_boolean(v);
@@ -401,9 +415,33 @@ bool config_load(aurade_config_t *cfg, const char *path) {
         else cfg->liquid_glass = true;
         if (json_object_object_get_ex(blur, "strength", &v)) {
             double s = json_object_get_double(v);
-            if (s >= 0.1 && s <= 3.0) cfg->blur_strength = s;
+            if (s >= 0.05 && s <= 3.0) cfg->blur_strength = s;
         } else {
             cfg->blur_strength = 1.0;
+        }
+        if (json_object_object_get_ex(blur, "radius", &v)) {
+            int r = json_object_get_int(v);
+            if (r >= 1 && r <= 12) cfg->blur_radius = r;
+        }
+        if (json_object_object_get_ex(blur, "passes", &v)) {
+            int p = json_object_get_int(v);
+            if (p >= 1 && p <= 6) cfg->blur_passes = p;
+        }
+        if (json_object_object_get_ex(blur, "saturation", &v)) {
+            double sat = json_object_get_double(v);
+            if (sat >= 0.2 && sat <= 3.0) cfg->blur_saturation = sat;
+        }
+        if (json_object_object_get_ex(blur, "brightness", &v)) {
+            double b = json_object_get_double(v);
+            if (b >= 0.5 && b <= 2.0) cfg->blur_brightness = b;
+        }
+        if (json_object_object_get_ex(blur, "contrast", &v)) {
+            double c = json_object_get_double(v);
+            if (c >= 0.5 && c <= 2.0) cfg->blur_contrast = c;
+        }
+        if (json_object_object_get_ex(blur, "noise", &v)) {
+            double n = json_object_get_double(v);
+            if (n >= 0.0 && n <= 0.2) cfg->blur_noise = n;
         }
     }
 
@@ -530,12 +568,22 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
 
     struct json_object *blur = json_object_new_object();
     json_object_object_add(blur, "dock", json_object_new_boolean(cfg->blur_dock));
+    json_object_object_add(blur, "control_center", json_object_new_boolean(cfg->blur_control_center));
+    json_object_object_add(blur, "power_menu", json_object_new_boolean(cfg->blur_power_menu));
+    json_object_object_add(blur, "notifications", json_object_new_boolean(cfg->blur_notifications));
+    json_object_object_add(blur, "lockscreen", json_object_new_boolean(cfg->blur_lockscreen));
     json_object_object_add(blur, "topbar", json_object_new_boolean(cfg->blur_topbar));
     json_object_object_add(blur, "launchpad", json_object_new_boolean(cfg->blur_launchpad));
     json_object_object_add(blur, "workspace_overview", json_object_new_boolean(cfg->blur_workspace_overview));
     json_object_object_add(blur, "windows", json_object_new_boolean(cfg->blur_windows));
     json_object_object_add(blur, "liquid_glass", json_object_new_boolean(cfg->liquid_glass));
     json_object_object_add(blur, "strength", json_object_new_double(cfg->blur_strength > 0.05 ? cfg->blur_strength : 1.0));
+    json_object_object_add(blur, "radius", json_object_new_int(cfg->blur_radius > 0 ? cfg->blur_radius : 3));
+    json_object_object_add(blur, "passes", json_object_new_int(cfg->blur_passes > 0 ? cfg->blur_passes : 2));
+    json_object_object_add(blur, "saturation", json_object_new_double(cfg->blur_saturation > 0.1 ? cfg->blur_saturation : 1.25));
+    json_object_object_add(blur, "brightness", json_object_new_double(cfg->blur_brightness > 0.1 ? cfg->blur_brightness : 1.02));
+    json_object_object_add(blur, "contrast", json_object_new_double(cfg->blur_contrast > 0.1 ? cfg->blur_contrast : 1.04));
+    json_object_object_add(blur, "noise", json_object_new_double(cfg->blur_noise >= 0.0 ? cfg->blur_noise : 0.015));
     json_object_object_add(root, "blur", blur);
 
     struct json_object *tb = json_object_new_object();

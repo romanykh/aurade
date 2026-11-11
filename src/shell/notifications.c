@@ -484,6 +484,14 @@ aurade_notifications_t *notifications_create(aurade_server_t *server) {
     wlr_scene_node_set_position(&notif->scene_buffer->node, pos_x, pos_y);
     wlr_scene_node_set_enabled(&notif->scene_buffer->node, false);
 
+    for (int i = 0; i < NOTIF_MAX_VISIBLE; i++) {
+        notif->blur_nodes[i] = wlr_scene_blur_create(server->overlay_tree, (int)NOTIF_CARD_W, 80);
+        if (notif->blur_nodes[i]) {
+            wlr_scene_blur_set_corner_radius(notif->blur_nodes[i], 16);
+            wlr_scene_node_set_enabled(&notif->blur_nodes[i]->node, false);
+        }
+    }
+
     // Setup inter-thread pipe
     int fds[2];
     if (pipe2(fds, O_CLOEXEC | O_NONBLOCK) == 0) {
@@ -532,6 +540,13 @@ void notifications_destroy(aurade_notifications_t *notif) {
         if (notif->items[i].icon_surface) {
             cairo_surface_destroy(notif->items[i].icon_surface);
             notif->items[i].icon_surface = NULL;
+        }
+    }
+
+    for (int i = 0; i < NOTIF_MAX_VISIBLE; i++) {
+        if (notif->blur_nodes[i]) {
+            wlr_scene_node_destroy(&notif->blur_nodes[i]->node);
+            notif->blur_nodes[i] = NULL;
         }
     }
 
@@ -666,6 +681,11 @@ void notifications_tick(aurade_notifications_t *notif, double dt) {
         if (notif->scene_buffer) {
             wlr_scene_node_set_enabled(&notif->scene_buffer->node, false);
         }
+        for (int i = 0; i < NOTIF_MAX_VISIBLE; i++) {
+            if (notif->blur_nodes[i]) {
+                wlr_scene_node_set_enabled(&notif->blur_nodes[i]->node, false);
+            }
+        }
     }
 }
 
@@ -675,9 +695,18 @@ void notifications_render(aurade_notifications_t *notif) {
     cairo_buffer_clear(notif->buffer);
 
     if (notif->count <= 0) {
+        for (int i = 0; i < NOTIF_MAX_VISIBLE; i++) {
+            if (notif->blur_nodes[i]) {
+                wlr_scene_node_set_enabled(&notif->blur_nodes[i]->node, false);
+            }
+        }
         cairo_buffer_apply_to_scene(notif->buffer, notif->scene_buffer);
         return;
     }
+
+    int pos_x = notif->screen_width - NOTIF_BUFFER_W - 8;
+    int pos_y = 36;
+    bool blur_enabled = notif->server ? notif->server->config.blur_notifications : true;
 
     double cur_y = 10.0;
     for (int i = 0; i < notif->count; i++) {
@@ -699,6 +728,31 @@ void notifications_render(aurade_notifications_t *notif) {
         double a = item->alpha;
         if (a < 0.0) a = 0.0;
         if (a > 1.0) a = 1.0;
+
+        if (i < NOTIF_MAX_VISIBLE && notif->blur_nodes[i]) {
+            if (blur_enabled && a > 0.05 && item->slide_progress > 0.05) {
+                int bx = pos_x + (int)lround(cx);
+                int by = pos_y + (int)lround(cy);
+                int bw = (int)lround(cw);
+                int bh = (int)lround(ch);
+                wlr_scene_blur_set_size(notif->blur_nodes[i], bw, bh);
+                wlr_scene_blur_set_corner_radius(notif->blur_nodes[i], 16);
+                wlr_scene_node_set_position(&notif->blur_nodes[i]->node, bx, by);
+                wlr_scene_blur_set_alpha(notif->blur_nodes[i], (float)a);
+                if (notif->server && notif->server->config.liquid_glass) {
+                    wlr_scene_blur_set_liquid_glass(notif->blur_nodes[i], true);
+                } else {
+                    wlr_scene_blur_set_liquid_glass(notif->blur_nodes[i], false);
+                }
+                if (notif->server) {
+                    wlr_scene_blur_set_strength(notif->blur_nodes[i], (float)notif->server->config.blur_strength);
+                }
+                wlr_scene_node_set_enabled(&notif->blur_nodes[i]->node, true);
+                wlr_scene_node_place_below(&notif->blur_nodes[i]->node, &notif->scene_buffer->node);
+            } else {
+                wlr_scene_node_set_enabled(&notif->blur_nodes[i]->node, false);
+            }
+        }
 
         cairo_save(cr);
 
@@ -831,6 +885,12 @@ void notifications_render(aurade_notifications_t *notif) {
 
         cur_y += ch + NOTIF_GAP;
         if (cur_y > NOTIF_BUFFER_H - 90.0) break;
+    }
+
+    for (int i = notif->count; i < NOTIF_MAX_VISIBLE; i++) {
+        if (notif->blur_nodes[i]) {
+            wlr_scene_node_set_enabled(&notif->blur_nodes[i]->node, false);
+        }
     }
 
     cairo_buffer_apply_to_scene(notif->buffer, notif->scene_buffer);

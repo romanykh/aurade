@@ -310,12 +310,13 @@ void lockscreen_render(aurade_lockscreen_t *ls) {
     int h = ls->height > 0 ? ls->height : 1080;
 
     // 1. Wallpaper background backdrop
-    if (ls->server && ls->server->wallpaper) {
+    bool blur_lock = ls->server ? ls->server->config.blur_lockscreen : true;
+    if (ls->server && ls->server->wallpaper && blur_lock) {
         wallpaper_draw_backdrop(ls->server->wallpaper, cr, w, h, 0.35, alpha);
     }
 
     // 2. Translucent dark frosted glass overlay
-    cairo_set_source_rgba(cr, 0.03, 0.04, 0.06, 0.50 * alpha);
+    cairo_set_source_rgba(cr, 0.03, 0.04, 0.06, (blur_lock ? 0.50 : 0.85) * alpha);
     cairo_paint(cr);
 
     // 3. Top status indicators (Battery, Wi-Fi, Keyboard layout)

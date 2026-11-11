@@ -1025,11 +1025,18 @@ static void on_music_pill_pos_changed(int idx, gpointer user_data) {
 
 static void on_blur_windows_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_windows = active; }
 static void on_blur_dock_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_dock = active; }
+static void on_blur_control_center_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_control_center = active; }
+static void on_blur_power_menu_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_power_menu = active; }
+static void on_blur_notifications_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_notifications = active; }
+static void on_blur_lockscreen_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_lockscreen = active; }
 static void on_blur_topbar_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_topbar = active; }
 static void on_blur_launchpad_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_launchpad = active; }
 static void on_blur_overview_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_workspace_overview = active; }
 static void on_liquid_glass_toggled(bool active, gpointer user_data) { (void)user_data; g_config.liquid_glass = active; }
 static void on_blur_strength_changed(double val, gpointer user_data) { (void)user_data; g_config.blur_strength = val; }
+static void on_blur_radius_changed(double val, gpointer user_data) { (void)user_data; g_config.blur_radius = (int)lround(val); }
+static void on_blur_passes_changed(double val, gpointer user_data) { (void)user_data; g_config.blur_passes = (int)lround(val); }
+static void on_blur_saturation_changed(double val, gpointer user_data) { (void)user_data; g_config.blur_saturation = val; }
 
 // Running Windows Opacity Helpers
 static void populate_running_windows(GtkWidget *card);
@@ -1284,12 +1291,24 @@ GtkWidget *build_page_appearance(void) {
     ui_add_row(c_pill, "Pill Placement", "Choose where the Dynamic Island appears (Top Bar Center, Dock Left or Right)", dd_mp, "preferences-system-symbolic", "badge-appearance");
 
     // Frosted Glass Blur Card
-    GtkWidget *c_blur = ui_card(page, "FROSTED GLASS & BLUR EFFECTS");
+    GtkWidget *c_blur = ui_card(page, "FROSTED GLASS & BLUR ELEMENTS");
     GtkWidget *sw_win_b = ui_switch(g_config.blur_windows, on_blur_windows_toggled, NULL);
     ui_add_row(c_blur, "Window Blur", "Frosted glass backdrop effect under client windows", sw_win_b, "preferences-system-windows-symbolic", "badge-appearance");
 
     GtkWidget *sw_dock_b = ui_switch(g_config.blur_dock, on_blur_dock_toggled, NULL);
     ui_add_row(c_blur, "Dock Blur", "Frosted glass blur under the application dock", sw_dock_b, "view-paged-symbolic", "badge-dock");
+
+    GtkWidget *sw_cc_b = ui_switch(g_config.blur_control_center, on_blur_control_center_toggled, NULL);
+    ui_add_row(c_blur, "Control Center Blur", "Frosted glass blur under the macOS Control Center panel", sw_cc_b, "preferences-system-symbolic", "badge-appearance");
+
+    GtkWidget *sw_pm_b = ui_switch(g_config.blur_power_menu, on_blur_power_menu_toggled, NULL);
+    ui_add_row(c_blur, "Power Menu Blur", "Frosted glass blur under the Apple menu session panel", sw_pm_b, "system-shutdown-symbolic", "badge-appearance");
+
+    GtkWidget *sw_notif_b = ui_switch(g_config.blur_notifications, on_blur_notifications_toggled, NULL);
+    ui_add_row(c_blur, "Notifications Blur", "Frosted glass blur under banner popup cards", sw_notif_b, "preferences-system-notifications-symbolic", "badge-appearance");
+
+    GtkWidget *sw_lock_b = ui_switch(g_config.blur_lockscreen, on_blur_lockscreen_toggled, NULL);
+    ui_add_row(c_blur, "Lock Screen Blur", "Frosted wallpaper backdrop blur on the lock screen", sw_lock_b, "system-lock-screen-symbolic", "badge-appearance");
 
     GtkWidget *sw_top_b = ui_switch(g_config.blur_topbar, on_blur_topbar_toggled, NULL);
     ui_add_row(c_blur, "Top Bar Blur", "Frosted glass blur under the menu bar", sw_top_b, "preferences-desktop-wallpaper-symbolic", "badge-appearance");
@@ -1300,11 +1319,22 @@ GtkWidget *build_page_appearance(void) {
     GtkWidget *sw_ws_b = ui_switch(g_config.blur_workspace_overview, on_blur_overview_toggled, NULL);
     ui_add_row(c_blur, "Workspace Overview Blur", "Frosted wallpaper blur in Mission Control", sw_ws_b, "preferences-desktop-display-symbolic", "badge-appearance");
 
+    // Optical Blur Tuning Card
+    GtkWidget *c_opt = ui_card(page, "OPTICAL BLUR & LIQUID GLASS TUNING");
     GtkWidget *sw_lg = ui_switch(g_config.liquid_glass, on_liquid_glass_toggled, NULL);
-    ui_add_row(c_blur, "Liquid Glass (Apple Vibrancy)", "Hardware vibrancy saturation boost, optical caustics, and specular refraction sheen", sw_lg, "applications-graphics-symbolic", "badge-appearance");
+    ui_add_row(c_opt, "Liquid Glass (Apple Vibrancy)", "Hardware vibrancy saturation boost, optical caustics, and Snell refraction sheen", sw_lg, "applications-graphics-symbolic", "badge-appearance");
 
-    GtkWidget *sc_bst = ui_scale(g_config.blur_strength > 0.0 ? g_config.blur_strength : 1.0, 0.20, 2.50, 0.10, 1, on_blur_strength_changed, NULL);
-    ui_add_row(c_blur, "Blur Strength", "Adjust the intensity and diffusion radius of the frosted glass blur", sc_bst, "preferences-desktop-theme-symbolic", "badge-appearance");
+    GtkWidget *sc_bst = ui_scale(g_config.blur_strength > 0.0 ? g_config.blur_strength : 1.0, 0.20, 2.50, 0.05, 2, on_blur_strength_changed, NULL);
+    ui_add_row(c_opt, "Blur Strength", "Overall intensity scaling factor for frosted glass blur", sc_bst, "preferences-desktop-theme-symbolic", "badge-appearance");
+
+    GtkWidget *sc_rad = ui_scale(g_config.blur_radius > 0 ? g_config.blur_radius : 3, 1, 8, 1, 0, on_blur_radius_changed, NULL);
+    ui_add_row(c_opt, "Diffusion Radius", "Base optical diffusion radius in pixels (1 = crisp, 8 = heavy diffusion)", sc_rad, "preferences-desktop-display-symbolic", "badge-appearance");
+
+    GtkWidget *sc_pass = ui_scale(g_config.blur_passes > 0 ? g_config.blur_passes : 2, 1, 4, 1, 0, on_blur_passes_changed, NULL);
+    ui_add_row(c_opt, "Blur Passes", "Number of Kawase downsample / upsample filter iterations (1 = fastest, 4 = smoothest)", sc_pass, "emblem-system-symbolic", "badge-appearance");
+
+    GtkWidget *sc_sat = ui_scale(g_config.blur_saturation > 0.1 ? g_config.blur_saturation : 1.25, 0.50, 2.00, 0.05, 2, on_blur_saturation_changed, NULL);
+    ui_add_row(c_opt, "Vibrancy Saturation", "Color vibrance and saturation enhancement for backdrop lighting", sc_sat, "color-management-symbolic", "badge-appearance");
 
     // Running Windows Opacity Card
     GtkWidget *c_winop = ui_card(page, "RUNNING WINDOWS OPACITY");

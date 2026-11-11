@@ -449,6 +449,12 @@ void view_update_blur(aurade_view_t *view) {
         int max_r = (bw < bh ? bw : bh) / 4;
         if (rad > max_r) rad = max_r;
         wlr_scene_blur_set_corner_radius(view->blur_node, rad);
+        if (view->server->config.liquid_glass) {
+            wlr_scene_blur_set_liquid_glass(view->blur_node, true);
+        } else {
+            wlr_scene_blur_set_liquid_glass(view->blur_node, false);
+        }
+        wlr_scene_blur_set_strength(view->blur_node, (float)view->server->config.blur_strength);
         if (view->content_tree) {
             wlr_scene_node_place_below(&view->blur_node->node, &view->content_tree->node);
         }

@@ -104,11 +104,21 @@ typedef struct {
 
     // Blur effects
     bool blur_dock;
+    bool blur_control_center;
+    bool blur_power_menu;
+    bool blur_notifications;
+    bool blur_lockscreen;
     bool blur_topbar;
     bool blur_launchpad;
     bool blur_workspace_overview;
     bool blur_windows;
     double blur_strength;
+    int blur_radius;
+    int blur_passes;
+    double blur_saturation;
+    double blur_brightness;
+    double blur_contrast;
+    double blur_noise;
     bool liquid_glass;
 
     // Topbar Widgets

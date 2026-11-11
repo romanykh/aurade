@@ -34,6 +34,7 @@ typedef struct aurade_notifications {
     aurade_server_t *server;
     cairo_buffer_t *buffer;
     struct wlr_scene_buffer *scene_buffer;
+    struct wlr_scene_blur *blur_nodes[NOTIF_MAX_VISIBLE];
     int screen_width, screen_height;
 
     notification_item_t items[NOTIF_MAX_VISIBLE];

@@ -246,7 +246,7 @@ aurade_topbar_t *topbar_create(aurade_server_t *server) {
     if (bar->blur_node) {
         wlr_scene_node_set_position(&bar->blur_node->node, 0, 0);
         wlr_scene_node_place_below(&bar->blur_node->node, &bar->scene_buffer->node);
-        wlr_scene_node_set_enabled(&bar->blur_node->node, false);
+        wlr_scene_node_set_enabled(&bar->blur_node->node, server->config.blur_topbar);
     }
 
     bar->power_menu_state = POWER_MENU_CLOSED;
@@ -286,7 +286,8 @@ void topbar_resize(aurade_topbar_t *bar, int width) {
     cairo_buffer_resize(bar->buffer, width, bar->height);
     if (bar->blur_node) {
         wlr_scene_blur_set_size(bar->blur_node, width, bar->height);
-        wlr_scene_node_set_enabled(&bar->blur_node->node, false);
+        bool tb_blur = bar->server ? bar->server->config.blur_topbar : false;
+        wlr_scene_node_set_enabled(&bar->blur_node->node, tb_blur);
     }
     topbar_render(bar);
 }
@@ -309,7 +310,12 @@ void topbar_render(aurade_topbar_t *bar) {
     cairo_buffer_clear(bar->buffer);
 
     if (bar->blur_node) {
-        wlr_scene_node_set_enabled(&bar->blur_node->node, false);
+        bool tb_blur = bar->server ? bar->server->config.blur_topbar : false;
+        wlr_scene_node_set_enabled(&bar->blur_node->node, tb_blur);
+        if (tb_blur && bar->server) {
+            wlr_scene_blur_set_strength(bar->blur_node, (float)bar->server->config.blur_strength);
+            wlr_scene_blur_set_liquid_glass(bar->blur_node, bar->server->config.liquid_glass);
+        }
     }
 
     // Topbar rendered as pure soft vignette shading ("просто затінення")
@@ -790,7 +796,11 @@ static void topbar_open_power_menu(aurade_topbar_t *bar) {
         } else {
             wlr_scene_blur_set_liquid_glass(bar->power_menu_blur_node, false);
         }
-        wlr_scene_node_set_enabled(&bar->power_menu_blur_node->node, true);
+        if (bar->server) {
+            wlr_scene_blur_set_strength(bar->power_menu_blur_node, (float)bar->server->config.blur_strength);
+        }
+        bool pm_blur = bar->server ? bar->server->config.blur_power_menu : true;
+        wlr_scene_node_set_enabled(&bar->power_menu_blur_node->node, pm_blur);
         wlr_scene_node_place_below(&bar->power_menu_blur_node->node, &bar->power_menu_scene->node);
     }
     power_menu_render(bar);

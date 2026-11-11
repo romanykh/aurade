@@ -2561,8 +2561,14 @@ static void cc_apply_transform(aurade_control_center_t *cc, double p) {
         wlr_scene_blur_set_alpha(cc->blur_node, (float)opacity);
         if (cc->server && cc->server->config.liquid_glass) {
             wlr_scene_blur_set_liquid_glass(cc->blur_node, true);
+        } else {
+            wlr_scene_blur_set_liquid_glass(cc->blur_node, false);
         }
-        wlr_scene_node_set_enabled(&cc->blur_node->node, cc->active && (opacity > 0.05));
+        if (cc->server) {
+            wlr_scene_blur_set_strength(cc->blur_node, (float)cc->server->config.blur_strength);
+        }
+        bool cc_blur = cc->server ? cc->server->config.blur_control_center : true;
+        wlr_scene_node_set_enabled(&cc->blur_node->node, cc->active && (opacity > 0.05) && cc_blur);
     }
 }
 
