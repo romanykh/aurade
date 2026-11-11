@@ -116,6 +116,7 @@ typedef struct aurade_control_center {
     aurade_server_t *server;
     cairo_buffer_t *buffer;
     struct wlr_scene_buffer *scene_buffer;
+    struct wlr_scene_blur *blur_node;
 
     int screen_width, screen_height;
     bool active;

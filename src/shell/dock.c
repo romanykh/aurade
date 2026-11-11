@@ -1376,6 +1376,11 @@ void dock_render(aurade_dock_t *dock) {
         wlr_scene_blur_set_size(dock->blur_node, bw, bh);
         wlr_scene_blur_set_corner_radius(dock->blur_node, br);
         wlr_scene_node_set_position(&dock->blur_node->node, bx, by);
+        if (dock->server && dock->server->config.liquid_glass) {
+            wlr_scene_blur_set_liquid_glass(dock->blur_node, true);
+        } else {
+            wlr_scene_blur_set_liquid_glass(dock->blur_node, false);
+        }
         bool pause_blur = dock->server && (
             dock->server->gesture_mode != GESTURE_MODE_IDLE ||
             dock->server->gesture_in_progress ||
@@ -1697,17 +1702,7 @@ void dock_render(aurade_dock_t *dock) {
         double scr_x = pill_x;
         double scr_y = (dock->screen_height - dock->buffer_height) + pill_local_y;
 
-        if (dock->server && dock->server->config.liquid_glass && bg_surf) {
-            cairo_save(cr);
-            // Apple Liquid Glass with true optical lens magnification (лупа 1.25x) & peripheral curvature refraction
-            draw_liquid_glass_lens(cr, bg_surf, pill_x, pill_local_y, used, pill_h, pill_r,
-                                   scr_x, scr_y, 1.25, 0.95 * dock_op);
-            // Subtle dark contrast tint for icon readability
-            draw_rounded_rect(cr, pill_x, pill_local_y, used, pill_h, pill_r);
-            cairo_set_source_rgba(cr, 0.08, 0.09, 0.12, 0.20 * dock_op);
-            cairo_fill(cr);
-            cairo_restore(cr);
-        } else if (dock->server && dock->server->config.blur_dock) {
+        if (dock->server && (dock->server->config.blur_dock || dock->server->config.liquid_glass)) {
             cairo_save(cr);
 
             // 1. Refractive depth gradient body tint overlay (translucent)
