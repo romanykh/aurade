@@ -553,8 +553,8 @@ static void cc_draw_panel(cairo_t *cr, double w, double h, const cc_theme_t *t,
     double sheen_h = h * 0.35;
     if (sheen_h > 90.0) sheen_h = 90.0;
     cairo_pattern_t *sheen = cairo_pattern_create_linear(0, 0, 0, sheen_h);
-    cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, t->dark ? 0.14 : 0.28);
-    cairo_pattern_add_color_stop_rgba(sheen, 0.60, 1.0, 1.0, 1.0, t->dark ? 0.04 : 0.08);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, (t->dark ? 0.14 : 0.28) * 0.20);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.60, 1.0, 1.0, 1.0, (t->dark ? 0.04 : 0.08) * 0.20);
     cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
     cairo_rectangle(cr, 0, 0, w, sheen_h);
     cairo_set_source(cr, sheen);

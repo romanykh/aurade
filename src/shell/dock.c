@@ -1720,8 +1720,8 @@ void dock_render(aurade_dock_t *dock) {
             cairo_clip(cr);
             double sheen_h = pill_h * 0.40;
             cairo_pattern_t *sheen = cairo_pattern_create_linear(pill_x, pill_local_y, pill_x, pill_local_y + sheen_h);
-            cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.16 * dock_op);
-            cairo_pattern_add_color_stop_rgba(sheen, 0.6, 1.0, 1.0, 1.0, 0.04 * dock_op);
+            cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.035 * dock_op);
+            cairo_pattern_add_color_stop_rgba(sheen, 0.6, 1.0, 1.0, 1.0, 0.01 * dock_op);
             cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
             cairo_rectangle(cr, pill_x, pill_local_y, used, sheen_h);
             cairo_set_source(cr, sheen);

@@ -122,40 +122,40 @@ void draw_refractive_glass_rim(cairo_t *cr, double x, double y, double w, double
     draw_rounded_rect(cr, x, y, w, h, r);
     cairo_clip(cr);
 
-    // Deep refractive halo (width 7.0px -> 3.5px visible inside)
+    // Deep refractive halo (width 5.0px) - reduced 80%
     cairo_pattern_t *inner_cushion = cairo_pattern_create_linear(x, y, x + w, y + h);
-    cairo_pattern_add_color_stop_rgba(inner_cushion, 0.0, 1.0, 1.0, 1.0, 0.42 * edge_a);
-    cairo_pattern_add_color_stop_rgba(inner_cushion, 0.35, 1.0, 1.0, 1.0, 0.24 * edge_a);
-    cairo_pattern_add_color_stop_rgba(inner_cushion, 0.70, 1.0, 1.0, 1.0, 0.16 * edge_a);
-    cairo_pattern_add_color_stop_rgba(inner_cushion, 1.0, 1.0, 1.0, 1.0, 0.08 * edge_a);
+    cairo_pattern_add_color_stop_rgba(inner_cushion, 0.0, 1.0, 1.0, 1.0, 0.08 * edge_a);
+    cairo_pattern_add_color_stop_rgba(inner_cushion, 0.35, 1.0, 1.0, 1.0, 0.05 * edge_a);
+    cairo_pattern_add_color_stop_rgba(inner_cushion, 0.70, 1.0, 1.0, 1.0, 0.03 * edge_a);
+    cairo_pattern_add_color_stop_rgba(inner_cushion, 1.0, 1.0, 1.0, 1.0, 0.015 * edge_a);
 
     draw_rounded_rect(cr, x, y, w, h, r);
     cairo_set_source(cr, inner_cushion);
-    cairo_set_line_width(cr, 7.0);
+    cairo_set_line_width(cr, 5.0);
     cairo_stroke(cr);
     cairo_pattern_destroy(inner_cushion);
 
-    // Secondary tighter, brighter rim (width 3.0px -> 1.5px visible inside)
+    // Secondary tighter rim (width 2.0px) - reduced 80%
     cairo_pattern_t *inner_bright = cairo_pattern_create_linear(x, y, x + w, y + h);
-    cairo_pattern_add_color_stop_rgba(inner_bright, 0.0, 1.0, 1.0, 1.0, 0.55 * edge_a);
-    cairo_pattern_add_color_stop_rgba(inner_bright, 0.35, 1.0, 1.0, 1.0, 0.32 * edge_a);
-    cairo_pattern_add_color_stop_rgba(inner_bright, 0.70, 1.0, 1.0, 1.0, 0.20 * edge_a);
-    cairo_pattern_add_color_stop_rgba(inner_bright, 1.0, 1.0, 1.0, 1.0, 0.10 * edge_a);
+    cairo_pattern_add_color_stop_rgba(inner_bright, 0.0, 1.0, 1.0, 1.0, 0.11 * edge_a);
+    cairo_pattern_add_color_stop_rgba(inner_bright, 0.35, 1.0, 1.0, 1.0, 0.06 * edge_a);
+    cairo_pattern_add_color_stop_rgba(inner_bright, 0.70, 1.0, 1.0, 1.0, 0.04 * edge_a);
+    cairo_pattern_add_color_stop_rgba(inner_bright, 1.0, 1.0, 1.0, 1.0, 0.02 * edge_a);
 
     draw_rounded_rect(cr, x, y, w, h, r);
     cairo_set_source(cr, inner_bright);
-    cairo_set_line_width(cr, 3.0);
+    cairo_set_line_width(cr, 2.0);
     cairo_stroke(cr);
     cairo_pattern_destroy(inner_bright);
 
     cairo_reset_clip(cr);
 
-    // --- 2. Crisp Outer Specular Boundary Hairline (1px on boundary) ---
+    // --- 2. Crisp Outer Specular Boundary Hairline (1px on boundary) - reduced 80% ---
     cairo_pattern_t *outer_rim = cairo_pattern_create_linear(x, y, x + w, y + h);
-    cairo_pattern_add_color_stop_rgba(outer_rim, 0.0, 1.0, 1.0, 1.0, 0.70 * edge_a);
-    cairo_pattern_add_color_stop_rgba(outer_rim, 0.35, 1.0, 1.0, 1.0, 0.36 * edge_a);
-    cairo_pattern_add_color_stop_rgba(outer_rim, 0.70, 1.0, 1.0, 1.0, 0.22 * edge_a);
-    cairo_pattern_add_color_stop_rgba(outer_rim, 1.0, 1.0, 1.0, 1.0, 0.12 * edge_a);
+    cairo_pattern_add_color_stop_rgba(outer_rim, 0.0, 1.0, 1.0, 1.0, 0.14 * edge_a);
+    cairo_pattern_add_color_stop_rgba(outer_rim, 0.35, 1.0, 1.0, 1.0, 0.07 * edge_a);
+    cairo_pattern_add_color_stop_rgba(outer_rim, 0.70, 1.0, 1.0, 1.0, 0.04 * edge_a);
+    cairo_pattern_add_color_stop_rgba(outer_rim, 1.0, 1.0, 1.0, 1.0, 0.02 * edge_a);
 
     draw_rounded_rect(cr, x + 0.5, y + 0.5, w - 1.0, h - 1.0, r > 0.5 ? r - 0.5 : r);
     cairo_set_source(cr, outer_rim);
@@ -163,30 +163,30 @@ void draw_refractive_glass_rim(cairo_t *cr, double x, double y, double w, double
     cairo_stroke(cr);
     cairo_pattern_destroy(outer_rim);
 
-    // --- 3. Top Specular Crest Arc (sharp micro-bevel catching key light) ---
+    // --- 3. Top Specular Crest Arc (sharp micro-bevel catching key light) - reduced 80% ---
     if (w > 2.0 * r) {
         cairo_new_path(cr);
         cairo_move_to(cr, x + r, y + 0.5);
         cairo_line_to(cr, x + w - r, y + 0.5);
         cairo_pattern_t *crest = cairo_pattern_create_linear(x + r, y, x + w - r, y);
-        cairo_pattern_add_color_stop_rgba(crest, 0.0, 1.0, 1.0, 1.0, 0.25 * edge_a);
-        cairo_pattern_add_color_stop_rgba(crest, 0.5, 1.0, 1.0, 1.0, 0.75 * edge_a);
-        cairo_pattern_add_color_stop_rgba(crest, 1.0, 1.0, 1.0, 1.0, 0.25 * edge_a);
+        cairo_pattern_add_color_stop_rgba(crest, 0.0, 1.0, 1.0, 1.0, 0.05 * edge_a);
+        cairo_pattern_add_color_stop_rgba(crest, 0.5, 1.0, 1.0, 1.0, 0.15 * edge_a);
+        cairo_pattern_add_color_stop_rgba(crest, 1.0, 1.0, 1.0, 1.0, 0.05 * edge_a);
         cairo_set_source(cr, crest);
         cairo_set_line_width(cr, 1.0);
         cairo_stroke(cr);
         cairo_pattern_destroy(crest);
     }
 
-    // --- 4. Bottom Refraction Meniscus Arc (curved light gathering on bottom edge) ---
+    // --- 4. Bottom Refraction Meniscus Arc (curved light gathering on bottom edge) - reduced 80% ---
     if (w > 2.0 * r) {
         cairo_new_path(cr);
         cairo_move_to(cr, x + r, y + h - 0.5);
         cairo_line_to(cr, x + w - r, y + h - 0.5);
         cairo_pattern_t *meniscus = cairo_pattern_create_linear(x + r, y + h, x + w - r, y + h);
-        cairo_pattern_add_color_stop_rgba(meniscus, 0.0, 1.0, 1.0, 1.0, 0.08 * edge_a);
-        cairo_pattern_add_color_stop_rgba(meniscus, 0.5, 1.0, 1.0, 1.0, 0.35 * edge_a);
-        cairo_pattern_add_color_stop_rgba(meniscus, 1.0, 1.0, 1.0, 1.0, 0.08 * edge_a);
+        cairo_pattern_add_color_stop_rgba(meniscus, 0.0, 1.0, 1.0, 1.0, 0.015 * edge_a);
+        cairo_pattern_add_color_stop_rgba(meniscus, 0.5, 1.0, 1.0, 1.0, 0.07 * edge_a);
+        cairo_pattern_add_color_stop_rgba(meniscus, 1.0, 1.0, 1.0, 1.0, 0.015 * edge_a);
         cairo_set_source(cr, meniscus);
         cairo_set_line_width(cr, 1.0);
         cairo_stroke(cr);
@@ -459,8 +459,8 @@ void draw_glass_panel_at(cairo_t *cr, double x, double y, double w, double h, do
             if (sheen_h > 45.0) sheen_h = 45.0;
             if (sheen_h < 4.0) sheen_h = 4.0;
             cairo_pattern_t *sheen = cairo_pattern_create_linear(x, y, x, y + sheen_h);
-            cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.16 * edge_a);
-            cairo_pattern_add_color_stop_rgba(sheen, 0.6, 1.0, 1.0, 1.0, 0.04 * edge_a);
+            cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.035 * edge_a);
+            cairo_pattern_add_color_stop_rgba(sheen, 0.6, 1.0, 1.0, 1.0, 0.01 * edge_a);
             cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
             cairo_rectangle(cr, x, y, w, sheen_h);
             cairo_set_source(cr, sheen);
