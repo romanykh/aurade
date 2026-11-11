@@ -613,7 +613,7 @@ void launchpad_end(aurade_launchpad_t *lp, bool opened) {
             wlr_scene_node_set_enabled(&lp->drag_scene_buffer->node, false);
         }
         if (lp->server && lp->server->topbar && lp->server->topbar->blur_node) {
-            wlr_scene_node_set_enabled(&lp->server->topbar->blur_node->node, lp->server->config.blur_topbar);
+            wlr_scene_node_set_enabled(&lp->server->topbar->blur_node->node, false);
         }
         if (lp->server && lp->server->dock && lp->server->dock->blur_node) {
             wlr_scene_node_set_enabled(&lp->server->dock->blur_node->node,

@@ -708,8 +708,7 @@ void mission_control_update_progress(aurade_mission_control_t *mc, double progre
                 wlr_scene_node_set_enabled(&mc->server->topbar->scene_buffer->node, true);
             }
             if (mc->server->topbar->blur_node) {
-                wlr_scene_node_set_enabled(&mc->server->topbar->blur_node->node,
-                                           mc->server->config.blur_topbar);
+                wlr_scene_node_set_enabled(&mc->server->topbar->blur_node->node, false);
             }
         }
         mc_restore_slots_to_desktop(mc);
@@ -795,8 +794,7 @@ void mission_control_end(aurade_mission_control_t *mc, bool opened) {
                 wlr_scene_node_set_enabled(&mc->server->topbar->scene_buffer->node, true);
             }
             if (mc->server->topbar->blur_node) {
-                wlr_scene_node_set_enabled(&mc->server->topbar->blur_node->node,
-                                           mc->server->config.blur_topbar);
+                wlr_scene_node_set_enabled(&mc->server->topbar->blur_node->node, false);
             }
         }
         if (mc->server && mc->server->dock && mc->server->dock->blur_node) {

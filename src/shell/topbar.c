@@ -246,7 +246,7 @@ aurade_topbar_t *topbar_create(aurade_server_t *server) {
     if (bar->blur_node) {
         wlr_scene_node_set_position(&bar->blur_node->node, 0, 0);
         wlr_scene_node_place_below(&bar->blur_node->node, &bar->scene_buffer->node);
-        wlr_scene_node_set_enabled(&bar->blur_node->node, server->config.blur_topbar);
+        wlr_scene_node_set_enabled(&bar->blur_node->node, false);
     }
 
     bar->power_menu_state = POWER_MENU_CLOSED;
@@ -286,7 +286,7 @@ void topbar_resize(aurade_topbar_t *bar, int width) {
     cairo_buffer_resize(bar->buffer, width, bar->height);
     if (bar->blur_node) {
         wlr_scene_blur_set_size(bar->blur_node, width, bar->height);
-        wlr_scene_node_set_enabled(&bar->blur_node->node, bar->server && bar->server->config.blur_topbar);
+        wlr_scene_node_set_enabled(&bar->blur_node->node, false);
     }
     topbar_render(bar);
 }
@@ -308,82 +308,20 @@ void topbar_render(aurade_topbar_t *bar) {
 
     cairo_buffer_clear(bar->buffer);
 
-    bool overlay_active = bar->server && (
-        bar->server->gesture_mode != GESTURE_MODE_IDLE ||
-        bar->server->gesture_in_progress ||
-        bar->server->gesture_animating
-    );
-
-    if (bar->server && bar->server->config.blur_topbar && !overlay_active) {
-        if (bar->blur_node) {
-            wlr_scene_blur_set_size(bar->blur_node, w, h);
-            wlr_scene_node_set_enabled(&bar->blur_node->node, true);
-        }
-        // Liquid glass refractive gradient overlay
-        cairo_pattern_t *bg = cairo_pattern_create_linear(0, 0, 0, h);
-        cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.12, 0.14, 0.20, 0.42);
-        cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.05, 0.06, 0.09, 0.56);
-        cairo_set_source(cr, bg);
-        cairo_rectangle(cr, 0, 0, w, h);
-        cairo_fill(cr);
-        cairo_pattern_destroy(bg);
-
-        // Caustic surface sheen in top 10px
-        cairo_pattern_t *sheen = cairo_pattern_create_linear(0, 0, 0, 10.0);
-        cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.15);
-        cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
-        cairo_set_source(cr, sheen);
-        cairo_rectangle(cr, 0, 0, w, 10.0);
-        cairo_fill(cr);
-        cairo_pattern_destroy(sheen);
-
-        // Specular top highlight line
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.26);
-        cairo_rectangle(cr, 0, 0, w, 0.5);
-        cairo_fill(cr);
-
-        // Bottom double-edge glass ledge (inner light reflection + shadow rim)
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.08);
-        cairo_rectangle(cr, 0, h - 2.0, w, 1.0);
-        cairo_fill(cr);
-
-        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.36);
-        cairo_rectangle(cr, 0, h - 1.0, w, 1.0);
-        cairo_fill(cr);
-    } else {
-        if (bar->blur_node) {
-            wlr_scene_node_set_enabled(&bar->blur_node->node, false);
-        }
-        // Translucent charcoal "vibrancy" bar with Liquid Glass depth
-        cairo_pattern_t *bg = cairo_pattern_create_linear(0, 0, 0, h);
-        cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.12, 0.13, 0.17, 0.82);
-        cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.04, 0.05, 0.07, 0.90);
-        cairo_set_source(cr, bg);
-        cairo_rectangle(cr, 0, 0, w, h);
-        cairo_fill(cr);
-        cairo_pattern_destroy(bg);
-
-        // Caustic surface sheen
-        cairo_pattern_t *sheen = cairo_pattern_create_linear(0, 0, 0, 10.0);
-        cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.12);
-        cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
-        cairo_set_source(cr, sheen);
-        cairo_rectangle(cr, 0, 0, w, 10.0);
-        cairo_fill(cr);
-        cairo_pattern_destroy(sheen);
-
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.18);
-        cairo_rectangle(cr, 0, 0, w, 0.5);
-        cairo_fill(cr);
-
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.06);
-        cairo_rectangle(cr, 0, h - 2.0, w, 1.0);
-        cairo_fill(cr);
-
-        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.32);
-        cairo_rectangle(cr, 0, h - 1.0, w, 1.0);
-        cairo_fill(cr);
+    if (bar->blur_node) {
+        wlr_scene_node_set_enabled(&bar->blur_node->node, false);
     }
+
+    // Topbar rendered as pure soft vignette shading ("просто затінення")
+    cairo_pattern_t *bg = cairo_pattern_create_linear(0, 0, 0, h);
+    cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.0, 0.0, 0.0, 0.42);
+    cairo_pattern_add_color_stop_rgba(bg, 0.55, 0.0, 0.0, 0.0, 0.18);
+    cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.0, 0.0, 0.0, 0.0);
+    cairo_set_source(cr, bg);
+    cairo_rectangle(cr, 0, 0, w, h);
+    cairo_fill(cr);
+    cairo_pattern_destroy(bg);
+
 
     // Apple menu glyph. Hover/open uses the same soft capsule as macOS.
     bar->apple_x = 4.0;
@@ -614,18 +552,7 @@ void topbar_render(aurade_topbar_t *bar) {
         music_pill_render_topbar(bar->server->music_pill, cr, w, h);
     }
 
-    // Window focus accent: hairline at the top of the bar echoes macOS's
-    // active-app cue without stealing attention.
-    if (bar->server->focused_view) {
-        cairo_pattern_t *accent = cairo_pattern_create_linear(0, 0, w, 0);
-        cairo_pattern_add_color_stop_rgba(accent, 0.0, 0.0, 0.48, 1.0, 0.0);
-        cairo_pattern_add_color_stop_rgba(accent, 0.5, 0.25, 0.62, 1.0, 0.22);
-        cairo_pattern_add_color_stop_rgba(accent, 1.0, 0.0, 0.48, 1.0, 0.0);
-        cairo_set_source(cr, accent);
-        cairo_rectangle(cr, 0, h - 1.0, w, 1.0);
-        cairo_fill(cr);
-        cairo_pattern_destroy(accent);
-    }
+
 
     cairo_buffer_apply_to_scene(bar->buffer, bar->scene_buffer);
 }

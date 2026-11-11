@@ -99,7 +99,7 @@ void server_update_blur_config(aurade_server_t *server) {
                                    (server->config.blur_dock || server->config.liquid_glass));
     }
     if (server->topbar && server->topbar->blur_node) {
-        wlr_scene_node_set_enabled(&server->topbar->blur_node->node, server->config.blur_topbar);
+        wlr_scene_node_set_enabled(&server->topbar->blur_node->node, false);
     }
     if (server->views.next && server->views.prev) {
         aurade_view_t *view_it;
