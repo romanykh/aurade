@@ -36,6 +36,16 @@ extern const int GESTURE_ACTIONS_COUNT;
 bool run_cmd_capture(const char *cmd, char *out, size_t size);
 void run_cmd_async(const char *cmd);
 
+// GSettings helpers
+bool gsettings_get_bool(const char *schema, const char *key, bool def);
+void gsettings_set_bool(const char *schema, const char *key, bool val);
+int gsettings_get_int(const char *schema, const char *key, int def);
+void gsettings_set_int(const char *schema, const char *key, int val);
+double gsettings_get_double(const char *schema, const char *key, double def);
+void gsettings_set_double(const char *schema, const char *key, double val);
+char *gsettings_get_string(const char *schema, const char *key, const char *def);
+void gsettings_set_string(const char *schema, const char *key, const char *val);
+
 // Config save/reload
 void settings_schedule_save(void);
 void settings_save_now(void);

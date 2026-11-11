@@ -91,7 +91,8 @@ static void on_sidebar_row_selected(GtkListBox *box, GtkListBoxRow *row, gpointe
 static GtkWidget *build_sidebar(void) {
     GtkWidget *sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_add_css_class(sidebar, "sidebar");
-    gtk_widget_set_size_request(sidebar, 240, -1);
+    gtk_widget_set_size_request(sidebar, 175, -1);
+    gtk_widget_set_hexpand(sidebar, FALSE);
 
     // Profile Card at top
     GtkWidget *prof_card = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
@@ -107,6 +108,7 @@ static GtkWidget *build_sidebar(void) {
 
     GtkWidget *prof_text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     gtk_widget_set_valign(prof_text, GTK_ALIGN_CENTER);
+    gtk_widget_set_hexpand(prof_text, TRUE);
 
     char username[64] = "User";
     struct passwd *pw = getpwuid(getuid());
@@ -118,11 +120,15 @@ static GtkWidget *build_sidebar(void) {
 
     GtkWidget *lbl_name = gtk_label_new(username);
     gtk_label_set_xalign(GTK_LABEL(lbl_name), 0.0f);
+    gtk_label_set_wrap(GTK_LABEL(lbl_name), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(lbl_name), PANGO_WRAP_WORD_CHAR);
     gtk_widget_add_css_class(lbl_name, "profile-name");
     gtk_box_append(GTK_BOX(prof_text), lbl_name);
 
     GtkWidget *lbl_sub = gtk_label_new(hostname);
     gtk_label_set_xalign(GTK_LABEL(lbl_sub), 0.0f);
+    gtk_label_set_wrap(GTK_LABEL(lbl_sub), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(lbl_sub), PANGO_WRAP_WORD_CHAR);
     gtk_widget_add_css_class(lbl_sub, "profile-sub");
     gtk_box_append(GTK_BOX(prof_text), lbl_sub);
 
@@ -132,6 +138,7 @@ static GtkWidget *build_sidebar(void) {
     // Category List
     GtkWidget *scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_propagate_natural_width(GTK_SCROLLED_WINDOW(scroll), FALSE);
     gtk_widget_set_vexpand(scroll, TRUE);
 
     GtkWidget *list = gtk_list_box_new();
@@ -149,6 +156,7 @@ static GtkWidget *build_sidebar(void) {
 
         GtkWidget *lbl = gtk_label_new(PAGES[i].title);
         gtk_label_set_xalign(GTK_LABEL(lbl), 0.0f);
+        gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
         gtk_widget_set_hexpand(lbl, TRUE);
         gtk_box_append(GTK_BOX(row_box), lbl);
 
@@ -174,7 +182,8 @@ static void on_app_activate(GtkApplication *app, gpointer user_data) {
     // Main window
     g_main_window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(g_main_window), "Settings");
-    gtk_window_set_default_size(GTK_WINDOW(g_main_window), 980, 680);
+    gtk_window_set_default_size(GTK_WINDOW(g_main_window), 840, 580);
+    gtk_widget_set_size_request(GTK_WIDGET(g_main_window), 360, 240);
 
     // CSS Provider
     g_css_provider = gtk_css_provider_new();
@@ -207,10 +216,15 @@ static void on_app_activate(GtkApplication *app, gpointer user_data) {
     g_stack = gtk_stack_new();
     gtk_stack_set_transition_type(GTK_STACK(g_stack), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
     gtk_stack_set_transition_duration(GTK_STACK(g_stack), 150);
+    gtk_stack_set_hhomogeneous(GTK_STACK(g_stack), FALSE);
+    gtk_stack_set_vhomogeneous(GTK_STACK(g_stack), FALSE);
 
     for (int i = 0; i < PAGES_COUNT; i++) {
         GtkWidget *scroll = gtk_scrolled_window_new();
-        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+        gtk_scrolled_window_set_propagate_natural_width(GTK_SCROLLED_WINDOW(scroll), FALSE);
+        gtk_scrolled_window_set_min_content_width(GTK_SCROLLED_WINDOW(scroll), 100);
+        gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 100);
         GtkWidget *page_content = PAGES[i].builder();
         gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), page_content);
         gtk_stack_add_named(GTK_STACK(g_stack), scroll, PAGES[i].id);

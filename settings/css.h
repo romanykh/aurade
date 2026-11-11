@@ -215,6 +215,19 @@ static inline const char *settings_get_css(bool dark) {
             "    border-radius: 8px;\n"
             "    padding: 5px 10px;\n"
             "    font-size: 13px;\n"
+            "}\n"
+            ".workspace-card {\n"
+            "    background-color: rgba(255, 255, 255, 0.055);\n"
+            "    border: 1px solid rgba(255, 255, 255, 0.09);\n"
+            "    border-radius: 12px;\n"
+            "    padding: 12px 14px;\n"
+            "    min-width: 130px;\n"
+            "}\n"
+            ".workspace-card-add {\n"
+            "    border: 1.5px dashed rgba(10, 132, 255, 0.45);\n"
+            "    border-radius: 12px;\n"
+            "    padding: 12px 14px;\n"
+            "    min-width: 120px;\n"
             "}\n";
     } else {
         return
@@ -429,6 +442,19 @@ static inline const char *settings_get_css(bool dark) {
             "    border-radius: 8px;\n"
             "    padding: 5px 10px;\n"
             "    font-size: 13px;\n"
+            "}\n"
+            ".workspace-card {\n"
+            "    background-color: #ffffff;\n"
+            "    border: 1px solid rgba(0, 0, 0, 0.09);\n"
+            "    border-radius: 12px;\n"
+            "    padding: 12px 14px;\n"
+            "    min-width: 130px;\n"
+            "}\n"
+            ".workspace-card-add {\n"
+            "    border: 1.5px dashed rgba(0, 122, 255, 0.45);\n"
+            "    border-radius: 12px;\n"
+            "    padding: 12px 14px;\n"
+            "    min-width: 120px;\n"
             "}\n";
     }
 }

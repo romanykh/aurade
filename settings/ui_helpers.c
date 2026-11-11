@@ -25,6 +25,102 @@ void run_cmd_async(const char *cmd) {
     }
 }
 
+#include <gio/gio.h>
+
+static GSettings *get_settings_if_exists(const char *schema_id) {
+    GSettingsSchemaSource *source = g_settings_schema_source_get_default();
+    if (!source) return NULL;
+    GSettingsSchema *schema = g_settings_schema_source_lookup(source, schema_id, TRUE);
+    if (!schema) return NULL;
+    g_settings_schema_unref(schema);
+    return g_settings_new(schema_id);
+}
+
+bool gsettings_get_bool(const char *schema, const char *key, bool def) {
+    GSettings *st = get_settings_if_exists(schema);
+    if (!st) return def;
+    gboolean val = g_settings_get_boolean(st, key);
+    g_object_unref(st);
+    return val;
+}
+
+void gsettings_set_bool(const char *schema, const char *key, bool val) {
+    GSettings *st = get_settings_if_exists(schema);
+    if (!st) return;
+    g_settings_set_boolean(st, key, val);
+    g_object_unref(st);
+}
+
+int gsettings_get_int(const char *schema, const char *key, int def) {
+    GSettings *st = get_settings_if_exists(schema);
+    if (!st) return def;
+    GVariant *v = g_settings_get_value(st, key);
+    int val = def;
+    if (v) {
+        if (g_variant_is_of_type(v, G_VARIANT_TYPE_INT32)) val = g_variant_get_int32(v);
+        else if (g_variant_is_of_type(v, G_VARIANT_TYPE_UINT32)) val = (int)g_variant_get_uint32(v);
+        else if (g_variant_is_of_type(v, G_VARIANT_TYPE_INT64)) val = (int)g_variant_get_int64(v);
+        else if (g_variant_is_of_type(v, G_VARIANT_TYPE_DOUBLE)) val = (int)g_variant_get_double(v);
+        g_variant_unref(v);
+    }
+    g_object_unref(st);
+    return val;
+}
+
+void gsettings_set_int(const char *schema, const char *key, int val) {
+    GSettings *st = get_settings_if_exists(schema);
+    if (!st) return;
+    GVariant *v = g_settings_get_value(st, key);
+    if (v) {
+        if (g_variant_is_of_type(v, G_VARIANT_TYPE_UINT32)) {
+            g_settings_set_uint(st, key, (guint)val);
+        } else {
+            g_settings_set_int(st, key, val);
+        }
+        g_variant_unref(v);
+    } else {
+        g_settings_set_int(st, key, val);
+    }
+    g_object_unref(st);
+}
+
+double gsettings_get_double(const char *schema, const char *key, double def) {
+    GSettings *st = get_settings_if_exists(schema);
+    if (!st) return def;
+    GVariant *v = g_settings_get_value(st, key);
+    double val = def;
+    if (v) {
+        if (g_variant_is_of_type(v, G_VARIANT_TYPE_DOUBLE)) val = g_variant_get_double(v);
+        else if (g_variant_is_of_type(v, G_VARIANT_TYPE_INT32)) val = (double)g_variant_get_int32(v);
+        else if (g_variant_is_of_type(v, G_VARIANT_TYPE_UINT32)) val = (double)g_variant_get_uint32(v);
+        g_variant_unref(v);
+    }
+    g_object_unref(st);
+    return val;
+}
+
+void gsettings_set_double(const char *schema, const char *key, double val) {
+    GSettings *st = get_settings_if_exists(schema);
+    if (!st) return;
+    g_settings_set_double(st, key, val);
+    g_object_unref(st);
+}
+
+char *gsettings_get_string(const char *schema, const char *key, const char *def) {
+    GSettings *st = get_settings_if_exists(schema);
+    if (!st) return g_strdup(def ? def : "");
+    char *val = g_settings_get_string(st, key);
+    g_object_unref(st);
+    return val ? val : g_strdup(def ? def : "");
+}
+
+void gsettings_set_string(const char *schema, const char *key, const char *val) {
+    GSettings *st = get_settings_if_exists(schema);
+    if (!st) return;
+    g_settings_set_string(st, key, val ? val : "");
+    g_object_unref(st);
+}
+
 GtkWidget *ui_make_badge(const char *icon_name, const char *color_class, const char *size_class) {
     GtkWidget *badge = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_add_css_class(badge, size_class ? size_class : "sidebar-badge");
@@ -43,13 +139,15 @@ GtkWidget *ui_make_badge(const char *icon_name, const char *color_class, const c
 
 GtkWidget *ui_page_container(const char *title, const char *lead) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_widget_set_margin_start(box, 24);
-    gtk_widget_set_margin_end(box, 24);
-    gtk_widget_set_margin_top(box, 20);
-    gtk_widget_set_margin_bottom(box, 24);
+    gtk_widget_set_margin_start(box, 16);
+    gtk_widget_set_margin_end(box, 16);
+    gtk_widget_set_margin_top(box, 16);
+    gtk_widget_set_margin_bottom(box, 16);
 
     GtkWidget *h = gtk_label_new(title);
     gtk_label_set_xalign(GTK_LABEL(h), 0.0f);
+    gtk_label_set_wrap(GTK_LABEL(h), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(h), PANGO_WRAP_WORD_CHAR);
     gtk_widget_add_css_class(h, "headline");
     gtk_box_append(GTK_BOX(box), h);
 
@@ -57,6 +155,7 @@ GtkWidget *ui_page_container(const char *title, const char *lead) {
         GtkWidget *l = gtk_label_new(lead);
         gtk_label_set_xalign(GTK_LABEL(l), 0.0f);
         gtk_label_set_wrap(GTK_LABEL(l), TRUE);
+        gtk_label_set_wrap_mode(GTK_LABEL(l), PANGO_WRAP_WORD_CHAR);
         gtk_widget_add_css_class(l, "lead");
         gtk_box_append(GTK_BOX(box), l);
     }
@@ -67,6 +166,8 @@ GtkWidget *ui_card(GtkWidget *parent, const char *section_title) {
     if (section_title) {
         GtkWidget *lbl = gtk_label_new(section_title);
         gtk_label_set_xalign(GTK_LABEL(lbl), 0.0f);
+        gtk_label_set_wrap(GTK_LABEL(lbl), TRUE);
+        gtk_label_set_wrap_mode(GTK_LABEL(lbl), PANGO_WRAP_WORD_CHAR);
         gtk_widget_add_css_class(lbl, "section");
         gtk_box_append(GTK_BOX(parent), lbl);
     }
@@ -99,6 +200,7 @@ GtkWidget *ui_add_row(GtkWidget *card, const char *title, const char *subtitle,
     GtkWidget *t = gtk_label_new(title);
     gtk_label_set_xalign(GTK_LABEL(t), 0.0f);
     gtk_label_set_wrap(GTK_LABEL(t), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(t), PANGO_WRAP_WORD_CHAR);
     gtk_widget_add_css_class(t, "title");
     gtk_box_append(GTK_BOX(label_box), t);
 
@@ -106,6 +208,7 @@ GtkWidget *ui_add_row(GtkWidget *card, const char *title, const char *subtitle,
         GtkWidget *s = gtk_label_new(subtitle);
         gtk_label_set_xalign(GTK_LABEL(s), 0.0f);
         gtk_label_set_wrap(GTK_LABEL(s), TRUE);
+        gtk_label_set_wrap_mode(GTK_LABEL(s), PANGO_WRAP_WORD_CHAR);
         gtk_widget_add_css_class(s, "subtitle");
         gtk_box_append(GTK_BOX(label_box), s);
     }
@@ -172,7 +275,7 @@ GtkWidget *ui_scale(double val, double min, double max, double step, int digits,
     gtk_scale_set_digits(GTK_SCALE(sc), digits);
     gtk_scale_set_draw_value(GTK_SCALE(sc), TRUE);
     gtk_scale_set_value_pos(GTK_SCALE(sc), GTK_POS_RIGHT);
-    gtk_widget_set_size_request(sc, 140, -1);
+    gtk_widget_set_size_request(sc, 90, -1);
     gtk_range_set_value(GTK_RANGE(sc), val);
 
     if (callback) {
@@ -234,7 +337,7 @@ GtkWidget *ui_entry(const char *text, const char *placeholder,
     GtkWidget *entry = gtk_entry_new();
     if (text) gtk_editable_set_text(GTK_EDITABLE(entry), text);
     if (placeholder) gtk_entry_set_placeholder_text(GTK_ENTRY(entry), placeholder);
-    gtk_widget_set_size_request(entry, 160, -1);
+    gtk_widget_set_size_request(entry, 100, -1);
 
     if (callback) {
         entry_closure_t *cl = g_new0(entry_closure_t, 1);
