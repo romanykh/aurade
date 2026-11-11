@@ -93,7 +93,6 @@ void server_update_blur_config(aurade_server_t *server) {
         wlr_scene_blur_set_liquid_glass(server->dock->blur_node, server->config.liquid_glass);
         wlr_scene_blur_set_strength(server->dock->blur_node, dock_str);
         wlr_scene_node_set_enabled(&server->dock->blur_node->node,
-                                   !pause_blur &&
                                    server->dock->enabled &&
                                    server->dock->hide_progress < 0.999 &&
                                    dock_glass &&

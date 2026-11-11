@@ -655,7 +655,8 @@ void mission_control_begin(aurade_mission_control_t *mc) {
         }
     }
     if (mc->server->dock && mc->server->dock->blur_node) {
-        wlr_scene_node_set_enabled(&mc->server->dock->blur_node->node, false);
+        bool dock_glass = mc->server->config.blur_dock || mc->server->config.liquid_glass;
+        wlr_scene_node_set_enabled(&mc->server->dock->blur_node->node, dock_glass);
     }
 
     wlr_scene_node_set_enabled(&mc->scene_buffer->node, true);

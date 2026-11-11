@@ -405,12 +405,6 @@ void dock_apply_slide(aurade_dock_t *dock) {
         } else {
             wlr_scene_blur_set_liquid_glass(dock->blur_node, false);
         }
-        bool pause_blur = dock->server && (
-            dock->server->gesture_mode != GESTURE_MODE_IDLE ||
-            dock->server->gesture_in_progress ||
-            dock->server->gesture_animating ||
-            dock->server->workspace_animating
-        );
         double dock_op = dock->server ? dock->server->config.dock_opacity : 0.85;
         bool dock_glass = dock->server && (dock->server->config.blur_dock || dock->server->config.liquid_glass);
         float dock_str = dock->server ? (float)(dock->server->config.blur_strength > 0.05 ? dock->server->config.blur_strength : 1.0) : 1.0f;
@@ -418,7 +412,7 @@ void dock_apply_slide(aurade_dock_t *dock) {
         wlr_scene_node_set_enabled(&dock->blur_node->node,
                                    visible &&
                                    dock_glass &&
-                                   (dock_op > 0.05) && !pause_blur);
+                                   (dock_op > 0.05));
     }
 }
 
@@ -1395,17 +1389,10 @@ void dock_render(aurade_dock_t *dock) {
         bool dock_glass = dock->server && (dock->server->config.blur_dock || dock->server->config.liquid_glass);
         float dock_str = dock->server ? (float)(dock->server->config.blur_strength > 0.05 ? dock->server->config.blur_strength : 1.0) : 1.0f;
         wlr_scene_blur_set_strength(dock->blur_node, dock_str);
-        bool pause_blur = dock->server && (
-            dock->server->gesture_mode != GESTURE_MODE_IDLE ||
-            dock->server->gesture_in_progress ||
-            dock->server->gesture_animating ||
-            dock->server->workspace_animating
-        );
         wlr_scene_node_set_enabled(&dock->blur_node->node,
                                    dock->enabled && dock->hide_progress < 0.999 &&
                                    dock_glass &&
-                                   (dock_op > 0.05) &&
-                                   !pause_blur);
+                                   (dock_op > 0.05));
     }
 
     if (is_3d) {
