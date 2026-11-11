@@ -215,6 +215,7 @@ void server_workspace_auto_focus(aurade_server_t *server) {
     wl_list_for_each(view, &server->views, link) {
         if (!view->minimized &&
             view->anim_type != VIEW_ANIM_MINIMIZE &&
+            view->anim_type != VIEW_ANIM_CLOSE &&
             view->workspace == server->current_workspace) {
             candidate = view;
             break;

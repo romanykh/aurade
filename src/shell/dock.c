@@ -1130,6 +1130,23 @@ void dock_start_bounce(aurade_dock_t *dock, const char *name) {
     }
 }
 
+void dock_single_bounce(aurade_dock_t *dock, const char *name) {
+    if (!dock || !name) return;
+    for (int i = 0; i < dock->item_count; i++) {
+        if (strcasecmp(dock->items[i].name, name) == 0 ||
+            app_id_matches(name, dock->items[i].name) ||
+            strstr(dock->items[i].exec, name) != NULL ||
+            strstr(name, dock->items[i].name) != NULL) {
+            dock->items[i].is_bouncing = true;
+            dock->items[i].bounce_offset = 0.0;
+            dock->items[i].bounce_vel = -220.0;
+            dock->items[i].bounce_count = 13;
+            if (dock->server) schedule_all_outputs(dock->server);
+            break;
+        }
+    }
+}
+
 void dock_stop_bounce(aurade_dock_t *dock, const char *name) {
     if (!dock) return;
     for (int i = 0; i < dock->item_count; i++) {

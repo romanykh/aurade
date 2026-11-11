@@ -109,6 +109,7 @@ void dock_update_visibility(aurade_dock_t *dock);
 bool dock_contains_point(aurade_dock_t *dock, double x, double y);
 bool dock_get_item_center(aurade_dock_t *dock, const char *name, double *out_x, double *out_y);
 void dock_start_bounce(aurade_dock_t *dock, const char *name);
+void dock_single_bounce(aurade_dock_t *dock, const char *name);
 void dock_stop_bounce(aurade_dock_t *dock, const char *name);
 bool dock_is_bouncing(aurade_dock_t *dock);
 void dock_tick_bounce(aurade_dock_t *dock, double dt);

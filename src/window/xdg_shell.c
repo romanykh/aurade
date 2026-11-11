@@ -551,6 +551,16 @@ void view_anim_settle(aurade_view_t *view) {
     if (prev == VIEW_ANIM_MINIMIZE) {
         view->minimized = true;
         wlr_scene_node_set_enabled(&view->scene_tree->node, false);
+    } else if (prev == VIEW_ANIM_CLOSE) {
+        wlr_scene_node_set_enabled(&view->scene_tree->node, false);
+        view_set_scale(view, 1.0, 1.0);
+        view_set_opacity(view, 1.0f);
+        if (view->xdg_toplevel) {
+            wlr_xdg_toplevel_send_close(view->xdg_toplevel);
+        } else if (view->xwayland_surface) {
+            wlr_xwayland_surface_close(view->xwayland_surface);
+        }
+        return;
     } else {
         wlr_scene_node_set_enabled(&view->scene_tree->node, !view->minimized);
     }
@@ -598,27 +608,69 @@ void server_tick_view_animations(aurade_server_t *server, double dt) {
                 break;
             }
             case VIEW_ANIM_MINIMIZE: {
-                // p: 0.0 -> 1.0 (macOS Scale effect towards Dock icon)
+                // p: 0.0 -> 1.0 (macOS Suction / Genie effect towards Dock icon)
                 double p_clamp = p < 0.0 ? 0.0 : (p > 1.0 ? 1.0 : p);
-                double scale = 1.0 - 0.85 * p_clamp;
-                double opacity = 1.0 - p_clamp;
+                double t = p_clamp;
 
-                double start_cx = view->anim_start_x + view->anim_start_w / 2.0;
-                double start_cy = view->anim_start_y + view->anim_start_h / 2.0;
+                double start_w = (double)view->anim_start_w;
+                double start_h = (double)view->anim_start_h;
+                if (start_w < 50.0) start_w = 50.0;
+                if (start_h < 50.0) start_h = 50.0;
+
+                double icon_size = 52.0;
+                if (view->server->dock && view->server->dock->base_icon_size > 0) {
+                    icon_size = (double)view->server->dock->base_icon_size;
+                }
+                double target_w = fmin(icon_size, start_w);
+                double target_h = fmin(icon_size, start_h);
+
+                double start_cx = view->anim_start_x + start_w / 2.0;
                 double target_cx = view->anim_target_x;
-                double target_cy = view->anim_target_y;
 
-                double cur_cx = start_cx + (target_cx - start_cx) * p_clamp;
-                double cur_cy = start_cy + (target_cy - start_cy) * p_clamp;
+                double start_bottom = view->anim_start_y + start_h;
+                double target_bottom = view->anim_target_y + target_h / 2.0;
+                double start_top = view->anim_start_y;
+                double target_top = view->anim_target_y - target_h / 2.0;
 
-                double cur_w = view->anim_start_w * scale;
-                double cur_h = view->anim_start_h * scale;
+                // Suction physics:
+                // Bottom edge drops into dock icon nozzle first
+                double t_bottom = pow(t, 1.25);
+                double cur_bottom = start_bottom + (target_bottom - start_bottom) * t_bottom;
+
+                // Top follows with lag (suction elongation / funnel effect)
+                double t_top = pow(t, 2.3);
+                double cur_top = start_top + (target_top - start_top) * t_top;
+
+                double cur_h = cur_bottom - cur_top;
+                if (cur_h < target_h) cur_h = target_h;
+
+                // Center X smoothly converges to the dock icon
+                double t_cx = t * t * (3.0 - 2.0 * t);
+                double cur_cx = start_cx + (target_cx - start_cx) * t_cx;
+
+                // Width stays wide initially, then rapidly compresses into icon width
+                double t_w = pow(t, 1.75);
+                double cur_w = start_w + (target_w - start_w) * t_w;
+                if (cur_w < target_w) cur_w = target_w;
+
+                double scale_x = cur_w / start_w;
+                double scale_y = cur_h / start_h;
+                if (scale_x < 0.01) scale_x = 0.01;
+                if (scale_y < 0.01) scale_y = 0.01;
 
                 int render_x = (int)round(cur_cx - cur_w / 2.0);
-                int render_y = (int)round(cur_cy - cur_h / 2.0);
+                int render_y = (int)round(cur_bottom - cur_h);
+
+                // Stay crisp and fully opaque until the last 15%, then dissolve into dock icon
+                double opacity = 1.0;
+                if (t > 0.85) {
+                    opacity = (1.0 - t) / 0.15;
+                }
+                if (opacity < 0.0) opacity = 0.0;
+                if (opacity > 1.0) opacity = 1.0;
 
                 wlr_scene_node_set_position(&view->scene_tree->node, render_x, render_y);
-                view_set_scale(view, scale, scale);
+                view_set_scale(view, scale_x, scale_y);
                 view_set_opacity(view, (float)opacity);
 
                 if (!active) {
@@ -627,35 +679,118 @@ void server_tick_view_animations(aurade_server_t *server, double dt) {
                     view_set_scale(view, 1.0, 1.0);
                     view_set_opacity(view, 1.0f);
                     view->anim_type = VIEW_ANIM_NONE;
+                    const char *app_id = view_get_app_id(view);
+                    dock_single_bounce(view->server->dock, app_id);
+                    dock_refresh(view->server);
                 }
                 break;
             }
             case VIEW_ANIM_RESTORE: {
-                // p: 0.0 -> 1.0 (macOS Scale effect from Dock icon)
+                // p: 0.0 -> 1.0 (exact reverse of the macOS suction effect)
                 double p_clamp = p < 0.0 ? 0.0 : (p > 1.0 ? 1.0 : p);
-                double scale = 0.15 + 0.85 * p_clamp;
-                double opacity = p_clamp;
+                double t = 1.0 - p_clamp; // in reverse!
 
-                double start_cx = view->anim_start_x;
-                double start_cy = view->anim_start_y;
-                double target_cx = view->x + view->width / 2.0;
-                double target_cy = view->y + view->height / 2.0;
+                double target_w = (double)view->width;
+                double target_h = (double)view->height;
+                if (target_w < 50.0) target_w = 50.0;
+                if (target_h < 50.0) target_h = 50.0;
 
-                double cur_cx = start_cx + (target_cx - start_cx) * p_clamp;
-                double cur_cy = start_cy + (target_cy - start_cy) * p_clamp;
+                double icon_size = 52.0;
+                if (view->server->dock && view->server->dock->base_icon_size > 0) {
+                    icon_size = (double)view->server->dock->base_icon_size;
+                }
+                double min_w = fmin(icon_size, target_w);
+                double min_h = fmin(icon_size, target_h);
 
-                double cur_w = view->width * scale;
-                double cur_h = view->height * scale;
+                double target_cx = view->anim_target_x;
+                double dock_cx = view->anim_start_x;
+
+                double target_bottom = view->y + target_h;
+                double target_top = (double)view->y;
+                double dock_bottom = view->anim_start_y + min_h / 2.0;
+                double dock_top = view->anim_start_y - min_h / 2.0;
+
+                // Suction physics reversed:
+                double t_bottom = pow(t, 1.25);
+                double cur_bottom = target_bottom + (dock_bottom - target_bottom) * t_bottom;
+
+                double t_top = pow(t, 2.3);
+                double cur_top = target_top + (dock_top - target_top) * t_top;
+
+                double cur_h = cur_bottom - cur_top;
+                if (cur_h < min_h) cur_h = min_h;
+
+                double t_cx = t * t * (3.0 - 2.0 * t);
+                double cur_cx = target_cx + (dock_cx - target_cx) * t_cx;
+
+                double t_w = pow(t, 1.75);
+                double cur_w = target_w + (min_w - target_w) * t_w;
+                if (cur_w < min_w) cur_w = min_w;
+
+                // Subtle natural spring overshoot on final expansion
+                if (p > 1.0) {
+                    double over = (p - 1.0);
+                    cur_w += target_w * over * 0.05;
+                    cur_h += target_h * over * 0.05;
+                }
+
+                double scale_x = cur_w / target_w;
+                double scale_y = cur_h / target_h;
+                if (scale_x < 0.01) scale_x = 0.01;
+                if (scale_y < 0.01) scale_y = 0.01;
 
                 int render_x = (int)round(cur_cx - cur_w / 2.0);
-                int render_y = (int)round(cur_cy - cur_h / 2.0);
+                int render_y = (int)round(cur_bottom - cur_h);
+
+                // Quick fade-in as window emerges from dock icon
+                double opacity = 1.0;
+                if (p_clamp < 0.15) {
+                    opacity = p_clamp / 0.15;
+                }
+                if (opacity < 0.0) opacity = 0.0;
+                if (opacity > 1.0) opacity = 1.0;
+
+                wlr_scene_node_set_position(&view->scene_tree->node, render_x, render_y);
+                view_set_scale(view, scale_x, scale_y);
+                view_set_opacity(view, (float)opacity);
+
+                if (!active) {
+                    view_anim_settle(view);
+                }
+                break;
+            }
+            case VIEW_ANIM_CLOSE: {
+                // p: 0.0 -> 1.0 (macOS window close pop & fade)
+                double p_clamp = p < 0.0 ? 0.0 : (p > 1.0 ? 1.0 : p);
+                // Snappy scale-down pop: 1.0 -> 0.88
+                double scale = 1.0 - 0.12 * p_clamp;
+                if (scale < 0.1) scale = 0.1;
+                // Smooth cubic ease out opacity: 1.0 -> 0.0
+                double opacity = 1.0 - (p_clamp * p_clamp * (3.0 - 2.0 * p_clamp));
+                if (opacity < 0.0) opacity = 0.0;
+                if (opacity > 1.0) opacity = 1.0;
+
+                double cur_w = view->anim_start_w * scale;
+                double cur_h = view->anim_start_h * scale;
+                double start_cx = view->anim_start_x + view->anim_start_w / 2.0;
+                double start_cy = view->anim_start_y + view->anim_start_h / 2.0;
+                int render_x = (int)round(start_cx - cur_w / 2.0);
+                int render_y = (int)round(start_cy - cur_h / 2.0);
 
                 wlr_scene_node_set_position(&view->scene_tree->node, render_x, render_y);
                 view_set_scale(view, scale, scale);
                 view_set_opacity(view, (float)opacity);
 
                 if (!active) {
-                    view_anim_settle(view);
+                    view->anim_type = VIEW_ANIM_NONE;
+                    wlr_scene_node_set_enabled(&view->scene_tree->node, false);
+                    view_set_scale(view, 1.0, 1.0);
+                    view_set_opacity(view, 1.0f);
+                    if (view->xdg_toplevel) {
+                        wlr_xdg_toplevel_send_close(view->xdg_toplevel);
+                    } else if (view->xwayland_surface) {
+                        wlr_xwayland_surface_close(view->xwayland_surface);
+                    }
                 }
                 break;
             }
@@ -844,7 +979,7 @@ bool view_should_tile(aurade_view_t *view) {
     if (!view || !view->server) return false;
     if (!view->server->config.tiling_enabled) return false;
     if (!view->scene_tree) return false;
-    if (view->minimized || view->anim_type == VIEW_ANIM_MINIMIZE) return false;
+    if (view->minimized || view->anim_type == VIEW_ANIM_MINIMIZE || view->anim_type == VIEW_ANIM_CLOSE) return false;
     if (view->fullscreen || view->maximized) return false;
     if (view->is_floating) return false;
 
@@ -1423,10 +1558,14 @@ void view_minimize(aurade_view_t *view) {
     view->anim_target_x = dock_cx;
     view->anim_target_y = dock_cy;
 
+    if (view->blur_node) {
+        wlr_scene_node_set_enabled(&view->blur_node->node, false);
+    }
+
     spring_config_t min_cfg = {
         .mass = 1.0,
-        .stiffness = 320.0,
-        .damping = 0.90,
+        .stiffness = 340.0,
+        .damping = 0.92,
         .velocity_threshold = 0.01,
         .position_threshold = 0.001,
     };
@@ -1443,6 +1582,7 @@ void view_minimize(aurade_view_t *view) {
         wl_list_for_each(other, &view->server->views, link) {
             if (other != view && !other->minimized &&
                 other->anim_type != VIEW_ANIM_MINIMIZE &&
+                other->anim_type != VIEW_ANIM_CLOSE &&
                 other->workspace == view->server->current_workspace) {
                 view_focus(other);
                 found = true;
@@ -1491,6 +1631,10 @@ void view_restore(aurade_view_t *view) {
     view->anim_target_x = view->x + view->width / 2.0;
     view->anim_target_y = view->y + view->height / 2.0;
 
+    if (view->blur_node) {
+        wlr_scene_node_set_enabled(&view->blur_node->node, false);
+    }
+
     spring_config_t rest_cfg = {
         .mass = 1.0,
         .stiffness = 320.0,
@@ -1500,14 +1644,22 @@ void view_restore(aurade_view_t *view) {
     };
     spring_simulation_start(&view->anim_spring, &rest_cfg, 0.0, 1.0, 0.0);
 
-    double initial_scale = 0.15;
-    double cur_w = view->width * initial_scale;
-    double cur_h = view->height * initial_scale;
+    double icon_size = 52.0;
+    if (view->server->dock && view->server->dock->base_icon_size > 0) {
+        icon_size = (double)view->server->dock->base_icon_size;
+    }
+    double cur_w_base = (double)(view->width > 0 ? view->width : 640);
+    double cur_h_base = (double)(view->height > 0 ? view->height : 480);
+    double min_w = fmin(icon_size, cur_w_base);
+    double min_h = fmin(icon_size, cur_h_base);
+
     wlr_scene_node_set_position(&view->scene_tree->node,
-                                (int)round(dock_cx - cur_w / 2.0),
-                                (int)round(dock_cy - cur_h / 2.0));
-    view_set_scale(view, initial_scale, initial_scale);
+                                (int)round(dock_cx - min_w / 2.0),
+                                (int)round(dock_cy - min_h / 2.0));
+    view_set_scale(view, min_w / cur_w_base, min_h / cur_h_base);
     view_set_opacity(view, 0.0f);
+
+    dock_single_bounce(view->server->dock, app_id);
 
     if (view->server->config.tiling_enabled) {
         workspace_relayout_tiling(view->server, view->workspace);
@@ -1520,11 +1672,75 @@ void view_restore(aurade_view_t *view) {
 
 void view_close(aurade_view_t *view) {
     if (!view) return;
-    if (view->xdg_toplevel) {
-        wlr_xdg_toplevel_send_close(view->xdg_toplevel);
-    } else if (view->xwayland_surface) {
-        wlr_xwayland_surface_close(view->xwayland_surface);
+
+    // If already closing, force immediate close
+    if (view->anim_type == VIEW_ANIM_CLOSE) {
+        if (view->xdg_toplevel) {
+            wlr_xdg_toplevel_send_close(view->xdg_toplevel);
+        } else if (view->xwayland_surface) {
+            wlr_xwayland_surface_close(view->xwayland_surface);
+        }
+        return;
     }
+
+    // If minimized, invisible, or inside mission control, close immediately
+    if (view->minimized || !view->scene_tree || !view->scene_tree->node.enabled ||
+        (view->server && view->server->mission_control && view->server->mission_control->active)) {
+        if (view->xdg_toplevel) {
+            wlr_xdg_toplevel_send_close(view->xdg_toplevel);
+        } else if (view->xwayland_surface) {
+            wlr_xwayland_surface_close(view->xwayland_surface);
+        }
+        return;
+    }
+
+    // Start macOS pop & fade closing animation
+    view->anim_type = VIEW_ANIM_CLOSE;
+    view->anim_start_x = view->x;
+    view->anim_start_y = view->y;
+    view->anim_start_w = view->width;
+    view->anim_start_h = view->height;
+
+    if (view->blur_node) {
+        wlr_scene_node_set_enabled(&view->blur_node->node, false);
+    }
+
+    spring_config_t close_cfg = {
+        .mass = 1.0,
+        .stiffness = 450.0,
+        .damping = 0.92,
+        .velocity_threshold = 0.01,
+        .position_threshold = 0.001,
+    };
+    spring_simulation_start(&view->anim_spring, &close_cfg, 0.0, 1.0, 0.0);
+
+    // Yield keyboard focus to the next visible window on this workspace immediately
+    if (view->server->focused_view == view) {
+        view->server->focused_view = NULL;
+        aurade_view_t *other;
+        bool found = false;
+        wl_list_for_each(other, &view->server->views, link) {
+            if (other != view && !other->minimized &&
+                other->anim_type != VIEW_ANIM_MINIMIZE &&
+                other->anim_type != VIEW_ANIM_CLOSE &&
+                other->workspace == view->server->current_workspace) {
+                view_focus(other);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            wlr_seat_keyboard_clear_focus(view->server->seat);
+            if (view->server->topbar) {
+                topbar_set_active_app(view->server->topbar, "Finder");
+            }
+        }
+    }
+    if (view->server->config.tiling_enabled) {
+        workspace_relayout_tiling(view->server, view->workspace);
+    }
+    schedule_all_outputs(view->server);
+    dock_refresh(view->server);
 }
 
 static void xdg_surface_commit_debug(struct wl_listener *listener, void *data) {
@@ -1782,6 +1998,7 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
     // Unmap is the first half of a close (destroy follows), but some clients
     // withdraw a window and keep the toplevel alive. Hide the whole view so no
     // ghost window or invisible input region is left behind.
+    view->anim_type = VIEW_ANIM_NONE;
     wlr_scene_node_set_enabled(&view->scene_tree->node, false);
 
     if (view->server->focused_view == view) {
@@ -1791,6 +2008,7 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
         wl_list_for_each(other, &view->server->views, link) {
             if (other != view && !other->minimized &&
                 other->anim_type != VIEW_ANIM_MINIMIZE &&
+                other->anim_type != VIEW_ANIM_CLOSE &&
                 other->workspace == view->server->current_workspace &&
                 ((other->xdg_toplevel && other->xdg_toplevel->base &&
                   other->xdg_toplevel->base->surface &&

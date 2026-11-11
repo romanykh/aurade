@@ -1733,7 +1733,11 @@ aurade_view_t *server_view_at(aurade_server_t *server, double lx, double ly,
         if (tree->node.data) return tree->node.data;
         aurade_view_t *view;
         wl_list_for_each(view, &server->views, link) {
-            if (view->scene_tree == tree) return view;
+            if (view->scene_tree == tree) {
+                if (view->minimized || view->anim_type == VIEW_ANIM_MINIMIZE ||
+                    view->anim_type == VIEW_ANIM_CLOSE) return NULL;
+                return view;
+            }
         }
         tree = tree->node.parent;
     }
@@ -2150,6 +2154,13 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
             return;
         }
 
+        if (alt && sym == XKB_KEY_F4) {
+            if (server->focused_view) {
+                view_close(server->focused_view);
+                return;
+            }
+        }
+
         // Global macOS-style shortcuts.
         if (super) {
             if (shift && (sym == XKB_KEY_s || sym == XKB_KEY_S)) {
@@ -2164,7 +2175,7 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
                 if (server->screenshot) screenshot_begin(server->screenshot);
                 return;
             }
-            if (sym == XKB_KEY_q) {
+            if (sym == XKB_KEY_q || sym == XKB_KEY_Q || sym == XKB_KEY_w || sym == XKB_KEY_W) {
                 if (server->focused_view) view_close(server->focused_view);
                 return;
             }
@@ -2202,6 +2213,9 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
                     app_launch_command("foot");
                     return;
                 case XKB_KEY_q:
+                case XKB_KEY_Q:
+                case XKB_KEY_w:
+                case XKB_KEY_W:
                     if (server->focused_view) { view_close(server->focused_view); return; }
                     break;
                 case XKB_KEY_v:

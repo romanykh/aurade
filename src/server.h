@@ -71,6 +71,7 @@ typedef enum {
     VIEW_ANIM_MINIMIZE,
     VIEW_ANIM_RESTORE,
     VIEW_ANIM_GEOMETRY,
+    VIEW_ANIM_CLOSE,
 } view_anim_type_t;
 
 typedef struct aurade_view {
