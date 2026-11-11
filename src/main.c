@@ -269,7 +269,7 @@ static void output_frame(struct wl_listener *listener, void *data) {
             break;
         }
     }
-    bool dock_animating = server->dock && (dock_is_bouncing(server->dock) || server->dock->needs_render);
+    bool dock_animating = server->dock && (dock_is_bouncing(server->dock) || dock_is_sliding(server->dock) || server->dock->needs_render);
     bool topbar_animating = server->topbar && server->topbar->needs_render;
     bool launchpad_animating = server->launchpad &&
         (server->launchpad->page_animating ||
@@ -3354,9 +3354,14 @@ void server_tick_animations(aurade_server_t *server, double dt) {
     // 6. Window View Animations (Map pop, Scale minimize/restore, Geometry maximize/tile)
     server_tick_view_animations(server, dt);
 
-    // 7. Dock Icon Launch Bounce Physics
-    if (server->dock && dock_is_bouncing(server->dock)) {
-        dock_tick_bounce(server->dock, dt);
+    // 7. Dock Icon Launch Bounce Physics & Slide Animation
+    if (server->dock) {
+        if (dock_is_bouncing(server->dock)) {
+            dock_tick_bounce(server->dock, dt);
+        }
+        if (dock_is_sliding(server->dock)) {
+            dock_tick_slide(server->dock, dt);
+        }
     }
 
     // 8. Lock Screen Animations (fade, shake, unlock)

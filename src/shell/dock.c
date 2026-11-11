@@ -411,13 +411,41 @@ void dock_apply_slide(aurade_dock_t *dock) {
     }
 }
 
-static int dock_anim_tick(void *data) {
-    aurade_dock_t *dock = data;
-    uint64_t now = dock_now_ms();
-    double dt = (double)(now - dock->last_tick_ms) / 1000.0;
-    dock->last_tick_ms = now;
+bool dock_is_sliding(const aurade_dock_t *dock) {
+    if (!dock || (!dock->autohide && !dock->intellihide)) return false;
+    if (dock->hide_target && dock->hide_at_ms != 0) return false;
+    double target = dock->hide_target ? 1.0 : 0.0;
+    return fabs(target - dock->hide_progress) >= 0.0005;
+}
+
+void dock_tick_slide(aurade_dock_t *dock, double dt) {
+    if (!dock || (!dock->autohide && !dock->intellihide)) return;
+    if (dock->hide_target && dock->hide_at_ms != 0) return;
+
     if (dt < 0.001) dt = 0.001;
     if (dt > 0.05) dt = 0.05;
+
+    double target = dock->hide_target ? 1.0 : 0.0;
+    if (fabs(target - dock->hide_progress) < 0.0005) {
+        if (dock->hide_progress != target) {
+            dock->hide_progress = target;
+            dock_apply_slide(dock);
+        }
+        return;
+    }
+
+    double k = 1.0 - exp(-dt / DOCK_ANIM_TAU);
+    dock->hide_progress += (target - dock->hide_progress) * k;
+    if (fabs(target - dock->hide_progress) < 0.003) {
+        dock->hide_progress = target;
+    }
+    dock_apply_slide(dock);
+}
+
+static int dock_anim_tick(void *data) {
+    aurade_dock_t *dock = data;
+    if (!dock) return 0;
+    uint64_t now = dock_now_ms();
 
     if (dock->hide_target && dock->hide_at_ms) {
         if (now < dock->hide_at_ms) {
@@ -429,22 +457,13 @@ static int dock_anim_tick(void *data) {
         dock->hide_at_ms = 0;   // grace period over: start sliding away
     }
 
-    double target = (dock->hide_target && dock->hide_at_ms == 0) ? 1.0 : 0.0;
-    double k = 1.0 - exp(-dt / DOCK_ANIM_TAU);
-    dock->hide_progress += (target - dock->hide_progress) * k;
-    if (fabs(target - dock->hide_progress) < 0.003) dock->hide_progress = target;
+    if (dock->anim_timer) {
+        wl_event_source_timer_update(dock->anim_timer, 0);
+    }
 
-    dock_apply_slide(dock);
     if (dock->server) {
         schedule_all_outputs(dock->server);
     }
-
-    if (!dock->anim_timer) return 0;
-    if (dock->hide_at_ms == 0 && fabs(target - dock->hide_progress) < 0.0005) {
-        wl_event_source_timer_update(dock->anim_timer, 0);
-        return 0;
-    }
-    wl_event_source_timer_update(dock->anim_timer, 16);
     return 0;
 }
 
@@ -454,8 +473,15 @@ static void dock_arm_animation(aurade_dock_t *dock) {
         struct wl_event_loop *loop = wl_display_get_event_loop(dock->server->wl_display);
         dock->anim_timer = wl_event_loop_add_timer(loop, dock_anim_tick, dock);
     }
-    dock->last_tick_ms = dock_now_ms();
-    wl_event_source_timer_update(dock->anim_timer, 16);
+    if (dock->hide_target && dock->hide_at_ms) {
+        uint64_t now = dock_now_ms();
+        int delay = (dock->hide_at_ms > now) ? (int)(dock->hide_at_ms - now) : 16;
+        if (delay < 16) delay = 16;
+        wl_event_source_timer_update(dock->anim_timer, delay);
+    } else {
+        if (dock->anim_timer) wl_event_source_timer_update(dock->anim_timer, 0);
+    }
+    schedule_all_outputs(dock->server);
 }
 
 static void dock_request_visible(aurade_dock_t *dock, bool visible) {
@@ -467,16 +493,22 @@ static void dock_request_visible(aurade_dock_t *dock, bool visible) {
     }
 
     if (visible) {
-        bool was_away = dock->hide_target || dock->hide_at_ms || dock->hide_progress > 0.001;
-        dock->hide_target = false;
-        dock->hide_at_ms = 0;
-        if (was_away) dock_arm_animation(dock);
-    } else if (!dock->hide_target) {
-        // Wait a moment before leaving, so moving along the dock does not
-        // make it flicker away between icons.
-        dock->hide_target = true;
-        dock->hide_at_ms = dock_now_ms() + DOCK_HIDE_DELAY_MS;
-        dock_arm_animation(dock);
+        if (dock->hide_target || dock->hide_at_ms != 0) {
+            dock->hide_target = false;
+            dock->hide_at_ms = 0;
+            if (dock->anim_timer) {
+                wl_event_source_timer_update(dock->anim_timer, 0);
+            }
+            if (dock->hide_progress > 0.0005) {
+                if (dock->server) schedule_all_outputs(dock->server);
+            }
+        }
+    } else {
+        if (!dock->hide_target) {
+            dock->hide_target = true;
+            dock->hide_at_ms = dock_now_ms() + DOCK_HIDE_DELAY_MS;
+            dock_arm_animation(dock);
+        }
     }
 }
 
