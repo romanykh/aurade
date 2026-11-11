@@ -2564,11 +2564,10 @@ static void cc_apply_transform(aurade_control_center_t *cc, double p) {
         } else {
             wlr_scene_blur_set_liquid_glass(cc->blur_node, false);
         }
-        if (cc->server) {
-            wlr_scene_blur_set_strength(cc->blur_node, (float)cc->server->config.blur_strength);
-        }
-        bool cc_blur = cc->server ? cc->server->config.blur_control_center : true;
-        wlr_scene_node_set_enabled(&cc->blur_node->node, cc->active && (opacity > 0.05) && cc_blur);
+        bool cc_glass = cc->server && (cc->server->config.blur_control_center || cc->server->config.liquid_glass);
+        float cc_str = (cc->server && cc->server->config.blur_control_center) ? (float)cc->server->config.blur_strength : 0.0f;
+        wlr_scene_blur_set_strength(cc->blur_node, cc_str);
+        wlr_scene_node_set_enabled(&cc->blur_node->node, cc->active && (opacity > 0.05) && cc_glass);
     }
 }
 

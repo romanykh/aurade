@@ -706,7 +706,7 @@ void notifications_render(aurade_notifications_t *notif) {
 
     int pos_x = notif->screen_width - NOTIF_BUFFER_W - 8;
     int pos_y = 36;
-    bool blur_enabled = notif->server ? notif->server->config.blur_notifications : true;
+    bool blur_enabled = notif->server ? (notif->server->config.blur_notifications || notif->server->config.liquid_glass) : true;
 
     double cur_y = 10.0;
     for (int i = 0; i < notif->count; i++) {
@@ -744,9 +744,8 @@ void notifications_render(aurade_notifications_t *notif) {
                 } else {
                     wlr_scene_blur_set_liquid_glass(notif->blur_nodes[i], false);
                 }
-                if (notif->server) {
-                    wlr_scene_blur_set_strength(notif->blur_nodes[i], (float)notif->server->config.blur_strength);
-                }
+                float notif_str = (notif->server && notif->server->config.blur_notifications) ? (float)notif->server->config.blur_strength : 0.0f;
+                wlr_scene_blur_set_strength(notif->blur_nodes[i], notif_str);
                 wlr_scene_node_set_enabled(&notif->blur_nodes[i]->node, true);
                 wlr_scene_node_place_below(&notif->blur_nodes[i]->node, &notif->scene_buffer->node);
             } else {

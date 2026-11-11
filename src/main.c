@@ -81,42 +81,52 @@ void server_update_blur_config(aurade_server_t *server) {
     wlr_scene_set_blur_data(server->scene, passes, eff_rad, noise, brightness, contrast, saturation);
 
     if (server->dock && server->dock->blur_node) {
+        bool dock_glass = (server->config.blur_dock || server->config.liquid_glass);
+        float dock_str = server->config.blur_dock ? (float)str : 0.0f;
         wlr_scene_blur_set_liquid_glass(server->dock->blur_node, server->config.liquid_glass);
-        wlr_scene_blur_set_strength(server->dock->blur_node, (float)str);
+        wlr_scene_blur_set_strength(server->dock->blur_node, dock_str);
         wlr_scene_node_set_enabled(&server->dock->blur_node->node,
                                    server->dock->enabled &&
                                    server->dock->hide_progress < 0.999 &&
-                                   server->config.blur_dock &&
+                                   dock_glass &&
                                    (server->config.dock_opacity > 0.05));
     }
     if (server->topbar) {
         if (server->topbar->blur_node) {
+            bool topbar_glass = (server->config.blur_topbar || server->config.liquid_glass);
+            float topbar_str = server->config.blur_topbar ? (float)str : 0.0f;
             wlr_scene_blur_set_liquid_glass(server->topbar->blur_node, server->config.liquid_glass);
-            wlr_scene_blur_set_strength(server->topbar->blur_node, (float)str);
-            wlr_scene_node_set_enabled(&server->topbar->blur_node->node, server->config.blur_topbar);
+            wlr_scene_blur_set_strength(server->topbar->blur_node, topbar_str);
+            wlr_scene_node_set_enabled(&server->topbar->blur_node->node, topbar_glass);
         }
         if (server->topbar->power_menu_blur_node) {
+            bool pm_glass = (server->config.blur_power_menu || server->config.liquid_glass);
+            float pm_str = server->config.blur_power_menu ? (float)str : 0.0f;
             wlr_scene_blur_set_liquid_glass(server->topbar->power_menu_blur_node, server->config.liquid_glass);
-            wlr_scene_blur_set_strength(server->topbar->power_menu_blur_node, (float)str);
+            wlr_scene_blur_set_strength(server->topbar->power_menu_blur_node, pm_str);
             bool pm_open = topbar_power_menu_is_open(server->topbar);
             wlr_scene_node_set_enabled(&server->topbar->power_menu_blur_node->node,
-                                       pm_open && server->config.blur_power_menu);
+                                       pm_open && pm_glass);
         }
     }
     if (server->control_center && server->control_center->blur_node) {
+        bool cc_glass = (server->config.blur_control_center || server->config.liquid_glass);
+        float cc_str = server->config.blur_control_center ? (float)str : 0.0f;
         wlr_scene_blur_set_liquid_glass(server->control_center->blur_node, server->config.liquid_glass);
-        wlr_scene_blur_set_strength(server->control_center->blur_node, (float)str);
+        wlr_scene_blur_set_strength(server->control_center->blur_node, cc_str);
         wlr_scene_node_set_enabled(&server->control_center->blur_node->node,
                                    server->control_center->active &&
                                    (server->control_center->progress > 0.05) &&
-                                   server->config.blur_control_center);
+                                   cc_glass);
     }
     if (server->notifications) {
+        bool notif_glass = (server->config.blur_notifications || server->config.liquid_glass);
+        float notif_str = server->config.blur_notifications ? (float)str : 0.0f;
         for (int i = 0; i < NOTIF_MAX_VISIBLE; i++) {
             if (server->notifications->blur_nodes[i]) {
                 wlr_scene_blur_set_liquid_glass(server->notifications->blur_nodes[i], server->config.liquid_glass);
-                wlr_scene_blur_set_strength(server->notifications->blur_nodes[i], (float)str);
-                if (!server->config.blur_notifications) {
+                wlr_scene_blur_set_strength(server->notifications->blur_nodes[i], notif_str);
+                if (!notif_glass) {
                     wlr_scene_node_set_enabled(&server->notifications->blur_nodes[i]->node, false);
                 }
             }

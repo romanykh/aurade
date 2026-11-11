@@ -433,7 +433,9 @@ static void view_scale_buffer_iterator(struct wlr_scene_buffer *scene_buffer,
 
 void view_update_blur(aurade_view_t *view) {
     if (!view || !view->blur_node || !view->server) return;
-    bool enabled = view->server->config.blur_windows &&
+    bool win_glass = (view->server->config.blur_windows || view->server->config.liquid_glass);
+    float win_str = view->server->config.blur_windows ? (float)view->server->config.blur_strength : 0.0f;
+    bool enabled = win_glass &&
                    !view->minimized &&
                    (view->scene_tree && view->scene_tree->node.enabled) &&
                    view->width > 0 && view->height > 0;
@@ -454,7 +456,7 @@ void view_update_blur(aurade_view_t *view) {
         } else {
             wlr_scene_blur_set_liquid_glass(view->blur_node, false);
         }
-        wlr_scene_blur_set_strength(view->blur_node, (float)view->server->config.blur_strength);
+        wlr_scene_blur_set_strength(view->blur_node, win_str);
         if (view->content_tree) {
             wlr_scene_node_place_below(&view->blur_node->node, &view->content_tree->node);
         }
