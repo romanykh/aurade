@@ -410,11 +410,11 @@ bool app_launch_command(const char *command) {
 
 bool app_launch_settings(const char *page) {
     char cmd[1024];
-    char script_path[512] = {0};
+    char bin_path[1024] = {0};
 
     // 1. Check relative to current working directory
-    if (access("settings/aurade_settings.py", R_OK) == 0) {
-        snprintf(script_path, sizeof(script_path), "settings/aurade_settings.py");
+    if (access("settings/aurade-settings", X_OK) == 0) {
+        snprintf(bin_path, sizeof(bin_path), "settings/aurade-settings");
     } else {
         // 2. Check relative to running executable (/proc/self/exe)
         char exe[512];
@@ -425,34 +425,35 @@ bool app_launch_settings(const char *page) {
             if (last_slash) {
                 *last_slash = '\0';
                 char candidate[1024];
-                snprintf(candidate, sizeof(candidate), "%s/settings/aurade_settings.py", exe);
-                if (access(candidate, R_OK) == 0) {
-                    snprintf(script_path, sizeof(script_path), "%s", candidate);
+                snprintf(candidate, sizeof(candidate), "%s/settings/aurade-settings", exe);
+                if (access(candidate, X_OK) == 0) {
+                    snprintf(bin_path, sizeof(bin_path), "%s", candidate);
                 }
             }
         }
     }
 
     // 3. Check system install paths
-    if (!script_path[0]) {
-        if (access("/usr/share/aurade/aurade_settings.py", R_OK) == 0) {
-            snprintf(script_path, sizeof(script_path), "/usr/share/aurade/aurade_settings.py");
-        } else if (access("/usr/local/share/aurade/aurade_settings.py", R_OK) == 0) {
-            snprintf(script_path, sizeof(script_path), "/usr/local/share/aurade/aurade_settings.py");
+    if (!bin_path[0]) {
+        if (access("/usr/bin/aurade-settings", X_OK) == 0) {
+            snprintf(bin_path, sizeof(bin_path), "/usr/bin/aurade-settings");
+        } else if (access("/usr/local/bin/aurade-settings", X_OK) == 0) {
+            snprintf(bin_path, sizeof(bin_path), "/usr/local/bin/aurade-settings");
         }
     }
 
-    if (script_path[0]) {
+    if (bin_path[0]) {
         if (page && *page) {
-            snprintf(cmd, sizeof(cmd), "python3 \"%s\" %s >/dev/null 2>&1 &", script_path, page);
+            snprintf(cmd, sizeof(cmd), "\"%s\" %s >/dev/null 2>&1 &", bin_path, page);
         } else {
-            snprintf(cmd, sizeof(cmd), "python3 \"%s\" >/dev/null 2>&1 &", script_path);
+            snprintf(cmd, sizeof(cmd), "\"%s\" >/dev/null 2>&1 &", bin_path);
         }
     } else {
+        // Fallback to PATH
         if (page && *page) {
-            snprintf(cmd, sizeof(cmd), "aurade-settings %s 2>/dev/null || python3 -m aurade_settings %s >/dev/null 2>&1 &", page, page);
+            snprintf(cmd, sizeof(cmd), "aurade-settings %s >/dev/null 2>&1 &", page);
         } else {
-            snprintf(cmd, sizeof(cmd), "aurade-settings 2>/dev/null || python3 -m aurade_settings >/dev/null 2>&1 &");
+            snprintf(cmd, sizeof(cmd), "aurade-settings >/dev/null 2>&1 &");
         }
     }
 
@@ -461,7 +462,7 @@ bool app_launch_settings(const char *page) {
 
 bool app_launch_aura_connect(void) {
     char cmd[1024];
-    char script_path[512] = {0};
+    char script_path[1024] = {0};
 
     if (access("../aura-connect/linux/aura_connect_app.py", R_OK) == 0) {
         snprintf(script_path, sizeof(script_path), "../aura-connect/linux/aura_connect_app.py");

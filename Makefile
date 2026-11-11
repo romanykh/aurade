@@ -34,10 +34,15 @@ PREVIEW = tools/cc_preview
 PREVIEW_SRCS = tools/cc_preview.c src/shell/control_center.c \
                src/render/cairo_buffer.c src/util/apps.c
 
-all: $(TARGET)
+SETTINGS = settings/aurade-settings
+
+all: $(TARGET) $(SETTINGS)
 
 $(TARGET): $(OBJS)
 	$(CC) $(OBJS) $(LIBS) -o $(TARGET)
+
+$(SETTINGS): src/config/config.o src/gestures/physics.o settings/main.c settings/pages.c settings/ui_helpers.c settings/settings.h settings/css.h
+	$(MAKE) -C settings
 
 $(PREVIEW): $(PREVIEW_SRCS) src/shell/control_center.h src/render/cairo_buffer.h
 	$(CC) $(CFLAGS) $(INCLUDES) $(PREVIEW_SRCS) $(LIBS) -o $(PREVIEW)
@@ -51,17 +56,19 @@ $(GESTURE_SIM): tools/gesture_sim.c src/gestures/gesture_engine.c src/gestures/g
 test-gestures: $(GESTURE_SIM)
 	./$(GESTURE_SIM)
 
-
 preview: $(PREVIEW)
 	./$(PREVIEW) build/preview
+
+settings: $(SETTINGS)
 
 %.o: %.c
 	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
 	rm -f $(OBJS) $(DEPS) $(TARGET) $(PREVIEW) $(GESTURE_SIM)
+	$(MAKE) -C settings clean
 
 # Rebuild objects when any header they include changes (e.g. server.h layout).
 -include $(DEPS)
 
-.PHONY: all clean preview test-gestures
+.PHONY: all clean preview test-gestures settings

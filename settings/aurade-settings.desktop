@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=AuraDE Settings
 Comment=Desktop environment settings: dock, gestures, appearance, keyboard
-Exec=python3 /home/user/AI/de/settings/aurade_settings.py
+Exec=/home/user/AI/de/settings/aurade-settings
 Icon=preferences-desktop
 Terminal=false
 Type=Application

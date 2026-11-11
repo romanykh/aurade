@@ -2,6 +2,7 @@
 *.o
 *.d
 aurade
+settings/aurade-settings
 tools/cc_preview
 tools/gesture_sim
 build/
