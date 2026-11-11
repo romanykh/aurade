@@ -50,6 +50,13 @@ void draw_glass_panel(cairo_t *cr, double x, double y, double w, double h, doubl
                       double r_bg, double g_bg, double b_bg, double a_bg);
 
 /**
+ * Draw Apple Liquid Glass refractive edge cushion (Fresnel lens perimeter glow,
+ * corner caustics, specular top crest, and bottom meniscus).
+ */
+void draw_refractive_glass_rim(cairo_t *cr, double x, double y, double w, double h,
+                               double r, double edge_a);
+
+/**
  * Draw a smooth multi-layered drop shadow for windows and floating cards.
  */
 void draw_drop_shadow(cairo_t *cr, double x, double y, double w, double h,

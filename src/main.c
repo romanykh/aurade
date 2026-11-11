@@ -68,20 +68,22 @@ void server_update_blur_config(aurade_server_t *server) {
     double str = server->config.blur_strength > 0.05 ? server->config.blur_strength : 1.0;
     // Dual-Kawase with 2 passes & radius 3.5 is ideal for integrated GPUs (Intel UHD):
     // delivers smooth frosted glass while reducing GPU fragment fill rate by ~65%.
-    int passes = (int)round(2.0 * str);
-    if (passes < 1) passes = 1;
-    if (passes > 4) passes = 4;
-    int rad = (int)round(3.5 * str);
     if (server->config.liquid_glass) {
-        // Apple Liquid Glass hardware vibrancy pipeline in SceneFX GLSL shader:
-        // - noise=0.022f: subtle tactile film micro-grain eliminates 8-bit color banding
-        // - brightness=1.04f: lifts dark backdrop values slightly under frosted glass
-        // - contrast=1.06f: crisp dynamic visual separation
-        // - saturation=1.35f: rich optical vibrancy that makes icons and text pop
-        wlr_scene_set_blur_data(server->scene, passes, rad, 0.022f, 1.04f, 1.06f, 1.35f);
+        // Apple Liquid Glass: delicate light blur accompanied by edge refraction
+        // - 2 passes with tight radius 2.0 creates a crystal-clear, soft frosted blur
+        //   where wallpaper details, photos, and background apps remain clearly recognizable
+        // - saturation 1.28f + brightness 1.02f + contrast 1.04f + micro-dither 0.015f
+        int lg_rad = (int)round(2.0 * str);
+        if (lg_rad < 1) lg_rad = 1;
+        wlr_scene_set_blur_data(server->scene, 2, lg_rad, 0.015f, 1.02f, 1.04f, 1.28f);
     } else {
-        // Flat standard frosted glass without vibrancy post-processing
-        wlr_scene_set_blur_data(server->scene, passes, rad, 0.0f, 1.0f, 1.0f, 1.0f);
+        // Standard frosted glass
+        int std_passes = (int)round(2.0 * str);
+        if (std_passes < 1) std_passes = 1;
+        if (std_passes > 4) std_passes = 4;
+        int std_rad = (int)round(3.5 * str);
+        if (std_rad < 1) std_rad = 1;
+        wlr_scene_set_blur_data(server->scene, std_passes, std_rad, 0.0f, 1.0f, 1.0f, 1.0f);
     }
 
     if (server->dock && server->dock->blur_node) {
