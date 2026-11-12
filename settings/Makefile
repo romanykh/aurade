@@ -1,7 +1,7 @@
 CC ?= gcc
 CFLAGS ?= -Wall -Wextra -O3 -march=native -pipe -g -D_GNU_SOURCE
-INCLUDES = -I../src $(shell pkg-config --cflags gtk4 json-c)
-LIBS = $(shell pkg-config --libs gtk4 json-c) -lm
+INCLUDES = -I../src $(shell pkg-config --cflags gtk4 json-c xkbcommon)
+LIBS = $(shell pkg-config --libs gtk4 json-c xkbcommon) -lm
 
 SRCS = main.c pages.c ui_helpers.c ../src/config/config.c ../src/gestures/physics.c
 OBJS = $(SRCS:.c=.o)

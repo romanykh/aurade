@@ -3,10 +3,103 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <ctype.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <pwd.h>
+
+bool shortcut_matches_event(const char *combo,
+                            bool super, bool ctrl, bool alt, bool shift,
+                            xkb_keysym_t sym, xkb_keysym_t latin_sym) {
+    if (!combo || !*combo) return false;
+
+    char buf[128];
+    strncpy(buf, combo, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+
+    bool req_super = false;
+    bool req_ctrl = false;
+    bool req_alt = false;
+    bool req_shift = false;
+    char key_name[64] = "";
+
+    char *saveptr = NULL;
+    char *token = strtok_r(buf, "+- ", &saveptr);
+    while (token) {
+        while (*token == ' ' || *token == '\t') token++;
+        char *end = token + strlen(token) - 1;
+        while (end > token && (*end == ' ' || *end == '\t')) {
+            *end = '\0';
+            end--;
+        }
+
+        if (strcasecmp(token, "super") == 0 ||
+            strcasecmp(token, "logo") == 0 ||
+            strcasecmp(token, "win") == 0 ||
+            strcasecmp(token, "mod4") == 0) {
+            req_super = true;
+        } else if (strcasecmp(token, "ctrl") == 0 ||
+                   strcasecmp(token, "control") == 0) {
+            req_ctrl = true;
+        } else if (strcasecmp(token, "alt") == 0 ||
+                   strcasecmp(token, "mod1") == 0) {
+            req_alt = true;
+        } else if (strcasecmp(token, "shift") == 0) {
+            req_shift = true;
+        } else if (*token) {
+            strncpy(key_name, token, sizeof(key_name) - 1);
+            key_name[sizeof(key_name) - 1] = '\0';
+        }
+        token = strtok_r(NULL, "+- ", &saveptr);
+    }
+
+    if (!key_name[0]) return false;
+
+    if (req_super != super || req_ctrl != ctrl || req_alt != alt || req_shift != shift) {
+        return false;
+    }
+
+    xkb_keysym_t target_sym = xkb_keysym_from_name(key_name, XKB_KEYSYM_CASE_INSENSITIVE);
+    if (target_sym == XKB_KEY_NoSymbol) {
+        if (strcasecmp(key_name, "return") == 0 || strcasecmp(key_name, "enter") == 0) {
+            target_sym = XKB_KEY_Return;
+        } else if (strcasecmp(key_name, "space") == 0) {
+            target_sym = XKB_KEY_space;
+        } else if (strcasecmp(key_name, "tab") == 0) {
+            target_sym = XKB_KEY_Tab;
+        } else if (strcasecmp(key_name, "esc") == 0 || strcasecmp(key_name, "escape") == 0) {
+            target_sym = XKB_KEY_Escape;
+        } else if (strcasecmp(key_name, "backspace") == 0) {
+            target_sym = XKB_KEY_BackSpace;
+        } else if (strcasecmp(key_name, "del") == 0 || strcasecmp(key_name, "delete") == 0) {
+            target_sym = XKB_KEY_Delete;
+        } else if (strlen(key_name) == 1) {
+            target_sym = (xkb_keysym_t)(unsigned char)key_name[0];
+        }
+    }
+
+    if (target_sym == XKB_KEY_NoSymbol) return false;
+
+    if (target_sym == sym || target_sym == latin_sym) return true;
+
+    xkb_keysym_t target_low = xkb_keysym_to_lower(target_sym);
+    xkb_keysym_t sym_low = xkb_keysym_to_lower(sym);
+    if (target_low == sym_low) return true;
+
+    if (latin_sym != XKB_KEY_NoSymbol) {
+        xkb_keysym_t latin_low = xkb_keysym_to_lower(latin_sym);
+        if (target_low == latin_low) return true;
+    }
+
+    if ((target_low == XKB_KEY_Return || target_sym == XKB_KEY_KP_Enter) &&
+        (sym == XKB_KEY_Return || sym == XKB_KEY_KP_Enter)) {
+        return true;
+    }
+
+    return false;
+}
 
 gesture_action_t action_from_string(const char *str) {
     gesture_action_t a = { .type = ACTION_NONE, .custom_cmd = "" };
@@ -133,6 +226,12 @@ aurade_config_t config_get_defaults(void) {
 
         // Topbar
         .topbar_cpu_temp = true,
+
+        // Custom Shortcuts
+        .custom_shortcuts_count = 1,
+        .custom_shortcuts = {
+            { .name = "Terminal", .combo = "Super+Return", .command = "foot" },
+        },
     };
     return cfg;
 }
@@ -455,6 +554,33 @@ bool config_load(aurade_config_t *cfg, const char *path) {
         if (json_object_object_get_ex(tb, "cpu_temp", &v)) cfg->topbar_cpu_temp = json_object_get_boolean(v);
     }
 
+    struct json_object *shortcuts_arr = NULL;
+    if (json_object_object_get_ex(root, "custom_shortcuts", &shortcuts_arr) &&
+        json_object_get_type(shortcuts_arr) == json_type_array) {
+        cfg->custom_shortcuts_count = 0;
+        int len = json_object_array_length(shortcuts_arr);
+        if (len > MAX_CUSTOM_SHORTCUTS) len = MAX_CUSTOM_SHORTCUTS;
+        for (int i = 0; i < len; i++) {
+            struct json_object *item = json_object_array_get_idx(shortcuts_arr, i);
+            if (!item || json_object_get_type(item) != json_type_object) continue;
+            struct json_object *n = NULL, *k = NULL, *c = NULL;
+            const char *name_s = json_object_object_get_ex(item, "name", &n) ? json_object_get_string(n) : "";
+            const char *combo_s = json_object_object_get_ex(item, "combo", &k) ? json_object_get_string(k) : "";
+            const char *cmd_s = json_object_object_get_ex(item, "command", &c) ? json_object_get_string(c) : "";
+            if (combo_s && combo_s[0] && cmd_s && cmd_s[0]) {
+                int idx = cfg->custom_shortcuts_count++;
+                strncpy(cfg->custom_shortcuts[idx].name, (name_s && name_s[0]) ? name_s : cmd_s, sizeof(cfg->custom_shortcuts[0].name) - 1);
+                strncpy(cfg->custom_shortcuts[idx].combo, combo_s, sizeof(cfg->custom_shortcuts[0].combo) - 1);
+                strncpy(cfg->custom_shortcuts[idx].command, cmd_s, sizeof(cfg->custom_shortcuts[0].command) - 1);
+            }
+        }
+    } else {
+        cfg->custom_shortcuts_count = 1;
+        snprintf(cfg->custom_shortcuts[0].name, sizeof(cfg->custom_shortcuts[0].name), "Terminal");
+        snprintf(cfg->custom_shortcuts[0].combo, sizeof(cfg->custom_shortcuts[0].combo), "Super+Return");
+        snprintf(cfg->custom_shortcuts[0].command, sizeof(cfg->custom_shortcuts[0].command), "foot");
+    }
+
     json_object_put(root);
     return true;
 }
@@ -593,6 +719,16 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     struct json_object *tb = json_object_new_object();
     json_object_object_add(tb, "cpu_temp", json_object_new_boolean(cfg->topbar_cpu_temp));
     json_object_object_add(root, "topbar", tb);
+
+    struct json_object *shortcuts_arr = json_object_new_array();
+    for (int i = 0; i < cfg->custom_shortcuts_count; i++) {
+        struct json_object *item = json_object_new_object();
+        json_object_object_add(item, "name", json_object_new_string(cfg->custom_shortcuts[i].name));
+        json_object_object_add(item, "combo", json_object_new_string(cfg->custom_shortcuts[i].combo));
+        json_object_object_add(item, "command", json_object_new_string(cfg->custom_shortcuts[i].command));
+        json_object_array_add(shortcuts_arr, item);
+    }
+    json_object_object_add(root, "custom_shortcuts", shortcuts_arr);
 
     int ret = json_object_to_file_ext(path, root, JSON_C_TO_STRING_PRETTY);
     json_object_put(root);

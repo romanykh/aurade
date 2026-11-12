@@ -876,6 +876,95 @@ static void on_key_repeat_interval_changed(double val, gpointer user_data) {
     gsettings_set_int("org.gnome.desktop.peripherals.keyboard", "repeat-interval", (int)val);
 }
 
+static GtkWidget *g_custom_shortcuts_card = NULL;
+
+static void on_remove_custom_shortcut_clicked(GtkButton *btn, gpointer user_data);
+static void rebuild_custom_shortcuts_list(void);
+
+static void on_remove_custom_shortcut_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn;
+    int idx = GPOINTER_TO_INT(user_data);
+    if (idx < 0 || idx >= g_config.custom_shortcuts_count) return;
+
+    for (int i = idx; i < g_config.custom_shortcuts_count - 1; i++) {
+        g_config.custom_shortcuts[i] = g_config.custom_shortcuts[i + 1];
+    }
+    g_config.custom_shortcuts_count--;
+    memset(&g_config.custom_shortcuts[g_config.custom_shortcuts_count], 0, sizeof(custom_shortcut_t));
+
+    settings_schedule_save();
+    rebuild_custom_shortcuts_list();
+}
+
+static void rebuild_custom_shortcuts_list(void) {
+    if (!g_custom_shortcuts_card) return;
+
+    GtkWidget *child = gtk_widget_get_first_child(g_custom_shortcuts_card);
+    while (child) {
+        GtkWidget *next = gtk_widget_get_next_sibling(child);
+        gtk_box_remove(GTK_BOX(g_custom_shortcuts_card), child);
+        child = next;
+    }
+
+    if (g_config.custom_shortcuts_count == 0) {
+        ui_add_row(g_custom_shortcuts_card, "No Custom Shortcuts", "Use the form below to configure custom hotkeys.", NULL, "input-keyboard-symbolic", "badge-keyboard");
+        return;
+    }
+
+    for (int i = 0; i < g_config.custom_shortcuts_count; i++) {
+        GtkWidget *ctrl = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_widget_set_valign(ctrl, GTK_ALIGN_CENTER);
+
+        GtkWidget *slbl = gtk_label_new(g_config.custom_shortcuts[i].combo);
+        gtk_widget_add_css_class(slbl, "mono");
+        gtk_box_append(GTK_BOX(ctrl), slbl);
+
+        GtkWidget *btn_del = gtk_button_new_with_label("Delete");
+        gtk_widget_add_css_class(btn_del, "btn-destructive");
+        g_signal_connect(btn_del, "clicked", G_CALLBACK(on_remove_custom_shortcut_clicked), GINT_TO_POINTER(i));
+        gtk_box_append(GTK_BOX(ctrl), btn_del);
+
+        char sub[320];
+        snprintf(sub, sizeof(sub), "Command: %s", g_config.custom_shortcuts[i].command);
+        ui_add_row(g_custom_shortcuts_card, g_config.custom_shortcuts[i].name, sub, ctrl, "input-keyboard-symbolic", "badge-keyboard");
+    }
+}
+
+typedef struct {
+    GtkWidget *en_name;
+    GtkWidget *en_combo;
+    GtkWidget *en_cmd;
+} shortcut_form_t;
+
+static void on_add_custom_shortcut_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn;
+    shortcut_form_t *form = (shortcut_form_t *)user_data;
+    if (!form) return;
+
+    const char *name = gtk_editable_get_text(GTK_EDITABLE(form->en_name));
+    const char *combo = gtk_editable_get_text(GTK_EDITABLE(form->en_combo));
+    const char *cmd = gtk_editable_get_text(GTK_EDITABLE(form->en_cmd));
+
+    if (!combo || !*combo || !cmd || !*cmd) return;
+    if (g_config.custom_shortcuts_count >= MAX_CUSTOM_SHORTCUTS) return;
+
+    int idx = g_config.custom_shortcuts_count++;
+    snprintf(g_config.custom_shortcuts[idx].name, sizeof(g_config.custom_shortcuts[0].name),
+             "%s", (name && *name) ? name : cmd);
+    snprintf(g_config.custom_shortcuts[idx].combo, sizeof(g_config.custom_shortcuts[0].combo),
+             "%s", combo);
+    snprintf(g_config.custom_shortcuts[idx].command, sizeof(g_config.custom_shortcuts[0].command),
+             "%s", cmd);
+
+    settings_schedule_save();
+
+    gtk_editable_set_text(GTK_EDITABLE(form->en_name), "");
+    gtk_editable_set_text(GTK_EDITABLE(form->en_combo), "");
+    gtk_editable_set_text(GTK_EDITABLE(form->en_cmd), "");
+
+    rebuild_custom_shortcuts_list();
+}
+
 GtkWidget *build_page_keyboard(void) {
     GtkWidget *page = ui_page_container("Keyboard", "Configure layout, input sources, key repeat delays and system shortcuts.");
 
@@ -903,8 +992,44 @@ GtkWidget *build_page_keyboard(void) {
     GtkWidget *sc_rep = ui_scale(cur_rep >= 10 && cur_rep <= 100 ? cur_rep : 30, 10.0, 100.0, 5.0, 0, on_key_repeat_interval_changed, NULL);
     ui_add_row(c_repeat, "Repeat Interval", "Speed at which keys repeat while held down (ms)", sc_rep, "preferences-system-symbolic", "badge-keyboard");
 
-    // Shortcuts Reference Card
-    GtkWidget *c_shortcuts = ui_card(page, "KEYBOARD & GESTURE SHORTCUTS");
+    // Custom Shortcuts Card
+    GtkWidget *c_custom = ui_card(page, "CUSTOM KEYBOARD SHORTCUTS");
+    g_custom_shortcuts_card = c_custom;
+    rebuild_custom_shortcuts_list();
+
+    // Add Custom Shortcut Card
+    GtkWidget *c_add = ui_card(page, "ADD CUSTOM SHORTCUT");
+    shortcut_form_t *form = g_new0(shortcut_form_t, 1);
+
+    form->en_name = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(form->en_name), "e.g. Browser, File Manager, Music");
+    gtk_widget_set_hexpand(form->en_name, FALSE);
+    gtk_widget_set_size_request(form->en_name, 220, -1);
+    ui_add_row(c_add, "Shortcut Name", "Friendly title for this shortcut action", form->en_name, "document-properties-symbolic", "badge-keyboard");
+
+    form->en_combo = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(form->en_combo), "e.g. Super+Return, Ctrl+Alt+T, Super+B");
+    gtk_widget_set_hexpand(form->en_combo, FALSE);
+    gtk_widget_set_size_request(form->en_combo, 220, -1);
+    ui_add_row(c_add, "Key Combination", "Modifiers (Super, Ctrl, Alt, Shift) + Key", form->en_combo, "preferences-desktop-keyboard-shortcuts-symbolic", "badge-keyboard");
+
+    form->en_cmd = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(form->en_cmd), "e.g. foot, firefox, nautilus, btop");
+    gtk_widget_set_hexpand(form->en_cmd, FALSE);
+    gtk_widget_set_size_request(form->en_cmd, 220, -1);
+    ui_add_row(c_add, "Command", "Application executable or shell command to run", form->en_cmd, "utilities-terminal-symbolic", "badge-keyboard");
+
+    GtkWidget *btn_add = gtk_button_new_with_label("+ Add Shortcut");
+    gtk_widget_add_css_class(btn_add, "btn-primary");
+    g_signal_connect(btn_add, "clicked", G_CALLBACK(on_add_custom_shortcut_clicked), form);
+    g_signal_connect(form->en_name, "activate", G_CALLBACK(on_add_custom_shortcut_clicked), form);
+    g_signal_connect(form->en_combo, "activate", G_CALLBACK(on_add_custom_shortcut_clicked), form);
+    g_signal_connect(form->en_cmd, "activate", G_CALLBACK(on_add_custom_shortcut_clicked), form);
+
+    ui_add_row(c_add, "Save Shortcut", "Register and activate this hotkey across AuraDE", btn_add, "emblem-default-symbolic", "badge-keyboard");
+
+    // System & Gesture Shortcuts Reference Card
+    GtkWidget *c_shortcuts = ui_card(page, "SYSTEM & GESTURE SHORTCUTS (BUILT-IN)");
     static const struct { const char *name; const char *shortcut; } SHORTCUTS[] = {
         { "Switch Layout", "Super + Space" },
         { "Toggle Floating (Tiling)", "Super + V" },

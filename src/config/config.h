@@ -4,7 +4,16 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <xkbcommon/xkbcommon.h>
 #include "../gestures/physics.h"
+
+#define MAX_CUSTOM_SHORTCUTS 32
+
+typedef struct {
+    char name[64];
+    char combo[64];
+    char command[256];
+} custom_shortcut_t;
 
 typedef enum {
     ACTION_NONE = 0,
@@ -123,7 +132,18 @@ typedef struct {
 
     // Topbar Widgets
     bool topbar_cpu_temp;
+
+    // Custom Keyboard Shortcuts
+    int custom_shortcuts_count;
+    custom_shortcut_t custom_shortcuts[MAX_CUSTOM_SHORTCUTS];
 } aurade_config_t;
+
+/**
+ * Check if a key event matches a shortcut combination string (e.g. "Super+Return", "Ctrl+Alt+T").
+ */
+bool shortcut_matches_event(const char *combo,
+                            bool super, bool ctrl, bool alt, bool shift,
+                            xkb_keysym_t sym, xkb_keysym_t latin_sym);
 
 /**
  * Get default macOS-matched configuration.

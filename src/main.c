@@ -2172,6 +2172,17 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
             }
         }
 
+        // Custom user-defined shortcuts
+        for (int k = 0; k < server->config.custom_shortcuts_count; k++) {
+            const custom_shortcut_t *cs = &server->config.custom_shortcuts[k];
+            if (cs->combo[0] && cs->command[0]) {
+                if (shortcut_matches_event(cs->combo, super, ctrl, alt, shift, sym, latin_sym)) {
+                    app_launch_command(cs->command);
+                    return;
+                }
+            }
+        }
+
         // Global macOS-style shortcuts.
         if (super) {
             if (shift && (sym == XKB_KEY_s || sym == XKB_KEY_S || latin_sym == XKB_KEY_s || latin_sym == XKB_KEY_S)) {
