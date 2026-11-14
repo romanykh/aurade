@@ -107,6 +107,7 @@ static page_meta_t PAGES[] = {
     { "mouse",       "Mouse & Touchpad", "input-mouse-symbolic",                  "badge-mouse",       build_page_mouse,       NULL, NULL, false },
     { "keyboard",    "Keyboard",         "input-keyboard-symbolic",               "badge-keyboard",    build_page_keyboard,    NULL, NULL, false },
     { "appearance",  "Appearance",       "preferences-desktop-wallpaper-symbolic","badge-appearance", build_page_appearance,  NULL, NULL, false },
+    { "blur-glass",  "Blur & Glass",     "applications-graphics-symbolic",        "badge-appearance", build_page_blur_glass,  NULL, NULL, false },
     { "dock",        "Dock",             "view-paged-symbolic",                   "badge-dock",        build_page_dock,        NULL, NULL, false },
     { "gestures",    "Gestures",         "input-touchpad-symbolic",               "badge-gestures",    build_page_gestures,    NULL, NULL, false },
     { "default-apps","Default Apps",     "preferences-desktop-apps-symbolic",     "badge-appearance",  build_page_default_apps,NULL, NULL, false },

@@ -56,7 +56,7 @@ void cairo_buffer_set_liquid_glass_enabled(bool enabled);
 bool cairo_buffer_get_liquid_glass_enabled(void);
 
 /**
- * Draw a modern macOS frosted glass panel with subtle top-highlight border.
+ * Draw a modern fluid frosted glass panel with subtle top-highlight border.
  */
 void draw_glass_panel(cairo_t *cr, double x, double y, double w, double h, double r,
                       double r_bg, double g_bg, double b_bg, double a_bg);
@@ -66,14 +66,14 @@ void draw_glass_panel_at(cairo_t *cr, double x, double y, double w, double h, do
                          double r_bg, double g_bg, double b_bg, double a_bg);
 
 /**
- * Draw Apple Liquid Glass refractive edge cushion (Fresnel lens perimeter glow,
+ * Draw Liquid Glass refractive edge cushion (Fresnel lens perimeter glow,
  * corner caustics, specular top crest, and bottom meniscus).
  */
 void draw_refractive_glass_rim(cairo_t *cr, double x, double y, double w, double h,
                                double r, double edge_a);
 
 /**
- * Draw Apple Liquid Glass with true optical lens magnification (лупа),
+ * Draw Liquid Glass with true optical lens magnification (лупа),
  * Snell's law peripheral barrel refraction (викривлення), chromatic dispersion,
  * soft focus transmission, and specular caustics.
  */
@@ -128,9 +128,9 @@ void draw_text_clamped(cairo_t *cr, const char *text, const char *font,
                        double x, double y, double max_w);
 
 /**
- * Vector status icons. AuraDE must not depend on emoji or Apple private-use
+ * Vector status icons. AuraDE must not depend on emoji or private-use
  * glyphs: on most Linux systems those fall back to tofu or a colour emoji font,
- * which instantly breaks the macOS look. These draw crisp scalable shapes.
+ * which instantly breaks the fluid look. These draw crisp scalable shapes.
  */
 void draw_sun_logo(cairo_t *cr, double cx, double cy, double size, double a);
 void draw_wifi_icon(cairo_t *cr, double cx, double cy, double size, double a);

@@ -463,7 +463,7 @@ void draw_glass_panel_at(cairo_t *cr, double x, double y, double w, double h, do
             cairo_restore(cr);
         }
 
-        // 3. Apple Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
+        // 3. Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
         draw_refractive_glass_rim(cr, x, y, w, h, r, edge_a);
 
     cairo_restore(cr);
@@ -787,7 +787,7 @@ void draw_control_center_icon(cairo_t *cr, double cx, double cy, double s, doubl
     cairo_save(cr);
     cairo_set_source_rgba(cr, g_icon_rgb[0], g_icon_rgb[1], g_icon_rgb[2], a);
 
-    // Two toggle switches, like the macOS Control Center menu-bar glyph.
+    // Two toggle switches, like the Control Center menu-bar glyph.
     double w = s * 0.44, h = s * 0.24;
     draw_rounded_rect(cr, cx - s * 0.30, cy - s * 0.30, w, h, h / 2.0);
     cairo_fill(cr);

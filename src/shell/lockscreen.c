@@ -11,7 +11,7 @@
 #include <pthread.h>
 #include <security/pam_appl.h>
 
-#define FONT_UI "SF Pro Display, -apple-system, Cantarell, Ubuntu, sans-serif"
+#define FONT_UI "SF Pro Display, Cantarell, Ubuntu, sans-serif"
 
 static int utf8_codepoint_count(const char *s) {
     if (!s) return 0;
@@ -310,13 +310,14 @@ void lockscreen_render(aurade_lockscreen_t *ls) {
     int h = ls->height > 0 ? ls->height : 1080;
 
     // 1. Wallpaper background backdrop
-    bool blur_lock = ls->server ? ls->server->config.blur_lockscreen : true;
+    glass_element_t gl = ls->server ? ls->server->config.glass_lockscreen : (glass_element_t){ 0.85, 1.0, false };
+    bool blur_lock = (gl.blur > 0.01);
     if (ls->server && ls->server->wallpaper && blur_lock) {
         wallpaper_draw_backdrop(ls->server->wallpaper, cr, w, h, 0.35, alpha);
     }
 
     // 2. Translucent dark frosted glass overlay
-    cairo_set_source_rgba(cr, 0.03, 0.04, 0.06, (blur_lock ? 0.50 : 0.85) * alpha);
+    cairo_set_source_rgba(cr, 0.03, 0.04, 0.06, (blur_lock ? (1.0 - gl.opacity * 0.55) : gl.opacity) * alpha);
     cairo_paint(cr);
 
     // 3. Top status indicators (Battery, Wi-Fi, Keyboard layout)

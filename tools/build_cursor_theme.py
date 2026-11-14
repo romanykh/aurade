@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Aura-Circle Cursor Theme Generator
-Creates an Apple iPadOS/VisionOS circular dot cursor theme:
+Creates an Minimalist circular dot cursor theme:
 - Outer circular zone with 50% opacity
 - Solid black center dot
 - Hotspot at the center of the black dot
@@ -431,7 +431,7 @@ def generate_theme(out_dir):
     # 3. Write index.theme
     index_theme = """[Icon Theme]
 Name=Aura-Circle
-Comment=Apple iPadOS/VisionOS circular dot cursor theme (50% translucent outer ring, solid black center dot)
+Comment=Minimalist circular dot cursor theme (50% translucent outer ring, solid black center dot)
 Inherits=default
 """
     with open(os.path.join(out_dir, "index.theme"), "w") as f:

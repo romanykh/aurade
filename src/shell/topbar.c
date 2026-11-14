@@ -13,7 +13,7 @@
 
 #define FONT_UI "Inter"
 
-// Apple menu geometry. The menu lives in its own scene buffer parented to the
+// system menu geometry. The menu lives in its own scene buffer parented to the
 // overlay tree so it paints above windows, the dock, and other shell chrome.
 #define POWER_MENU_BUFFER_W 288
 #define POWER_MENU_BUFFER_H 256
@@ -247,10 +247,10 @@ aurade_topbar_t *topbar_create(aurade_server_t *server) {
     if (bar->blur_node) {
         wlr_scene_node_set_position(&bar->blur_node->node, 0, 0);
         wlr_scene_node_place_below(&bar->blur_node->node, &bar->scene_buffer->node);
-        bool tb_blur = server->config.blur_topbar;
-        float tb_str = tb_blur ? (float)server->config.blur_strength : 0.0f;
-        wlr_scene_blur_set_strength(bar->blur_node, tb_str);
-        wlr_scene_blur_set_liquid_glass(bar->blur_node, false);
+        glass_element_t gt = server->config.glass_topbar;
+        bool tb_blur = (gt.blur > 0.01 || gt.liquid_glass);
+        wlr_scene_blur_set_strength(bar->blur_node, (float)gt.blur);
+        wlr_scene_blur_set_liquid_glass(bar->blur_node, gt.liquid_glass);
         wlr_scene_node_set_enabled(&bar->blur_node->node, tb_blur);
     }
 
@@ -275,9 +275,7 @@ aurade_topbar_t *topbar_create(aurade_server_t *server) {
                                    &bar->power_menu_scene->node);
         wlr_scene_node_set_enabled(&bar->power_menu_blur_node->node, false);
         wlr_scene_blur_set_corner_radius(bar->power_menu_blur_node, 12);
-        if (server->config.liquid_glass) {
-            wlr_scene_blur_set_liquid_glass(bar->power_menu_blur_node, true);
-        }
+        wlr_scene_blur_set_liquid_glass(bar->power_menu_blur_node, server->config.glass_power_menu.liquid_glass);
     }
     power_menu_render(bar);
 
@@ -291,7 +289,7 @@ void topbar_resize(aurade_topbar_t *bar, int width) {
     cairo_buffer_resize(bar->buffer, width, bar->height);
     if (bar->blur_node) {
         wlr_scene_blur_set_size(bar->blur_node, width, bar->height);
-        bool tb_blur = bar->server && bar->server->config.blur_topbar;
+        bool tb_blur = bar->server && (bar->server->config.glass_topbar.blur > 0.01 || bar->server->config.glass_topbar.liquid_glass);
         wlr_scene_node_set_enabled(&bar->blur_node->node, tb_blur);
     }
     topbar_render(bar);
@@ -364,18 +362,21 @@ void topbar_render(aurade_topbar_t *bar) {
 
     cairo_buffer_clear(bar->buffer);
 
+    glass_element_t gt = bar->server ? bar->server->config.glass_topbar : (glass_element_t){ 0.72, 0.0, false };
     if (bar->blur_node) {
-        bool tb_blur = bar->server && bar->server->config.blur_topbar;
-        float tb_str = tb_blur ? (float)bar->server->config.blur_strength : 0.0f;
-        wlr_scene_blur_set_strength(bar->blur_node, tb_str);
-        wlr_scene_blur_set_liquid_glass(bar->blur_node, false);
+        bool tb_blur = (gt.blur > 0.01 || gt.liquid_glass);
+        wlr_scene_blur_set_strength(bar->blur_node, (float)gt.blur);
+        wlr_scene_blur_set_liquid_glass(bar->blur_node, gt.liquid_glass);
         wlr_scene_node_set_enabled(&bar->blur_node->node, tb_blur);
     }
 
     // Topbar rendered as pure soft vignette shading ("просто затінення")
+    double op_scale = gt.opacity / 0.72;
+    if (op_scale < 0.0) op_scale = 0.0;
+    if (op_scale > 1.4) op_scale = 1.4;
     cairo_pattern_t *bg = cairo_pattern_create_linear(0, 0, 0, h);
-    cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.0, 0.0, 0.0, 0.42);
-    cairo_pattern_add_color_stop_rgba(bg, 0.55, 0.0, 0.0, 0.0, 0.18);
+    cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.0, 0.0, 0.0, 0.42 * op_scale);
+    cairo_pattern_add_color_stop_rgba(bg, 0.55, 0.0, 0.0, 0.0, 0.18 * op_scale);
     cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.0, 0.0, 0.0, 0.0);
     cairo_set_source(cr, bg);
     cairo_rectangle(cr, 0, 0, w, h);
@@ -383,13 +384,13 @@ void topbar_render(aurade_topbar_t *bar) {
     cairo_pattern_destroy(bg);
 
 
-    // Apple menu glyph. Hover/open uses the same soft capsule as macOS.
-    bar->apple_x = 4.0;
-    bar->apple_y = 3.0;
-    bar->apple_w = 28.0;
-    bar->apple_h = h - 6.0;
-    if (bar->hover_apple || bar->power_menu_state != POWER_MENU_CLOSED) {
-        draw_rounded_rect(cr, bar->apple_x, bar->apple_y, bar->apple_w, bar->apple_h, 5.0);
+    // system menu glyph. Hover/open uses the same soft capsule as fluid.
+    bar->sysmenu_x = 4.0;
+    bar->sysmenu_y = 3.0;
+    bar->sysmenu_w = 28.0;
+    bar->sysmenu_h = h - 6.0;
+    if (bar->hover_sysmenu || bar->power_menu_state != POWER_MENU_CLOSED) {
+        draw_rounded_rect(cr, bar->sysmenu_x, bar->sysmenu_y, bar->sysmenu_w, bar->sysmenu_h, 5.0);
         cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.16);
         cairo_fill(cr);
     }
@@ -644,7 +645,7 @@ void topbar_render(aurade_topbar_t *bar) {
 }
 
 // -------------------------------------------------------------
-// Apple / power menu
+// System / power menu
 // -------------------------------------------------------------
 
 static int power_menu_row_at(double x, double y) {
@@ -756,7 +757,7 @@ static void power_menu_render(aurade_topbar_t *bar) {
     cairo_pattern_destroy(sheen);
     cairo_restore(cr);
 
-    // 3. Apple Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
+    // 3. Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
     draw_refractive_glass_rim(cr, POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y,
                               POWER_MENU_PANEL_W, POWER_MENU_PANEL_H, 12.0, 0.70);
 
@@ -863,7 +864,7 @@ static void topbar_open_power_menu(aurade_topbar_t *bar) {
     bar->power_menu_confirm = POWER_ACTION_NONE;
     bar->power_menu_hover_row = -1;
     bar->power_menu_confirm_hover = 0;
-    bar->hover_apple = true;
+    bar->hover_sysmenu = true;
 
     wlr_scene_node_set_enabled(&bar->power_menu_scene->node, true);
     wlr_scene_node_raise_to_top(&bar->power_menu_scene->node);
@@ -871,14 +872,10 @@ static void topbar_open_power_menu(aurade_topbar_t *bar) {
         wlr_scene_node_set_position(&bar->power_menu_blur_node->node,
                                     (int)(POWER_MENU_SCENE_X + POWER_MENU_PANEL_X),
                                     (int)(POWER_MENU_SCENE_Y + POWER_MENU_PANEL_Y));
-        if (bar->server && bar->server->config.liquid_glass) {
-            wlr_scene_blur_set_liquid_glass(bar->power_menu_blur_node, true);
-        } else {
-            wlr_scene_blur_set_liquid_glass(bar->power_menu_blur_node, false);
-        }
-        bool pm_glass = bar->server && (bar->server->config.blur_power_menu || bar->server->config.liquid_glass);
-        float pm_str = (bar->server && bar->server->config.blur_power_menu) ? (float)bar->server->config.blur_strength : 0.0f;
-        wlr_scene_blur_set_strength(bar->power_menu_blur_node, pm_str);
+        glass_element_t gp = bar->server ? bar->server->config.glass_power_menu : (glass_element_t){ 0.85, 1.0, true };
+        wlr_scene_blur_set_liquid_glass(bar->power_menu_blur_node, gp.liquid_glass);
+        bool pm_glass = (gp.blur > 0.01 || gp.liquid_glass);
+        wlr_scene_blur_set_strength(bar->power_menu_blur_node, (float)gp.blur);
         wlr_scene_node_set_enabled(&bar->power_menu_blur_node->node, pm_glass);
         wlr_scene_node_place_below(&bar->power_menu_blur_node->node, &bar->power_menu_scene->node);
     }
@@ -897,7 +894,7 @@ void topbar_close_power_menu(aurade_topbar_t *bar) {
     bar->power_menu_confirm = POWER_ACTION_NONE;
     bar->power_menu_hover_row = -1;
     bar->power_menu_confirm_hover = 0;
-    bar->hover_apple = false;
+    bar->hover_sysmenu = false;
 
     if (bar->power_menu_scene) {
         wlr_scene_node_set_enabled(&bar->power_menu_scene->node, false);
@@ -972,10 +969,10 @@ bool topbar_handle_motion(aurade_topbar_t *bar, double x, double y) {
     }
 
     if (y > bar->height + 2.0) {
-        if (bar->hover_cc || bar->hover_nc || bar->hover_apple || bar->hover_rec || bar->hover_cpu_temp) {
+        if (bar->hover_cc || bar->hover_nc || bar->hover_sysmenu || bar->hover_rec || bar->hover_cpu_temp) {
             bar->hover_cc = false;
             bar->hover_nc = false;
-            bar->hover_apple = false;
+            bar->hover_sysmenu = false;
             bar->hover_rec = false;
             bar->hover_cpu_temp = false;
             topbar_render(bar);
@@ -988,8 +985,8 @@ bool topbar_handle_motion(aurade_topbar_t *bar, double x, double y) {
     bool nc = (bar->nc_w > 0 &&
                x >= bar->nc_x && x <= bar->nc_x + bar->nc_w &&
                y >= bar->nc_y && y <= bar->nc_y + bar->nc_h);
-    bool apple = (x >= bar->apple_x && x <= bar->apple_x + bar->apple_w &&
-                  y >= bar->apple_y && y <= bar->apple_y + bar->apple_h);
+    bool sysmenu = (x >= bar->sysmenu_x && x <= bar->sysmenu_x + bar->sysmenu_w &&
+                    y >= bar->sysmenu_y && y <= bar->sysmenu_y + bar->sysmenu_h);
     bool rec = (bar->rec_w > 0 &&
                 x >= bar->rec_x && x <= bar->rec_x + bar->rec_w &&
                 y >= bar->rec_y && y <= bar->rec_y + bar->rec_h);
@@ -997,10 +994,10 @@ bool topbar_handle_motion(aurade_topbar_t *bar, double x, double y) {
                  x >= bar->cpu_temp_x && x <= bar->cpu_temp_x + bar->cpu_temp_w &&
                  y >= bar->cpu_temp_y && y <= bar->cpu_temp_y + bar->cpu_temp_h);
 
-    if (cc != bar->hover_cc || nc != bar->hover_nc || apple != bar->hover_apple || rec != bar->hover_rec || temp != bar->hover_cpu_temp) {
+    if (cc != bar->hover_cc || nc != bar->hover_nc || sysmenu != bar->hover_sysmenu || rec != bar->hover_rec || temp != bar->hover_cpu_temp) {
         bar->hover_cc = cc;
         bar->hover_nc = nc;
-        bar->hover_apple = apple;
+        bar->hover_sysmenu = sysmenu;
         bar->hover_rec = rec;
         bar->hover_cpu_temp = temp;
         topbar_render(bar);
@@ -1048,9 +1045,9 @@ bool topbar_handle_click(aurade_topbar_t *bar, double x, double y) {
         return true;
     }
 
-    // Apple logo toggles the system power menu.
-    if (x >= bar->apple_x && x <= bar->apple_x + bar->apple_w &&
-        y >= bar->apple_y && y <= bar->apple_y + bar->apple_h) {
+    // Sun logo toggles the system power menu.
+    if (x >= bar->sysmenu_x && x <= bar->sysmenu_x + bar->sysmenu_w &&
+        y >= bar->sysmenu_y && y <= bar->sysmenu_y + bar->sysmenu_h) {
         if (bar->power_menu_state == POWER_MENU_CLOSED) {
             topbar_open_power_menu(bar);
         } else {

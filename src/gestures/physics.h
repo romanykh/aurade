@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 /**
- * Spring configuration parameters matching macOS CoreAnimation physics.
+ * Spring configuration parameters matching spring-damper animation physics.
  */
 typedef struct {
     double mass;                 // Default: 1.0
@@ -53,7 +53,7 @@ void spring_simulation_start(spring_simulation_t *sim, const spring_config_t *co
 bool spring_simulation_step(spring_simulation_t *sim, double dt);
 
 /**
- * Compute macOS rubber-band elastic displacement when dragging past limits.
+ * Compute rubber-band elastic displacement when dragging past limits.
  * @param displacement Raw finger displacement past the boundary (can be positive or negative)
  * @param limit_constant Elastic resistance coefficient K (e.g. 200.0)
  * @return Non-linear resisted displacement

@@ -37,8 +37,8 @@ aurade_osd_t *osd_create(aurade_server_t *server) {
         wlr_scene_node_place_below(&osd->blur_node->node, &osd->scene_buffer->node);
         wlr_scene_node_set_position(&osd->blur_node->node, pos_x + (int)OSD_PAD_X, pos_y + (int)OSD_PAD_Y);
         wlr_scene_blur_set_corner_radius(osd->blur_node, (int)OSD_CORNER);
-        wlr_scene_blur_set_liquid_glass(osd->blur_node, server->config.liquid_glass);
-        float str = server->config.blur_strength > 0.01 ? (float)server->config.blur_strength : 0.7f;
+        wlr_scene_blur_set_liquid_glass(osd->blur_node, server->config.glass_osd.liquid_glass);
+        float str = (float)server->config.glass_osd.blur;
         wlr_scene_blur_set_strength(osd->blur_node, str);
         wlr_scene_node_set_enabled(&osd->blur_node->node, false);
     }
@@ -214,16 +214,14 @@ void osd_render(aurade_osd_t *osd) {
     }
     if (a > 1.0) a = 1.0;
 
-    bool liquid = osd->server && osd->server->config.liquid_glass;
-    bool blur_enabled = osd->server ? (liquid || osd->server->config.blur_dock || osd->server->config.blur_notifications) : true;
+    glass_element_t go = osd->server ? osd->server->config.glass_osd : (glass_element_t){ 0.85, 1.0, true };
+    bool liquid = go.liquid_glass;
+    bool blur_enabled = (go.blur > 0.01 || liquid);
 
     if (osd->blur_node) {
         if (blur_enabled && a > 0.05) {
             wlr_scene_blur_set_liquid_glass(osd->blur_node, liquid);
-            float str = (osd->server && osd->server->config.blur_strength > 0.01)
-                            ? (float)osd->server->config.blur_strength
-                            : 0.7f;
-            wlr_scene_blur_set_strength(osd->blur_node, str);
+            wlr_scene_blur_set_strength(osd->blur_node, (float)go.blur);
             wlr_scene_blur_set_alpha(osd->blur_node, (float)a);
             wlr_scene_node_set_enabled(&osd->blur_node->node, true);
             wlr_scene_node_place_below(&osd->blur_node->node, &osd->scene_buffer->node);
@@ -240,9 +238,9 @@ void osd_render(aurade_osd_t *osd) {
 
     // Capsule body (Liquid Glass when enabled, frosted glass fallback otherwise)
     if (liquid) {
-        osd_draw_liquid_glass_capsule(cr, px, py, pw, ph, pr, a);
+        osd_draw_liquid_glass_capsule(cr, px, py, pw, ph, pr, a * go.opacity);
     } else {
-        draw_glass_panel(cr, px, py, pw, ph, pr, 0.11, 0.12, 0.15, (blur_enabled ? 0.58 : 0.86) * a);
+        draw_glass_panel(cr, px, py, pw, ph, pr, 0.11, 0.12, 0.15, go.opacity * a);
     }
 
     // Left Icon (Speaker or Sun)

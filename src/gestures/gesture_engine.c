@@ -542,7 +542,7 @@ static void process_multitouch_frame(gesture_engine_t *ge) {
             ge->nc_two_finger_triggered = false;
             ge->nc_start_ccx = ccx;
             ge->nc_start_ccy = ccy;
-            ge->nc_in_edge = left_side ? (min_norm_x <= 0.28) : (max_norm_x >= 0.72);
+            ge->nc_in_edge = left_side ? (min_norm_x <= 0.14) : (max_norm_x >= 0.86);
         } else if (!ge->nc_two_finger_triggered) {
             double dx = ccx - ge->nc_start_ccx;
             double dy = ccy - ge->nc_start_ccy;

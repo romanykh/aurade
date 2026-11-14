@@ -31,8 +31,8 @@ typedef struct aurade_topbar {
     char active_app_title[128];
 
     // Layout rectangles, recomputed on every render and used for hit-testing.
-    double apple_x, apple_y, apple_w, apple_h;
-    bool hover_apple;
+    double sysmenu_x, sysmenu_y, sysmenu_w, sysmenu_h;
+    bool hover_sysmenu;
     double cc_x, cc_y, cc_w, cc_h;
     bool hover_cc;
     double nc_x, nc_y, nc_w, nc_h;
@@ -49,7 +49,7 @@ typedef struct aurade_topbar {
     bool cpu_temp_valid;
     uint64_t last_temp_check_ms;
 
-    // Apple menu (system power menu)
+    // system menu (system power menu)
     power_menu_state_t power_menu_state;
     power_action_t power_menu_confirm;
     int power_menu_hover_row;      // -1 = no row hovered
@@ -70,7 +70,7 @@ bool topbar_handle_click(aurade_topbar_t *bar, double x, double y);
 bool topbar_handle_motion(aurade_topbar_t *bar, double x, double y);
 void topbar_destroy(aurade_topbar_t *bar);
 
-// Apple/power menu. Clicks anywhere on screen are consumed while this is open.
+// System/power menu. Clicks anywhere on screen are consumed while this is open.
 bool topbar_power_menu_is_open(aurade_topbar_t *bar);
 void topbar_close_power_menu(aurade_topbar_t *bar);
 bool topbar_handle_power_menu_click(aurade_topbar_t *bar, double x, double y);

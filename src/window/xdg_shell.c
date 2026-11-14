@@ -25,8 +25,8 @@ struct view_scale_data {
 
 float view_get_target_opacity(aurade_view_t *view) {
     if (!view) return 1.0f;
-    float win_op = (view->server && view->server->config.window_opacity > 0.05) ?
-                   (float)view->server->config.window_opacity : 1.0f;
+    float win_op = (view->server && view->server->config.glass_windows.opacity > 0.05) ?
+                   (float)view->server->config.glass_windows.opacity : 1.0f;
 
     if (view->server && view->server->config.window_rules_count > 0) {
         const char *app_id = view_get_app_id(view);
@@ -479,7 +479,8 @@ void view_update_blur(aurade_view_t *view) {
     const char *app_id = view_get_app_id(view);
     bool is_settings_app = (app_id && (strcasestr(app_id, "settings") != NULL || strcasestr(app_id, "aurade-settings") != NULL));
     bool is_settings = is_settings_app && (!view->xdg_toplevel || !view->xdg_toplevel->parent);
-    bool enabled = (view->server->config.blur_windows || is_settings) &&
+    glass_element_t gw = view->server->config.glass_windows;
+    bool enabled = (gw.blur > 0.01 || gw.liquid_glass || is_settings) &&
                    !pause_blur &&
                    !view->minimized &&
                    (view->scene_tree && view->scene_tree->node.enabled) &&
@@ -490,8 +491,8 @@ void view_update_blur(aurade_view_t *view) {
         // Only the two transparent glass panels (.sidebar & .content-stack) get Liquid Glass refraction;
         // the outer gray window frame stays crisp and unblurred.
         wlr_scene_node_set_enabled(&view->blur_node->node, false);
-        bool lg = view->server->config.liquid_glass;
-        float str = (float)view->server->config.blur_strength;
+        bool lg = gw.liquid_glass || view->server->config.liquid_glass;
+        float str = (gw.blur > 0.01) ? (float)gw.blur : 1.0f;
         int sx0 = 12, sy0 = 52, sw0 = 157, sh0 = view->height - 64;
         int cx0 = 181, cy0 = 52, cw0 = view->width - 193, ch0 = view->height - 64;
         FILE *fp = fopen("/tmp/aurade-settings-panels.rect", "r");
@@ -532,8 +533,8 @@ void view_update_blur(aurade_view_t *view) {
         int max_r = (bw < bh ? bw : bh) / 4;
         if (rad > max_r) rad = max_r;
         wlr_scene_blur_set_corner_radius(view->blur_node, rad);
-        wlr_scene_blur_set_liquid_glass(view->blur_node, false);
-        wlr_scene_blur_set_strength(view->blur_node, (float)view->server->config.blur_strength);
+        wlr_scene_blur_set_liquid_glass(view->blur_node, gw.liquid_glass);
+        wlr_scene_blur_set_strength(view->blur_node, (float)gw.blur);
         if (view->content_tree) {
             wlr_scene_node_place_below(&view->blur_node->node, &view->content_tree->node);
         }
@@ -657,7 +658,7 @@ void server_tick_view_animations(aurade_server_t *server, double dt) {
 
         switch (view->anim_type) {
             case VIEW_ANIM_MAP: {
-                // p: 0.0 -> 1.0 with subtle natural overshoot (macOS window pop)
+                // p: 0.0 -> 1.0 with subtle natural overshoot (fluid window pop)
                 double p_clamp = p < 0.0 ? 0.0 : (p > 1.0 ? 1.0 : p);
                 double scale = 0.88 + 0.12 * p;
                 if (scale < 0.1) scale = 0.1;
@@ -676,7 +677,7 @@ void server_tick_view_animations(aurade_server_t *server, double dt) {
                 break;
             }
             case VIEW_ANIM_MINIMIZE: {
-                // p: 0.0 -> 1.0 (macOS Suction / Genie effect towards Dock icon)
+                // p: 0.0 -> 1.0 (fluid Suction / Genie effect towards Dock icon)
                 double p_clamp = p < 0.0 ? 0.0 : (p > 1.0 ? 1.0 : p);
                 double t = p_clamp;
 
@@ -754,7 +755,7 @@ void server_tick_view_animations(aurade_server_t *server, double dt) {
                 break;
             }
             case VIEW_ANIM_RESTORE: {
-                // p: 0.0 -> 1.0 (exact reverse of the macOS suction effect)
+                // p: 0.0 -> 1.0 (exact reverse of the fluid suction effect)
                 double p_clamp = p < 0.0 ? 0.0 : (p > 1.0 ? 1.0 : p);
                 double t = 1.0 - p_clamp; // in reverse!
 
@@ -1492,7 +1493,7 @@ void view_toggle_maximize(aurade_view_t *view) {
         view->maximized = true;
         view->is_tiled = false;
 
-        // macOS windows maximise below the menu bar and above the Dock.
+        // fluid windows maximise below the menu bar and above the Dock.
         target_x = 0;
         target_y = TOPBAR_HEIGHT;
         target_w = screen_w;
@@ -1827,7 +1828,7 @@ void view_spawn_close_animation(aurade_view_t *view) {
     anim->width = (double)w;
     anim->height = (double)h;
     anim->elapsed = 0.0;
-    anim->duration = 0.18; // 180ms smooth macOS close pop & fade
+    anim->duration = 0.18; // 180ms smooth fluid close pop & fade
 
     wl_list_insert(&view->server->close_anims, &anim->link);
     schedule_all_outputs(view->server);

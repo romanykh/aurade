@@ -230,7 +230,7 @@ typedef struct aurade_control_center {
     double row_hover_alpha[24];
 
     // Now Playing (MPRIS through playerctl). The module only appears while a
-    // player is running, mirroring macOS where the media tile is dynamic.
+    // player is running, mirroring fluid where the media tile is dynamic.
     bool np_available;  // playerctl exists on this machine
     bool np_active;     // at least one MPRIS player is running
     bool np_playing;
@@ -249,7 +249,7 @@ typedef struct aurade_control_center {
     // while dragging and applies the final value on release.
     int dragging;
 
-    // Hover / press feedback, so the panel feels alive like macOS.
+    // Hover / press feedback, so the panel feels alive like fluid.
     int hover;    // cc_module_t
     int pressed;  // cc_module_t
 

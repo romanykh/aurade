@@ -84,7 +84,7 @@ static void draw_squircle_base(cairo_t *cr, double cx, double cy, double size,
         cairo_pattern_destroy(pat);
     }
 
-    // Inner rim + top specular highlight, like macOS app icons.
+    // Inner rim + top specular highlight, like fluid app icons.
     cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.26);
     cairo_set_line_width(cr, fmax(1.0, size * 0.018));
     cairo_stroke(cr);
@@ -404,20 +404,15 @@ void dock_apply_slide(aurade_dock_t *dock) {
         int bx = (int)round(dock->pill_x);
         int by = y + (int)round(dock->pill_local_y);
         wlr_scene_node_set_position(&dock->blur_node->node, bx, by);
-        if (dock->server && dock->server->config.liquid_glass) {
-            wlr_scene_blur_set_liquid_glass(dock->blur_node, true);
-        } else {
-            wlr_scene_blur_set_liquid_glass(dock->blur_node, false);
-        }
-        double dock_op = dock->server ? dock->server->config.dock_opacity : 0.85;
-        bool dock_glass = dock->server && (dock->server->config.blur_dock || dock->server->config.liquid_glass);
-        float dock_str = dock->server ? (float)(dock->server->config.blur_strength > 0.05 ? dock->server->config.blur_strength : 1.0) : 1.0f;
-        wlr_scene_blur_set_strength(dock->blur_node, dock_str);
+        glass_element_t gd = dock->server ? dock->server->config.glass_dock : (glass_element_t){ 0.85, 1.0, true };
+        wlr_scene_blur_set_liquid_glass(dock->blur_node, gd.liquid_glass);
+        bool dock_glass = (gd.blur > 0.01 || gd.liquid_glass);
+        wlr_scene_blur_set_strength(dock->blur_node, (float)gd.blur);
         wlr_scene_node_set_enabled(&dock->blur_node->node,
                                    visible &&
                                    dock_uses_pill_blur(dock) &&
                                    dock_glass &&
-                                   (dock_op > 0.05));
+                                   (gd.opacity > 0.05));
     }
 }
 
@@ -1357,7 +1352,7 @@ void dock_render(aurade_dock_t *dock) {
     dock->pill_local_y = pill_local_y;
 
     // Recompute the final icon centres. (Magnification widths intentionally use
-    // the previous frame's centres, exactly like the classic macOS dock hump.)
+    // the previous frame's centres, exactly like the classic fluid dock hump.)
     double cur_x = pill_x + DOCK_PAD;
     double mp_draw_x = -1.0;
     double left_sep_x = -1.0;
@@ -1388,7 +1383,8 @@ void dock_render(aurade_dock_t *dock) {
         mp_draw_x = cur_x;
     }
 
-    double dock_op = dock->server ? dock->server->config.dock_opacity : 0.85;
+    glass_element_t gd = dock->server ? dock->server->config.glass_dock : (glass_element_t){ 0.85, 1.0, true };
+    double dock_op = gd.opacity;
     if (dock_op < 0.0) dock_op = 0.0;
     if (dock_op > 1.0) dock_op = 1.0;
 
@@ -1403,14 +1399,9 @@ void dock_render(aurade_dock_t *dock) {
         wlr_scene_blur_set_size(dock->blur_node, bw, bh);
         wlr_scene_blur_set_corner_radius(dock->blur_node, br);
         wlr_scene_node_set_position(&dock->blur_node->node, bx, by);
-        if (dock->server && dock->server->config.liquid_glass) {
-            wlr_scene_blur_set_liquid_glass(dock->blur_node, true);
-        } else {
-            wlr_scene_blur_set_liquid_glass(dock->blur_node, false);
-        }
-        bool dock_glass = dock->server && (dock->server->config.blur_dock || dock->server->config.liquid_glass);
-        float dock_str = dock->server ? (float)(dock->server->config.blur_strength > 0.05 ? dock->server->config.blur_strength : 1.0) : 1.0f;
-        wlr_scene_blur_set_strength(dock->blur_node, dock_str);
+        wlr_scene_blur_set_liquid_glass(dock->blur_node, gd.liquid_glass);
+        bool dock_glass = (gd.blur > 0.01 || gd.liquid_glass);
+        wlr_scene_blur_set_strength(dock->blur_node, (float)gd.blur);
         wlr_scene_node_set_enabled(&dock->blur_node->node,
                                    dock->enabled && dock->hide_progress < 0.999 &&
                                    dock_uses_pill_blur(dock) &&
@@ -1419,7 +1410,7 @@ void dock_render(aurade_dock_t *dock) {
     }
 
     if (is_3d) {
-        // --- CLASSIC OS X 3D GLASS TABLE / SHELF ---
+        // --- CLASSIC 3D GLASS TABLE / SHELF ---
 
         double r_top = 5.0;
         double r_btm = 3.0;
@@ -1727,7 +1718,7 @@ void dock_render(aurade_dock_t *dock) {
         double scr_x = pill_x;
         double scr_y = (dock->screen_height - dock->buffer_height) + pill_local_y;
 
-        if (dock->server && (dock->server->config.blur_dock || dock->server->config.liquid_glass)) {
+        if (gd.blur > 0.01 || gd.liquid_glass) {
             cairo_save(cr);
 
             // 1. Refractive depth gradient body tint overlay (translucent)
@@ -1754,7 +1745,7 @@ void dock_render(aurade_dock_t *dock) {
             cairo_pattern_destroy(sheen);
             cairo_restore(cr);
 
-            // 3. Apple Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
+            // 3. Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
             draw_refractive_glass_rim(cr, pill_x, pill_local_y, used, pill_h, pill_r, 0.90 * dock_op);
 
             cairo_restore(cr);
@@ -2060,7 +2051,7 @@ void dock_render(aurade_dock_t *dock) {
         }
     }
 
-    // macOS-style app name tooltip above the hovered icon.
+    // Floating app name tooltip above the hovered icon.
     if (!dock->is_dragging && dock->mouse_over_dock && dock->hovered_index >= 0) {
         dock_item_t *hitem = &dock->items[dock->hovered_index];
         char tip[96];

@@ -96,9 +96,9 @@ static cairo_surface_t *search_icon_name(const char *name) {
         snprintf(user_local_icons, sizeof(user_local_icons), "%s/.local/share/icons", home);
     }
 
-    // High-priority icon directories (WhiteSur active macOS theme, Papirus, hicolor, Adwaita, pixmaps)
+    // High-priority icon directories (WhiteSur active fluid theme, Papirus, hicolor, Adwaita, pixmaps)
     const char *search_dirs[] = {
-        // WhiteSur (active macOS theme)
+        // WhiteSur (active fluid theme)
         "/usr/share/icons/WhiteSur-dark/apps/scalable",
         "/usr/share/icons/WhiteSur/apps/scalable",
         "/usr/share/icons/WhiteSur/apps/128x128",

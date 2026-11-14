@@ -76,6 +76,7 @@ GtkWidget *build_page_workspaces(void);
 GtkWidget *build_page_mouse(void);
 GtkWidget *build_page_keyboard(void);
 GtkWidget *build_page_appearance(void);
+GtkWidget *build_page_blur_glass(void);
 GtkWidget *build_page_dock(void);
 GtkWidget *build_page_gestures(void);
 GtkWidget *build_page_default_apps(void);

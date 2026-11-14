@@ -46,7 +46,7 @@ bool spring_simulation_step(spring_simulation_t *sim, double dt) {
     double v = 0.0;
 
     if (zeta < 0.9999) {
-        // Underdamped (subtle macOS bounce)
+        // Underdamped (subtle fluid bounce)
         double omega_d = omega0 * sqrt(1.0 - zeta * zeta);
         double decay = exp(-zeta * omega0 * t);
         double c1 = delta_x0;

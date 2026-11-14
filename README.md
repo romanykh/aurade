@@ -1,4 +1,4 @@
-# AuraDE — Fluid macOS-Logic Wayland Desktop Environment
+# AuraDE — Fluid Glass-Style Wayland Desktop Environment
 
 [![C99](https://img.shields.io/badge/Language-C99-00599C.svg)](https://en.wikipedia.org/wiki/C99)
 [![Wayland](https://img.shields.io/badge/Display%20Server-Wayland-FF7F00.svg)](https://wayland.freedesktop.org/)
@@ -6,7 +6,7 @@
 [![GTK4](https://img.shields.io/badge/GUI-GTK4%20%2B%20Python-4B8BBE.svg)](https://www.gtk.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**AuraDE** is a modern, lightweight, native Wayland desktop environment for Linux. Engineered from the ground up in pure C99 and wlroots, AuraDE combines the direct-manipulation responsiveness, continuous multi-finger trackpad physics, and elegant aesthetic of macOS with the speed and freedom of Linux.
+**AuraDE** is a modern, lightweight, native Wayland desktop environment for Linux. Engineered from the ground up in pure C99 and wlroots, AuraDE combines the direct-manipulation responsiveness, continuous multi-finger trackpad physics, and clean glass aesthetic with the speed and freedom of Linux.
 
 ---
 
@@ -14,16 +14,16 @@
 
 - **1:1 Physics-Driven Gestures**: Continuous scrubbing with zero latency. Move fingers 1 mm and the visual canvas follows in lockstep. Features real velocity-inheriting spring differential equations and non-linear rubber-banding.
 - **Minimalist Sun Menu Bar**: Clean, unified top menu bar with an original minimalist sun system menu, active application title, system clock, and integrated Control Center pill.
-- **macOS-Style Modular Control Center**: Single-click access to Wi-Fi, Bluetooth, volume, display brightness, Night Light, Dark Mode, and media controls.
+- **Modular Glass Control Center**: Single-click access to Wi-Fi, Bluetooth, volume, display brightness, Night Light, Dark Mode, and media controls.
 - **Liquid Dock**: Parabolic icon magnification, intelligent autohide (dodges overlapping windows), running indicator dots, drag-to-reorder pinned applications, and right-click context menu (New Window, Unpin / Keep in Dock, Quit).
 - **Fullscreen Launchpad**: Frosted-glass application launcher with custom folders, drag-and-drop icon reorganization, real-time search, multi-page swipe transitions, and drag-to-pin directly to the dock.
 - **Native GTK4 Settings Center**: Comprehensive control panel covering Wi-Fi, Bluetooth, Audio, Displays, Dynamic Workspaces, Mouse/Touchpad, Keyboard layouts, Appearance, Dock, and Gestures.
 - **Server-Side Cursor Architecture**: Native `wp_cursor_shape_manager_v1` protocol support paired with the custom `Aura-Circle` concentric circular cursor theme across all Wayland and GTK apps.
-- **macOS-Style Notification Banners**: Native `org.freedesktop.Notifications` D-Bus daemon supporting Telegram, browsers, and desktop apps with frosted-glass cards, slide-in animations, app avatar badges, custom Telegram vector icon artwork, audio alerts, and interactive click-to-focus.
+- **Frosted-Glass Notification Banners**: Native `org.freedesktop.Notifications` D-Bus daemon supporting Telegram, browsers, and desktop apps with frosted-glass cards, slide-in animations, app avatar badges, custom Telegram vector icon artwork, audio alerts, and interactive click-to-focus.
 
 ---
 
-## 🖐️ Gesture Mechanics (macOS Standard)
+## 🖐️ Gesture Mechanics
 
 Unlike traditional Linux window managers that treat gestures as binary triggers after a delay, AuraDE tracks touch contacts continuously from hardware `evdev` multi-touch slots.
 
@@ -56,7 +56,7 @@ AuraDE includes a dedicated, responsive GTK4 settings suite (`settings/aurade_se
 | **Sound** | Master output volume slider, mute toggle, audio sink selector, channel sound test (`pw-play`), and microphone input gain controls. |
 | **Displays** | Panel backlighting slider (`brightnessctl`), resolution mode dropdown, Night Light warm-temperature controls, and UI scale presets. |
 | **Workspaces** | Dynamic workspace management (1 to 16 spaces), add or delete spaces, visual desktop overview cards, real-time inotify compositor synchronization, and window auto-reparenting. |
-| **Mouse & Touchpad** | Tap-to-click, tracking speed, natural scrolling (macOS direction), palm rejection (disable-while-typing), and acceleration curves. |
+| **Mouse & Touchpad** | Tap-to-click, tracking speed, natural scrolling (reverse direction), palm rejection (disable-while-typing), and acceleration curves. |
 | **Keyboard** | Multiple XKB layout strings (e.g. `us,ua`), repeat delay/speed sliders, and shortcut reference cheatsheet. |
 | **Appearance** | Dark/Light glass theme switch, custom accent colour picker, cursor theme & size selector, and wallpaper chooser. |
 | **Dock & Gestures** | Dock autohide/intellihide, icon sizing, magnification range, 3/4-finger gesture mappings, and live touchpad telemetry. |
@@ -143,7 +143,7 @@ aurade/
 │   │   ├── launchpad.c         # Fullscreen application launcher with live search
 │   │   ├── control_center.c    # Modular Control Center (Wi-Fi, BT, audio, brightness)
 │   │   ├── screenshot.c        # Interactive region & fullscreen screenshot overlay
-│   │   ├── notifications.c     # macOS-style desktop notifications D-Bus daemon
+│   │   ├── notifications.c     # Desktop notifications D-Bus daemon
 │   │   └── wallpaper.c         # Procedural dynamic gradient desktop background
 │   ├── window/
 │   │   ├── xdg_shell.c         # Window management and XDG surface lifecycle
@@ -172,4 +172,4 @@ aurade/
 
 - **Source Code**: Released under the [MIT License](LICENSE).
 - **Clean-Room Implementation**: AuraDE is an independent, clean-room software project built with standard open-source libraries. Functional desktop interactions, windowing systems, and gesture mechanics are not subject to copyright.
-- **Trademarks**: AuraDE uses its own branding and an original minimalist Sun logo. It does not contain proprietary Apple graphics, trademarks, or copyrighted assets.
+- **Trademarks**: AuraDE uses its own branding and an original minimalist Sun logo. It does not contain third-party proprietary graphics, trademarks, or copyrighted assets.

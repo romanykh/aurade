@@ -421,7 +421,7 @@ static void launchpad_setup_scene(aurade_launchpad_t *lp) {
         wlr_scene_node_set_enabled(&lp->tree->node, false);
     }
 
-    bool use_bg = lp->server && lp->server->config.blur_launchpad && bg_buf != NULL;
+    bool use_bg = lp->server && (lp->server->config.glass_launchpad.blur > 0.01) && bg_buf != NULL;
     if (use_bg) {
         if (!lp->bg_scene_buffer) {
             lp->bg_scene_buffer = wlr_scene_buffer_create(lp->tree, bg_buf);
@@ -589,7 +589,7 @@ void launchpad_begin(aurade_launchpad_t *lp) {
     }
     if (lp->server && lp->server->dock && lp->server->dock->blur_node) {
         bool dock_glass = dock_uses_pill_blur(lp->server->dock) &&
-                          (lp->server->config.blur_dock || lp->server->config.liquid_glass);
+                          (lp->server->config.glass_dock.blur > 0.01 || lp->server->config.glass_dock.liquid_glass);
         wlr_scene_node_set_enabled(&lp->server->dock->blur_node->node, dock_glass);
     }
 
@@ -667,7 +667,7 @@ void launchpad_end(aurade_launchpad_t *lp, bool opened) {
         if (lp->server && lp->server->dock && lp->server->dock->blur_node) {
             wlr_scene_node_set_enabled(&lp->server->dock->blur_node->node,
                                        dock_uses_pill_blur(lp->server->dock) &&
-                                       (lp->server->config.blur_dock || lp->server->config.liquid_glass));
+                                       (lp->server->config.glass_dock.blur > 0.01 || lp->server->config.glass_dock.liquid_glass));
         }
         if (lp->server && lp->server->popup_tree) {
             wlr_scene_node_set_enabled(&lp->server->popup_tree->node, true);
@@ -1865,7 +1865,7 @@ static void draw_squircle_icon(cairo_t *cr, double cx, double cy, double size,
         }
     }
 
-    // Fallback Apple-style gradient squircle
+    // Fallback glass-style gradient squircle
     unsigned hash = 2166136261u;
     for (const char *p = name; *p; p++) {
         hash ^= (unsigned char)*p;
@@ -2028,10 +2028,9 @@ void launchpad_render(aurade_launchpad_t *lp) {
 
     double p = 1.0;
 
-    // If blur is disabled (or no blurred wallpaper), fallback to a dimming scrim.
-    // If blur is enabled, bg_scene_buffer displays the pre-blurred wallpaper on GPU.
-    if (!lp->server || !lp->server->config.blur_launchpad || !lp->server->wallpaper || !lp->server->wallpaper->blurred_buffer) {
-        cairo_set_source_rgba(cr, 0.04, 0.05, 0.09, 0.85);
+    glass_element_t glp = lp->server ? lp->server->config.glass_launchpad : (glass_element_t){ 0.85, 1.0, false };
+    if (!lp->server || glp.blur <= 0.01 || !lp->server->wallpaper || !lp->server->wallpaper->blurred_buffer) {
+        cairo_set_source_rgba(cr, 0.04, 0.05, 0.09, glp.opacity);
         cairo_paint(cr);
     }
 

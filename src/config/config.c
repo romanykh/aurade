@@ -227,6 +227,20 @@ aurade_config_t config_get_defaults(void) {
         .blur_noise = 0.015,
         .liquid_glass = true,
 
+        // Per-element Blur, Liquid Glass & Opacity
+        .glass_windows            = { .opacity = 1.00, .blur = 0.0, .liquid_glass = false },
+        .glass_dock               = { .opacity = 0.85, .blur = 1.0, .liquid_glass = true },
+        .glass_topbar             = { .opacity = 0.72, .blur = 0.0, .liquid_glass = false },
+        .glass_control_center     = { .opacity = 0.85, .blur = 1.0, .liquid_glass = true },
+        .glass_power_menu         = { .opacity = 0.85, .blur = 1.0, .liquid_glass = true },
+        .glass_notifications      = { .opacity = 0.88, .blur = 1.0, .liquid_glass = true },
+        .glass_notification_center= { .opacity = 0.84, .blur = 1.0, .liquid_glass = true },
+        .glass_osd                = { .opacity = 0.85, .blur = 1.0, .liquid_glass = true },
+        .glass_music_pill         = { .opacity = 0.85, .blur = 1.0, .liquid_glass = true },
+        .glass_lockscreen         = { .opacity = 0.85, .blur = 1.0, .liquid_glass = false },
+        .glass_launchpad          = { .opacity = 0.85, .blur = 1.0, .liquid_glass = false },
+        .glass_workspace_overview = { .opacity = 0.85, .blur = 1.0, .liquid_glass = false },
+
         // Topbar
         .topbar_cpu_temp = true,
 
@@ -556,6 +570,53 @@ bool config_load(aurade_config_t *cfg, const char *path) {
             double n = json_object_get_double(v);
             if (n >= 0.0 && n <= 0.2) cfg->blur_noise = n;
         }
+
+        double bs = (cfg->blur_strength > 0.05) ? cfg->blur_strength : 1.0;
+        cfg->glass_windows             = (glass_element_t){ cfg->window_opacity, cfg->blur_windows ? bs : 0.0, cfg->liquid_glass && cfg->blur_windows };
+        cfg->glass_dock                = (glass_element_t){ cfg->dock_opacity, cfg->blur_dock ? bs : 0.0, cfg->liquid_glass };
+        cfg->glass_topbar              = (glass_element_t){ 0.72, cfg->blur_topbar ? bs : 0.0, false };
+        cfg->glass_control_center      = (glass_element_t){ 0.85, cfg->blur_control_center ? bs : 0.0, cfg->liquid_glass };
+        cfg->glass_power_menu          = (glass_element_t){ 0.85, cfg->blur_power_menu ? bs : 0.0, cfg->liquid_glass };
+        cfg->glass_notifications       = (glass_element_t){ 0.88, cfg->blur_notifications ? bs : 0.0, cfg->liquid_glass };
+        cfg->glass_notification_center = (glass_element_t){ 0.84, cfg->blur_notifications ? bs : 0.0, cfg->liquid_glass };
+        cfg->glass_osd                 = (glass_element_t){ 0.85, (cfg->blur_notifications || cfg->blur_dock) ? bs : 0.0, cfg->liquid_glass };
+        cfg->glass_music_pill          = (glass_element_t){ 0.85, cfg->blur_dock ? bs : 0.0, cfg->liquid_glass };
+        cfg->glass_lockscreen          = (glass_element_t){ 0.85, cfg->blur_lockscreen ? bs : 0.0, false };
+        cfg->glass_launchpad           = (glass_element_t){ 0.85, cfg->blur_launchpad ? bs : 0.0, false };
+        cfg->glass_workspace_overview  = (glass_element_t){ 0.85, cfg->blur_workspace_overview ? bs : 0.0, false };
+
+        struct json_object *elems = NULL;
+        if (json_object_object_get_ex(blur, "elements", &elems)) {
+            struct { const char *key; glass_element_t *dst; } map[] = {
+                { "windows",             &cfg->glass_windows },
+                { "dock",                &cfg->glass_dock },
+                { "topbar",              &cfg->glass_topbar },
+                { "control_center",      &cfg->glass_control_center },
+                { "power_menu",          &cfg->glass_power_menu },
+                { "notifications",       &cfg->glass_notifications },
+                { "notification_center", &cfg->glass_notification_center },
+                { "osd",                 &cfg->glass_osd },
+                { "music_pill",          &cfg->glass_music_pill },
+                { "lockscreen",          &cfg->glass_lockscreen },
+                { "launchpad",           &cfg->glass_launchpad },
+                { "workspace_overview",  &cfg->glass_workspace_overview },
+            };
+            for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
+                struct json_object *eo = NULL;
+                if (!json_object_object_get_ex(elems, map[i].key, &eo)) continue;
+                if (json_object_object_get_ex(eo, "opacity", &v)) {
+                    double op = json_object_get_double(v);
+                    if (op >= 0.0 && op <= 1.0) map[i].dst->opacity = op;
+                }
+                if (json_object_object_get_ex(eo, "blur", &v)) {
+                    double b = json_object_get_double(v);
+                    if (b >= 0.0 && b <= 3.0) map[i].dst->blur = b;
+                }
+                if (json_object_object_get_ex(eo, "liquid_glass", &v)) {
+                    map[i].dst->liquid_glass = json_object_get_boolean(v);
+                }
+            }
+        }
     }
 
     struct json_object *tb = NULL;
@@ -658,7 +719,7 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     json_object_object_add(dock, "max_scale", json_object_new_double(cfg->dock_max_scale));
     json_object_object_add(dock, "mag_radius", json_object_new_double(cfg->dock_mag_radius));
     json_object_object_add(dock, "theme", json_object_new_string(cfg->dock_theme));
-    json_object_object_add(dock, "opacity", json_object_new_double(cfg->dock_opacity));
+    json_object_object_add(dock, "opacity", json_object_new_double(cfg->glass_dock.opacity));
     if (cfg->dock_pinned_count > 0) {
         struct json_object *pinned = json_object_new_array();
         for (int i = 0; i < cfg->dock_pinned_count; i++) {
@@ -675,7 +736,7 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     json_object_object_add(appr, "dark_mode", json_object_new_boolean(cfg->dark_mode));
     json_object_object_add(appr, "wallpaper_path", json_object_new_string(cfg->wallpaper_path));
     json_object_object_add(appr, "accent_color", json_object_new_string(cfg->accent_color));
-    json_object_object_add(appr, "window_opacity", json_object_new_double(cfg->window_opacity));
+    json_object_object_add(appr, "window_opacity", json_object_new_double(cfg->glass_windows.opacity));
     if (cfg->window_rules_count > 0) {
         struct json_object *rules_arr = json_object_new_array();
         struct json_object *op_obj = json_object_new_object();
@@ -711,16 +772,16 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     json_object_object_add(root, "music_pill", mp);
 
     struct json_object *blur = json_object_new_object();
-    json_object_object_add(blur, "dock", json_object_new_boolean(cfg->liquid_glass || cfg->blur_dock));
-    json_object_object_add(blur, "control_center", json_object_new_boolean(cfg->blur_control_center));
-    json_object_object_add(blur, "power_menu", json_object_new_boolean(cfg->blur_power_menu));
-    json_object_object_add(blur, "notifications", json_object_new_boolean(cfg->blur_notifications));
-    json_object_object_add(blur, "lockscreen", json_object_new_boolean(cfg->blur_lockscreen));
-    json_object_object_add(blur, "topbar", json_object_new_boolean(cfg->blur_topbar));
-    json_object_object_add(blur, "launchpad", json_object_new_boolean(cfg->blur_launchpad));
-    json_object_object_add(blur, "workspace_overview", json_object_new_boolean(cfg->blur_workspace_overview));
-    json_object_object_add(blur, "windows", json_object_new_boolean(cfg->blur_windows));
-    json_object_object_add(blur, "liquid_glass", json_object_new_boolean(cfg->liquid_glass));
+    json_object_object_add(blur, "dock", json_object_new_boolean(cfg->glass_dock.blur > 0.01 || cfg->glass_dock.liquid_glass));
+    json_object_object_add(blur, "control_center", json_object_new_boolean(cfg->glass_control_center.blur > 0.01));
+    json_object_object_add(blur, "power_menu", json_object_new_boolean(cfg->glass_power_menu.blur > 0.01));
+    json_object_object_add(blur, "notifications", json_object_new_boolean(cfg->glass_notifications.blur > 0.01));
+    json_object_object_add(blur, "lockscreen", json_object_new_boolean(cfg->glass_lockscreen.blur > 0.01));
+    json_object_object_add(blur, "topbar", json_object_new_boolean(cfg->glass_topbar.blur > 0.01));
+    json_object_object_add(blur, "launchpad", json_object_new_boolean(cfg->glass_launchpad.blur > 0.01));
+    json_object_object_add(blur, "workspace_overview", json_object_new_boolean(cfg->glass_workspace_overview.blur > 0.01));
+    json_object_object_add(blur, "windows", json_object_new_boolean(cfg->glass_windows.blur > 0.01));
+    json_object_object_add(blur, "liquid_glass", json_object_new_boolean(cfg->glass_dock.liquid_glass || cfg->liquid_glass));
     json_object_object_add(blur, "strength", json_object_new_double(cfg->blur_strength > 0.05 ? cfg->blur_strength : 1.0));
     json_object_object_add(blur, "radius", json_object_new_int(cfg->blur_radius > 0 ? cfg->blur_radius : 3));
     json_object_object_add(blur, "passes", json_object_new_int(cfg->blur_passes > 0 ? cfg->blur_passes : 2));
@@ -728,6 +789,30 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     json_object_object_add(blur, "brightness", json_object_new_double(cfg->blur_brightness > 0.1 ? cfg->blur_brightness : 1.02));
     json_object_object_add(blur, "contrast", json_object_new_double(cfg->blur_contrast > 0.1 ? cfg->blur_contrast : 1.04));
     json_object_object_add(blur, "noise", json_object_new_double(cfg->blur_noise >= 0.0 ? cfg->blur_noise : 0.015));
+
+    struct json_object *elems = json_object_new_object();
+    struct { const char *key; const glass_element_t *src; } map[] = {
+        { "windows",             &cfg->glass_windows },
+        { "dock",                &cfg->glass_dock },
+        { "topbar",              &cfg->glass_topbar },
+        { "control_center",      &cfg->glass_control_center },
+        { "power_menu",          &cfg->glass_power_menu },
+        { "notifications",       &cfg->glass_notifications },
+        { "notification_center", &cfg->glass_notification_center },
+        { "osd",                 &cfg->glass_osd },
+        { "music_pill",          &cfg->glass_music_pill },
+        { "lockscreen",          &cfg->glass_lockscreen },
+        { "launchpad",           &cfg->glass_launchpad },
+        { "workspace_overview",  &cfg->glass_workspace_overview },
+    };
+    for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
+        struct json_object *eo = json_object_new_object();
+        json_object_object_add(eo, "opacity", json_object_new_double(map[i].src->opacity));
+        json_object_object_add(eo, "blur", json_object_new_double(map[i].src->blur));
+        json_object_object_add(eo, "liquid_glass", json_object_new_boolean(map[i].src->liquid_glass));
+        json_object_object_add(elems, map[i].key, eo);
+    }
+    json_object_object_add(blur, "elements", elems);
     json_object_object_add(root, "blur", blur);
 
     struct json_object *tb = json_object_new_object();

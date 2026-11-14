@@ -446,17 +446,15 @@ static void nc_update_scene_nodes(aurade_notifications_t *notif) {
     wlr_scene_node_raise_to_top(&notif->nc_scene_buffer->node);
 
     if (notif->nc_blur_node) {
-        bool liquid = notif->server && notif->server->config.liquid_glass;
-        bool blur_enabled = notif->server ? (liquid || notif->server->config.blur_notifications || notif->server->config.blur_dock) : true;
+        glass_element_t gnc = notif->server ? notif->server->config.glass_notification_center : (glass_element_t){ 0.84, 1.0, true };
+        bool liquid = gnc.liquid_glass;
+        bool blur_enabled = (gnc.blur > 0.01 || liquid);
         if (blur_enabled && notif->nc_progress > 0.05) {
             wlr_scene_blur_set_size(notif->nc_blur_node, (int)pw, (int)ph);
             wlr_scene_blur_set_corner_radius(notif->nc_blur_node, 20);
             wlr_scene_node_set_position(&notif->nc_blur_node->node, ix, iy);
             wlr_scene_blur_set_liquid_glass(notif->nc_blur_node, liquid);
-            float str = (notif->server && notif->server->config.blur_strength > 0.01)
-                            ? (float)notif->server->config.blur_strength
-                            : 0.7f;
-            wlr_scene_blur_set_strength(notif->nc_blur_node, str);
+            wlr_scene_blur_set_strength(notif->nc_blur_node, (float)gnc.blur);
             wlr_scene_blur_set_alpha(notif->nc_blur_node, (float)notif->nc_progress);
             wlr_scene_node_set_enabled(&notif->nc_blur_node->node, true);
             wlr_scene_node_place_below(&notif->nc_blur_node->node, &notif->nc_scene_buffer->node);
@@ -481,13 +479,14 @@ static void notifications_nc_render(aurade_notifications_t *notif) {
     double a = notif->nc_progress;
     if (a > 1.0) a = 1.0;
 
-    bool liquid = notif->server && notif->server->config.liquid_glass;
-    bool blur_enabled = notif->server ? (liquid || notif->server->config.blur_notifications || notif->server->config.blur_dock) : true;
+    glass_element_t gnc = notif->server ? notif->server->config.glass_notification_center : (glass_element_t){ 0.84, 1.0, true };
+    bool liquid = gnc.liquid_glass;
+    double op_scale = gnc.opacity / 0.84;
 
     if (liquid) {
-        nc_draw_liquid_glass_panel(cr, 0.0, 0.0, w, h, 20.0, a);
+        nc_draw_liquid_glass_panel(cr, 0.0, 0.0, w, h, 20.0, a * op_scale);
     } else {
-        draw_glass_panel(cr, 0.0, 0.0, w, h, 20.0, 0.12, 0.13, 0.17, (blur_enabled ? 0.88 : 0.92) * a);
+        draw_glass_panel(cr, 0.0, 0.0, w, h, 20.0, 0.12, 0.13, 0.17, gnc.opacity * a);
     }
 
     // Header
@@ -725,7 +724,7 @@ static void notifications_add(aurade_notifications_t *notif, const notif_cmd_t *
 
     nc_history_push(notif, item);
 
-    // Play subtle audio alert ping like macOS
+    // Play subtle audio alert ping like fluid
     app_launch_command("pw-play /usr/share/sounds/freedesktop/stereo/message.oga >/dev/null 2>&1 &");
 
     printf("[AuraDE Notifications] Displaying popup notification id=%u app='%s' summary='%s' (timeout=%.1fs)\n",
@@ -1067,7 +1066,8 @@ void notifications_render(aurade_notifications_t *notif) {
 
     int pos_x = notif->screen_width - NOTIF_BUFFER_W - 8;
     int pos_y = 36;
-    bool blur_enabled = notif->server ? (notif->server->config.blur_notifications || notif->server->config.liquid_glass) : true;
+    glass_element_t gn = notif->server ? notif->server->config.glass_notifications : (glass_element_t){ 0.88, 1.0, true };
+    bool blur_enabled = (gn.blur > 0.01 || gn.liquid_glass);
 
     double cur_y = 10.0;
     for (int i = 0; i < notif->count; i++) {
@@ -1100,13 +1100,8 @@ void notifications_render(aurade_notifications_t *notif) {
                 wlr_scene_blur_set_corner_radius(notif->blur_nodes[i], 16);
                 wlr_scene_node_set_position(&notif->blur_nodes[i]->node, bx, by);
                 wlr_scene_blur_set_alpha(notif->blur_nodes[i], (float)a);
-                if (notif->server && notif->server->config.liquid_glass) {
-                    wlr_scene_blur_set_liquid_glass(notif->blur_nodes[i], true);
-                } else {
-                    wlr_scene_blur_set_liquid_glass(notif->blur_nodes[i], false);
-                }
-                float notif_str = (notif->server && notif->server->config.blur_notifications) ? (float)notif->server->config.blur_strength : 0.0f;
-                wlr_scene_blur_set_strength(notif->blur_nodes[i], notif_str);
+                wlr_scene_blur_set_liquid_glass(notif->blur_nodes[i], gn.liquid_glass);
+                wlr_scene_blur_set_strength(notif->blur_nodes[i], (float)gn.blur);
                 wlr_scene_node_set_enabled(&notif->blur_nodes[i]->node, true);
                 wlr_scene_node_place_below(&notif->blur_nodes[i]->node, &notif->scene_buffer->node);
             } else {
@@ -1119,8 +1114,8 @@ void notifications_render(aurade_notifications_t *notif) {
         // Multi-layered soft drop shadow
         draw_drop_shadow(cr, cx, cy, cw, ch, 16.0, 14.0, 0.45 * a);
 
-        // macOS Monterey / Sonoma frosted glass panel with specular top rim
-        draw_glass_panel(cr, cx, cy, cw, ch, 16.0, 0.12, 0.13, 0.17, 0.88 * a);
+        // Frosted glass panel with specular top rim
+        draw_glass_panel(cr, cx, cy, cw, ch, 16.0, 0.12, 0.13, 0.17, gn.opacity * a);
 
         // --- Header row: Small App Icon + App Name + Timestamp + Close button ---
         double header_icon_cx = cx + 22.0;

@@ -656,7 +656,7 @@ void mission_control_begin(aurade_mission_control_t *mc) {
     }
     if (mc->server->dock && mc->server->dock->blur_node) {
         bool dock_glass = dock_uses_pill_blur(mc->server->dock) &&
-                          (mc->server->config.blur_dock || mc->server->config.liquid_glass);
+                          (mc->server->config.glass_dock.blur > 0.01 || mc->server->config.glass_dock.liquid_glass);
         wlr_scene_node_set_enabled(&mc->server->dock->blur_node->node, dock_glass);
     }
 
@@ -734,7 +734,7 @@ void mission_control_update_progress(aurade_mission_control_t *mc, double progre
     }
 
     wlr_scene_node_set_enabled(&mc->scene_buffer->node, true);
-    if (mc->server && mc->server->wallpaper && mc->server->config.blur_workspace_overview) {
+    if (mc->server && mc->server->wallpaper && (mc->server->config.glass_workspace_overview.blur > 0.01)) {
         wallpaper_set_overview_blur(mc->server->wallpaper, progress);
     }
 
@@ -802,7 +802,7 @@ void mission_control_end(aurade_mission_control_t *mc, bool opened) {
         if (mc->server && mc->server->dock && mc->server->dock->blur_node) {
             wlr_scene_node_set_enabled(&mc->server->dock->blur_node->node,
                                        dock_uses_pill_blur(mc->server->dock) &&
-                                       (mc->server->config.blur_dock || mc->server->config.liquid_glass));
+                                       (mc->server->config.glass_dock.blur > 0.01 || mc->server->config.glass_dock.liquid_glass));
         }
         if (mc->server && mc->server->popup_tree) {
             wlr_scene_node_set_enabled(&mc->server->popup_tree->node, true);
@@ -2052,8 +2052,9 @@ void mission_control_render(aurade_mission_control_t *mc) {
 
     mc_theme_t theme = mc_get_theme(mc);
 
-    if (!mc->server->config.blur_workspace_overview) {
-        cairo_set_source_rgba(cr, 0.03, 0.04, 0.07, 0.70 * p);
+    glass_element_t gwo = mc->server ? mc->server->config.glass_workspace_overview : (glass_element_t){ 0.85, 1.0, false };
+    if (gwo.blur <= 0.01) {
+        cairo_set_source_rgba(cr, 0.03, 0.04, 0.07, gwo.opacity * p);
         cairo_paint(cr);
     }
 

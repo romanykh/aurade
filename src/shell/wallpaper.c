@@ -89,7 +89,7 @@ static bool load_custom_wallpaper(aurade_wallpaper_t *wp) {
     int h = wp->height;
 
     // Fill with a dark base so letterboxing is never visible, then cover-scale
-    // (preserve aspect ratio, centre-crop) like macOS does.
+    // (preserve aspect ratio, centre-crop) like fluid does.
     cairo_set_source_rgb(cr, 0.02, 0.02, 0.03);
     cairo_paint(cr);
 
@@ -122,7 +122,7 @@ static void render_default_wallpaper(aurade_wallpaper_t *wp) {
     int w = wp->width;
     int h = wp->height;
 
-    // macOS Sequoia-inspired dusk gradient.
+    // fluid dusk-inspired dusk gradient.
     cairo_pattern_t *pat = cairo_pattern_create_linear(0, 0, w * 0.9, h);
     cairo_pattern_add_color_stop_rgb(pat, 0.00, 0.035, 0.055, 0.125);
     cairo_pattern_add_color_stop_rgb(pat, 0.30, 0.105, 0.130, 0.290);
@@ -139,7 +139,7 @@ static void render_default_wallpaper(aurade_wallpaper_t *wp) {
     draw_orb(cr, w * 0.48, h * 0.52, w * 0.62, 0.42, 0.18, 0.72, 0.18);
     draw_orb(cr, w * 0.92, h * 0.88, w * 0.34, 0.10, 0.85, 0.72, 0.14);
 
-    // Fine diagonal sheen, a subtle nod to Apple's abstract wallpapers.
+    // Fine diagonal sheen, a subtle nod to abstract wallpapers.
     cairo_save(cr);
     cairo_pattern_t *sheen = cairo_pattern_create_linear(0, 0, w, h);
     cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.0);

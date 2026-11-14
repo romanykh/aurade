@@ -33,6 +33,12 @@ typedef struct {
 } gesture_action_t;
 
 typedef struct {
+    double opacity;
+    double blur;
+    bool liquid_glass;
+} glass_element_t;
+
+typedef struct {
     // 3-finger gestures
     gesture_action_t swipe_up_3;
     gesture_action_t swipe_down_3;
@@ -60,8 +66,8 @@ typedef struct {
     double flick_velocity_threshold;// e.g. 350.0 px/sec
     double rubber_band_limit;       // e.g. 180.0 px
     double deadzone_px;             // e.g. 8.0 px
-    bool natural_scroll;            // true for macOS direction (touchpad)
-    bool mouse_natural_scroll;      // true for macOS direction (physical mouse)
+    bool natural_scroll;            // true for fluid direction (touchpad)
+    bool mouse_natural_scroll;      // true for fluid direction (physical mouse)
     bool disable_while_typing;      // true to lock touchpad while typing; false for gaming
     bool smooth_wheel_scroll;       // true for kinetic mouse wheel scrolling
 
@@ -114,7 +120,7 @@ typedef struct {
     bool tiling_enabled;            // Hyprland-style dynamic dwindle tiling (off by default)
     int tiling_gap;                 // Inner/outer gap in pixels for tiled windows (default 10)
 
-    // Blur effects
+    // Blur effects (legacy/global)
     bool blur_dock;
     bool blur_control_center;
     bool blur_power_menu;
@@ -133,6 +139,20 @@ typedef struct {
     double blur_noise;
     bool liquid_glass;
 
+    // Per-element Blur, Liquid Glass & Opacity
+    glass_element_t glass_windows;
+    glass_element_t glass_dock;
+    glass_element_t glass_topbar;
+    glass_element_t glass_control_center;
+    glass_element_t glass_power_menu;
+    glass_element_t glass_notifications;
+    glass_element_t glass_notification_center;
+    glass_element_t glass_osd;
+    glass_element_t glass_music_pill;
+    glass_element_t glass_lockscreen;
+    glass_element_t glass_launchpad;
+    glass_element_t glass_workspace_overview;
+
     // Topbar Widgets
     bool topbar_cpu_temp;
 
@@ -149,7 +169,7 @@ bool shortcut_matches_event(const char *combo,
                             xkb_keysym_t sym, xkb_keysym_t latin_sym);
 
 /**
- * Get default macOS-matched configuration.
+ * Get default fluid gesture configuration.
  */
 aurade_config_t config_get_defaults(void);
 

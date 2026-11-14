@@ -1,7 +1,7 @@
 /*
- * AuraDE Control Center — a macOS-style modular drawer.
+ * AuraDE Control Center — a modular glass drawer.
  *
- * Layout follows the modular grid Apple introduced with Big Sur: a 2×2
+ * Layout follows the modular grid a modular grid: a 2×2
  * connectivity group and a Focus tile on the first row, full-width Display and
  * Sound sliders, a dynamic Now Playing tile, and three quiet shortcuts at the
  * bottom. The material adapts to the system appearance (light / dark glass),
@@ -444,7 +444,7 @@ static void cc_card(cairo_t *cr, cc_rect_t r, cc_color_t fill, cc_color_t border
         cairo_restore(cr);
     }
 
-    // 3. Apple Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
+    // 3. Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
     double edge_a = border.a * 2.2;
     if (edge_a > 1.0) edge_a = 1.0;
     if (edge_a < 0.28) edge_a = 0.28;
@@ -566,7 +566,7 @@ static void cc_draw_panel(cairo_t *cr, double w, double h, const cc_theme_t *t,
     cairo_pattern_destroy(sheen);
     cairo_restore(cr);
 
-    // 3. Apple Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
+    // 3. Liquid Glass Refractive Edge Cushion ("заломлення світла по сторонах")
     draw_refractive_glass_rim(cr, 0.0, 0.0, w, h, CC_RADIUS, t->dark ? 0.55 : 0.85);
 
     cairo_restore(cr);
@@ -885,7 +885,7 @@ static void cc_draw_slider_card(cairo_t *cr, cc_rect_t r, cc_rect_t tr, cc_rect_
         cairo_restore(cr);
     }
 
-    // Apple Liquid Glass Refractive Edge Cushion on the track capsule
+    // Liquid Glass Refractive Edge Cushion on the track capsule
     draw_refractive_glass_rim(cr, tr.x, tr.y, tr.w, tr.h, cap_r, t->dark ? 0.38 : 0.50);
 
     // Draggable thumb knob with soft drop shadow
@@ -2591,9 +2591,7 @@ aurade_control_center_t *control_center_create(aurade_server_t *server) {
         wlr_scene_node_place_below(&cc->blur_node->node, &cc->scene_buffer->node);
         wlr_scene_node_set_enabled(&cc->blur_node->node, false);
         wlr_scene_blur_set_corner_radius(cc->blur_node, CC_RADIUS);
-        if (server->config.liquid_glass) {
-            wlr_scene_blur_set_liquid_glass(cc->blur_node, true);
-        }
+        wlr_scene_blur_set_liquid_glass(cc->blur_node, server->config.glass_control_center.liquid_glass);
     }
 
     control_center_render(cc);
@@ -2629,7 +2627,7 @@ void control_center_begin(aurade_control_center_t *cc) {
     cc_schedule_np(cc, 120);
 }
 
-/* Scale / fade / anchor the panel for a gesture progress in [0, 1]. macOS drops
+/* Scale / fade / anchor the panel for a gesture progress in [0, 1]. the shell drops
  * the drawer in: a slight scale-up anchored at the top-right corner combined
  * with a fade. Both are linear in the finger position, so direct manipulation
  * still feels 1:1. */
@@ -2645,7 +2643,10 @@ static void cc_apply_transform(aurade_control_center_t *cc, double p) {
     int bh = (int)lround(CC_MAX_PANEL_H + 2.0 * CC_SHADOW_PAD);
     wlr_scene_buffer_set_dest_size(cc->scene_buffer, (int)lround(bw * scale),
                                    (int)lround(bh * scale));
-    wlr_scene_buffer_set_opacity(cc->scene_buffer, (float)opacity);
+    glass_element_t gcc = cc->server ? cc->server->config.glass_control_center : (glass_element_t){ 0.85, 1.0, true };
+    double base_op = gcc.opacity;
+    if (base_op < 0.05) base_op = 0.05;
+    wlr_scene_buffer_set_opacity(cc->scene_buffer, (float)(opacity * base_op / 0.85 > 1.0 ? 1.0 : opacity * (base_op / 0.85)));
 
     double node_x = (cc->screen_width - CC_MARGIN_RIGHT) - scale * (CC_SHADOW_PAD + CC_WIDTH);
     double node_y = (TOPBAR_HEIGHT + CC_MARGIN_TOP) - scale * CC_SHADOW_PAD;
@@ -2661,14 +2662,9 @@ static void cc_apply_transform(aurade_control_center_t *cc, double p) {
         wlr_scene_blur_set_corner_radius(cc->blur_node, (int)lround(CC_RADIUS * scale));
         wlr_scene_node_set_position(&cc->blur_node->node, px, py);
         wlr_scene_blur_set_alpha(cc->blur_node, (float)opacity);
-        if (cc->server && cc->server->config.liquid_glass) {
-            wlr_scene_blur_set_liquid_glass(cc->blur_node, true);
-        } else {
-            wlr_scene_blur_set_liquid_glass(cc->blur_node, false);
-        }
-        bool cc_glass = cc->server && (cc->server->config.blur_control_center || cc->server->config.liquid_glass);
-        float cc_str = (cc->server && cc->server->config.blur_control_center) ? (float)cc->server->config.blur_strength : 0.0f;
-        wlr_scene_blur_set_strength(cc->blur_node, cc_str);
+        wlr_scene_blur_set_liquid_glass(cc->blur_node, gcc.liquid_glass);
+        bool cc_glass = (gcc.blur > 0.01 || gcc.liquid_glass);
+        wlr_scene_blur_set_strength(cc->blur_node, (float)gcc.blur);
         wlr_scene_node_set_enabled(&cc->blur_node->node, cc->active && (opacity > 0.05) && cc_glass);
     }
 }
@@ -2970,7 +2966,7 @@ static void cc_draw_wifi_page(cairo_t *cr, const cc_layout_t *L, const cc_theme_
             cairo_fill(cr);
         }
 
-        // Circular icon badge (macOS Control Center style)
+        // Circular icon badge (Control Center style)
         double bcx = CC_PAD + 18.0;
         double bcy = cur_y + rh / 2.0;
         draw_circle(cr, bcx, bcy, 12.5);

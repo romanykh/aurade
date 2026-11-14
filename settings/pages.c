@@ -815,11 +815,6 @@ static void on_autofocus_toggled(bool active, gpointer user_data) {
     g_config.workspace_auto_focus = active;
 }
 
-static void on_ws_overview_blur_toggled(bool active, gpointer user_data) {
-    (void)user_data;
-    g_config.blur_workspace_overview = active;
-}
-
 static void on_tiling_toggled(bool active, gpointer user_data) {
     (void)user_data;
     g_config.tiling_enabled = active;
@@ -871,15 +866,11 @@ GtkWidget *build_page_workspaces(void) {
     ui_add_row(c_tile, "Tiling Window Gaps", "Spacing in pixels between tiled windows and screen edges (0–32 px)",
                sc_gap, "preferences-system-windows-symbolic", "badge-appearance");
 
-    // Focus & Blur Card
-    GtkWidget *c_focus = ui_card(page, "WINDOW FOCUS & BLUR");
+    // Focus Card
+    GtkWidget *c_focus = ui_card(page, "WINDOW FOCUS");
     GtkWidget *sw_af = ui_switch(g_config.workspace_auto_focus, on_autofocus_toggled, NULL);
     ui_add_row(c_focus, "Auto-Focus on Space Switch", "Automatically focus the frontmost window when switching between workspaces",
                sw_af, "preferences-system-windows-symbolic", "badge-workspaces");
-
-    GtkWidget *sw_blur = ui_switch(g_config.blur_workspace_overview, on_ws_overview_blur_toggled, NULL);
-    ui_add_row(c_focus, "Overview Background Blur", "Enable frosted wallpaper blur in Mission Control",
-               sw_blur, "preferences-desktop-wallpaper-symbolic", "badge-appearance");
 
     // Navigation Guide Card
     GtkWidget *c_nav = ui_card(page, "GESTURES & NAVIGATION");
@@ -955,7 +946,7 @@ GtkWidget *build_page_mouse(void) {
     ui_add_row(c_tp, "Tap to Click", "Tap with one finger to click, two fingers to right-click", sw_tap, "input-mouse-symbolic", "badge-mouse");
 
     GtkWidget *sw_nat = ui_switch(g_config.natural_scroll, on_natural_scroll_toggled, NULL);
-    ui_add_row(c_tp, "Natural Scrolling (Touchpad)", "Content tracks finger movement directly (macOS direction)", sw_nat, "input-mouse-symbolic", "badge-mouse");
+    ui_add_row(c_tp, "Natural Scrolling (Touchpad)", "Content tracks finger movement directly (reverse direction)", sw_nat, "input-mouse-symbolic", "badge-mouse");
 
     double tp_speed = gsettings_get_double("org.gnome.desktop.peripherals.touchpad", "speed", 0.0);
     GtkWidget *sc_tp_speed = ui_scale(tp_speed, -1.0, 1.0, 0.05, 2, on_touchpad_speed_changed, NULL);
@@ -1330,20 +1321,6 @@ static void on_music_pill_pos_changed(int idx, gpointer user_data) {
     }
 }
 
-static void on_blur_windows_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_windows = active; }
-static void on_blur_control_center_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_control_center = active; }
-static void on_blur_power_menu_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_power_menu = active; }
-static void on_blur_notifications_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_notifications = active; }
-static void on_blur_lockscreen_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_lockscreen = active; }
-static void on_blur_topbar_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_topbar = active; }
-static void on_blur_launchpad_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_launchpad = active; }
-static void on_blur_overview_toggled(bool active, gpointer user_data) { (void)user_data; g_config.blur_workspace_overview = active; }
-static void on_liquid_glass_toggled(bool active, gpointer user_data) {
-    (void)user_data;
-    g_config.liquid_glass = active;
-    g_config.blur_dock = active;
-}
-static void on_blur_strength_changed(double val, gpointer user_data) { (void)user_data; g_config.blur_strength = val; }
 static void on_blur_radius_changed(double val, gpointer user_data) { (void)user_data; g_config.blur_radius = (int)lround(val); }
 static void on_blur_passes_changed(double val, gpointer user_data) { (void)user_data; g_config.blur_passes = (int)lround(val); }
 static void on_blur_saturation_changed(double val, gpointer user_data) { (void)user_data; g_config.blur_saturation = val; }
@@ -1601,7 +1578,7 @@ GtkWidget *build_page_appearance(void) {
     g_signal_connect(btn_clear, "clicked", G_CALLBACK(on_clear_wallpaper_clicked), NULL);
     gtk_box_append(GTK_BOX(wp_buttons), btn_clear);
 
-    ui_add_row(c_wp, "Current Image", "Custom image or macOS dynamic wallpaper", g_wallpaper_label, "preferences-desktop-wallpaper-symbolic", "badge-appearance");
+    ui_add_row(c_wp, "Current Image", "Custom image or dynamic wallpaper", g_wallpaper_label, "preferences-desktop-wallpaper-symbolic", "badge-appearance");
     ui_add_row(c_wp, "Wallpaper Source", "Select custom wallpaper file or reset to default", wp_buttons, "folder-pictures-symbolic", "badge-appearance");
 
     // Music Pill Card
@@ -1616,43 +1593,33 @@ GtkWidget *build_page_appearance(void) {
     GtkWidget *dd_mp = ui_dropdown(PILL_POSITIONS, 4, pill_idx, on_music_pill_pos_changed, NULL);
     ui_add_row(c_pill, "Pill Placement", "Choose where the Dynamic Island appears (Top Bar Center, Dock Left or Right)", dd_mp, "preferences-system-symbolic", "badge-appearance");
 
-    // Frosted Glass Blur Card
-    GtkWidget *c_blur = ui_card(page, "FROSTED GLASS & BLUR ELEMENTS");
-    GtkWidget *sw_win_b = ui_switch(g_config.blur_windows, on_blur_windows_toggled, NULL);
-    ui_add_row(c_blur, "Window Blur", "Frosted glass backdrop effect under client windows", sw_win_b, "preferences-system-windows-symbolic", "badge-appearance");
+    return page;
+}
 
-    GtkWidget *sw_dock_b = ui_switch(g_config.liquid_glass || g_config.blur_dock, on_liquid_glass_toggled, NULL);
-    ui_add_row(c_blur, "Dock Glass & Blur", "Liquid glass and frosted backdrop blur under the dock", sw_dock_b, "view-paged-symbolic", "badge-dock");
+// -------------------------------------------------------------
+// PAGE: BLUR & GLASS
+// -------------------------------------------------------------
 
-    GtkWidget *sw_cc_b = ui_switch(g_config.blur_control_center, on_blur_control_center_toggled, NULL);
-    ui_add_row(c_blur, "Control Center Blur", "Frosted glass blur under the macOS Control Center panel", sw_cc_b, "preferences-system-symbolic", "badge-appearance");
+static void on_elem_opacity_changed(double val, gpointer user_data) {
+    glass_element_t *el = (glass_element_t *)user_data;
+    if (el) el->opacity = val;
+}
 
-    GtkWidget *sw_pm_b = ui_switch(g_config.blur_power_menu, on_blur_power_menu_toggled, NULL);
-    ui_add_row(c_blur, "Power Menu Blur", "Frosted glass blur under the Apple menu session panel", sw_pm_b, "system-shutdown-symbolic", "badge-appearance");
+static void on_elem_blur_changed(double val, gpointer user_data) {
+    glass_element_t *el = (glass_element_t *)user_data;
+    if (el) el->blur = val;
+}
 
-    GtkWidget *sw_notif_b = ui_switch(g_config.blur_notifications, on_blur_notifications_toggled, NULL);
-    ui_add_row(c_blur, "Notifications Blur", "Frosted glass blur under banner popup cards", sw_notif_b, "preferences-system-notifications-symbolic", "badge-appearance");
+static void on_elem_liquid_glass_toggled(bool active, gpointer user_data) {
+    glass_element_t *el = (glass_element_t *)user_data;
+    if (el) el->liquid_glass = active;
+}
 
-    GtkWidget *sw_lock_b = ui_switch(g_config.blur_lockscreen, on_blur_lockscreen_toggled, NULL);
-    ui_add_row(c_blur, "Lock Screen Blur", "Frosted wallpaper backdrop blur on the lock screen", sw_lock_b, "system-lock-screen-symbolic", "badge-appearance");
-
-    GtkWidget *sw_top_b = ui_switch(g_config.blur_topbar, on_blur_topbar_toggled, NULL);
-    ui_add_row(c_blur, "Top Bar Blur", "Frosted glass blur under the menu bar", sw_top_b, "preferences-desktop-wallpaper-symbolic", "badge-appearance");
-
-    GtkWidget *sw_lp_b = ui_switch(g_config.blur_launchpad, on_blur_launchpad_toggled, NULL);
-    ui_add_row(c_blur, "Launchpad Blur", "Full-screen frosted blur behind Launchpad app grid", sw_lp_b, "view-grid-symbolic", "badge-workspaces");
-
-    GtkWidget *sw_ws_b = ui_switch(g_config.blur_workspace_overview, on_blur_overview_toggled, NULL);
-    ui_add_row(c_blur, "Workspace Overview Blur", "Frosted wallpaper blur in Mission Control", sw_ws_b, "preferences-desktop-display-symbolic", "badge-appearance");
+GtkWidget *build_page_blur_glass(void) {
+    GtkWidget *page = ui_page_container("Blur & Glass", "Per-element opacity, frosted blur, Liquid Glass refraction, and optical tuning.");
 
     // Optical Blur Tuning Card
-    GtkWidget *c_opt = ui_card(page, "OPTICAL BLUR & LIQUID GLASS TUNING");
-    GtkWidget *sw_lg = ui_switch(g_config.liquid_glass, on_liquid_glass_toggled, NULL);
-    ui_add_row(c_opt, "Liquid Glass (Apple Vibrancy)", "Hardware vibrancy saturation boost, optical caustics, and Snell refraction sheen", sw_lg, "applications-graphics-symbolic", "badge-appearance");
-
-    GtkWidget *sc_bst = ui_scale(g_config.blur_strength > 0.0 ? g_config.blur_strength : 1.0, 0.20, 2.50, 0.05, 2, on_blur_strength_changed, NULL);
-    ui_add_row(c_opt, "Blur Strength", "Overall intensity scaling factor for frosted glass blur", sc_bst, "preferences-desktop-theme-symbolic", "badge-appearance");
-
+    GtkWidget *c_opt = ui_card(page, "OPTICAL BLUR TUNING");
     GtkWidget *sc_rad = ui_scale(g_config.blur_radius > 0 ? g_config.blur_radius : 3, 1, 8, 1, 0, on_blur_radius_changed, NULL);
     ui_add_row(c_opt, "Diffusion Radius", "Base optical diffusion radius in pixels (1 = crisp, 8 = heavy diffusion)", sc_rad, "preferences-desktop-display-symbolic", "badge-appearance");
 
@@ -1661,6 +1628,44 @@ GtkWidget *build_page_appearance(void) {
 
     GtkWidget *sc_sat = ui_scale(g_config.blur_saturation > 0.1 ? g_config.blur_saturation : 1.25, 0.50, 2.00, 0.05, 2, on_blur_saturation_changed, NULL);
     ui_add_row(c_opt, "Vibrancy Saturation", "Color vibrance and saturation enhancement for backdrop lighting", sc_sat, "color-management-symbolic", "badge-appearance");
+
+    // Per-element Opacity, Blur & Liquid Glass Cards
+    struct {
+        const char *header;
+        const char *icon;
+        const char *badge;
+        glass_element_t *cfg;
+        bool has_liquid_glass;
+    } elements[] = {
+        { "WINDOWS",               "preferences-system-windows-symbolic",      "badge-appearance", &g_config.glass_windows,            true },
+        { "DOCK",                  "view-paged-symbolic",                      "badge-dock",       &g_config.glass_dock,               true },
+        { "TOP BAR",               "preferences-desktop-wallpaper-symbolic",   "badge-appearance", &g_config.glass_topbar,             true },
+        { "CONTROL CENTER",        "preferences-system-symbolic",              "badge-appearance", &g_config.glass_control_center,     true },
+        { "POWER MENU",            "system-shutdown-symbolic",                 "badge-appearance", &g_config.glass_power_menu,         true },
+        { "NOTIFICATIONS",         "preferences-system-notifications-symbolic","badge-appearance", &g_config.glass_notifications,      true },
+        { "NOTIFICATION CENTER",   "notifications-symbolic",                   "badge-appearance", &g_config.glass_notification_center,true },
+        { "VOLUME & BRIGHTNESS OSD","audio-volume-high-symbolic",              "badge-sound",      &g_config.glass_osd,                true },
+        { "MUSIC PILL",            "audio-x-generic-symbolic",                 "badge-appearance", &g_config.glass_music_pill,         true },
+        { "LOCK SCREEN",           "system-lock-screen-symbolic",              "badge-appearance", &g_config.glass_lockscreen,         false },
+        { "LAUNCHPAD",             "view-grid-symbolic",                       "badge-workspaces", &g_config.glass_launchpad,          true },
+        { "WORKSPACE OVERVIEW",    "preferences-desktop-display-symbolic",     "badge-appearance", &g_config.glass_workspace_overview, false },
+    };
+
+    for (size_t i = 0; i < sizeof(elements) / sizeof(elements[0]); i++) {
+        GtkWidget *card = ui_card(page, elements[i].header);
+        glass_element_t *el = elements[i].cfg;
+
+        GtkWidget *sc_op = ui_scale(el->opacity, 0.0, 1.0, 0.05, 2, on_elem_opacity_changed, el);
+        ui_add_row(card, "Opacity", "Background opacity (0.00 = clear, 1.00 = solid)", sc_op, "preferences-color-symbolic", elements[i].badge);
+
+        GtkWidget *sc_bl = ui_scale(el->blur, 0.0, 2.50, 0.05, 2, on_elem_blur_changed, el);
+        ui_add_row(card, "Blur Strength", "Frosted backdrop blur intensity (0.00 = disabled)", sc_bl, "preferences-desktop-theme-symbolic", elements[i].badge);
+
+        if (elements[i].has_liquid_glass) {
+            GtkWidget *sw_lg = ui_switch(el->liquid_glass, on_elem_liquid_glass_toggled, el);
+            ui_add_row(card, "Liquid Glass", "Specular refractive edge rim and hardware vibrancy", sw_lg, "applications-graphics-symbolic", elements[i].badge);
+        }
+    }
 
     // Running Windows Opacity Card
     GtkWidget *c_winop = ui_card(page, "RUNNING WINDOWS OPACITY");
@@ -1682,7 +1687,6 @@ static void on_dock_magnification_toggled(bool active, gpointer user_data) { (vo
 static void on_dock_size_changed(double val, gpointer user_data) { (void)user_data; g_config.dock_icon_size = (int)val; }
 static void on_dock_max_scale_changed(double val, gpointer user_data) { (void)user_data; g_config.dock_max_scale = val; }
 static void on_dock_mag_radius_changed(double val, gpointer user_data) { (void)user_data; g_config.dock_mag_radius = val; }
-static void on_dock_opacity_changed(double val, gpointer user_data) { (void)user_data; g_config.dock_opacity = val; }
 
 static void on_dock_theme_changed(int idx, gpointer user_data) {
     (void)user_data;
@@ -1696,26 +1700,17 @@ GtkWidget *build_page_dock(void) {
 
     // Theme & Style Card
     GtkWidget *c_look = ui_card(page, "THEME & STYLE");
-    static const char *const DOCK_THEMES[] = { "Modern Floating Glass Pill", "Classic 3D Glass Shelf (OS X Table)", "Plank Base Shelf", NULL };
+    static const char *const DOCK_THEMES[] = { "Modern Floating Glass Pill", "Classic 3D Glass Shelf (Table)", "Plank Base Shelf", NULL };
     int sel_theme = 0;
     if (strcmp(g_config.dock_theme, DOCK_THEME_TABLE_3D) == 0) sel_theme = 1;
     else if (strcmp(g_config.dock_theme, DOCK_THEME_PLANK) == 0) sel_theme = 2;
     GtkWidget *dd_th = ui_dropdown(DOCK_THEMES, 3, sel_theme, on_dock_theme_changed, NULL);
-    ui_add_row(c_look, "Dock Theme", "Choose between modern floating pill, classic OS X 3D glass table shelf, or Plank shelf", dd_th, "preferences-desktop-theme-symbolic", "badge-appearance");
-
-    GtkWidget *sc_op = ui_scale(g_config.dock_opacity >= 0.0 ? g_config.dock_opacity : 0.85, 0.0, 1.0, 0.05, 2, on_dock_opacity_changed, NULL);
-    ui_add_row(c_look, "Dock Opacity", "Adjust background transparency of the dock (0.0 = clear glass, 1.0 = solid)", sc_op, "preferences-color-symbolic", "badge-appearance");
+    ui_add_row(c_look, "Dock Theme", "Choose between modern floating pill, classic 3D glass table shelf, or Plank shelf", dd_th, "preferences-desktop-theme-symbolic", "badge-appearance");
 
     // Behaviour Card
     GtkWidget *c_behave = ui_card(page, "BEHAVIOUR");
     GtkWidget *sw_en = ui_switch(g_config.dock_enabled, on_dock_enabled_toggled, NULL);
     ui_add_row(c_behave, "Show the Dock", "Display the application dock along the bottom edge", sw_en, "view-paged-symbolic", "badge-dock");
-
-    GtkWidget *sw_dock_lg = ui_switch(g_config.liquid_glass || g_config.blur_dock, on_liquid_glass_toggled, NULL);
-    ui_add_row(c_behave, "Liquid Glass & Blur Effect", "Multi-layer specular highlights, refractive borders, and frosted backdrop blur", sw_dock_lg, "applications-graphics-symbolic", "badge-appearance");
-
-    GtkWidget *sc_bst = ui_scale(g_config.blur_strength > 0.0 ? g_config.blur_strength : 1.0, 0.20, 2.50, 0.10, 1, on_blur_strength_changed, NULL);
-    ui_add_row(c_behave, "Blur Strength", "Adjust the intensity and diffusion radius of the frosted glass blur", sc_bst, "preferences-desktop-theme-symbolic", "badge-appearance");
 
     GtkWidget *sw_ah = ui_switch(g_config.dock_autohide, on_dock_autohide_toggled, NULL);
     ui_add_row(c_behave, "Automatically Hide", "Hide the dock until the pointer reaches the bottom edge", sw_ah, "view-reveal-symbolic", "badge-wifi");
@@ -1729,7 +1724,7 @@ GtkWidget *build_page_dock(void) {
     ui_add_row(c_mag, "Icon Size", "Base icon size in pixels (32–96)", sc_sz, "preferences-system-symbolic", "badge-dock");
 
     GtkWidget *sw_mag = ui_switch(g_config.dock_magnification, on_dock_magnification_toggled, NULL);
-    ui_add_row(c_mag, "Magnification", "Grow icons under the pointer like macOS", sw_mag, "zoom-in-symbolic", "badge-dock");
+    ui_add_row(c_mag, "Magnification", "Grow icons under the pointer", sw_mag, "zoom-in-symbolic", "badge-dock");
 
     GtkWidget *sc_max = ui_scale(g_config.dock_max_scale >= 1.0 ? g_config.dock_max_scale : 1.5, 1.0, 2.2, 0.05, 2, on_dock_max_scale_changed, NULL);
     ui_add_row(c_mag, "Maximum Scale", "How large an icon grows under the pointer", sc_max, "zoom-fit-best-symbolic", "badge-dock");
@@ -1981,7 +1976,7 @@ static void on_reset_defaults_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 GtkWidget *build_page_about(void) {
-    GtkWidget *page = ui_page_container("About This Computer", "AuraDE — a macOS Sonoma/Sequoia-inspired Wayland desktop environment.");
+    GtkWidget *page = ui_page_container("About This Computer", "AuraDE — a fluid glass-inspired Wayland desktop environment.");
 
     char hostname[64] = "AuraDE";
     gethostname(hostname, sizeof(hostname) - 1);
@@ -1990,7 +1985,7 @@ GtkWidget *build_page_about(void) {
     memset(&uts, 0, sizeof(uts));
     uname(&uts);
 
-    // Hero Banner (macOS Sonoma About This Mac style)
+    // Hero Banner (AuraDE About This Computer style)
     GtkWidget *hero = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
     gtk_widget_add_css_class(hero, "hero-banner");
 

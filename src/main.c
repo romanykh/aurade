@@ -35,7 +35,7 @@
 #include <execinfo.h>
 
 // Touchpad travel arrives in 1920x1080 reference pixels (gesture_engine.c).
-// macOS moves the Spaces carousel further than the fingers travel, so one
+// fluid moves the Spaces carousel further than the fingers travel, so one
 // workspace completes after roughly 40% of the touchpad width instead of a
 // full-width swipe.
 #define WORKSPACE_GESTURE_GAIN 2.4
@@ -81,36 +81,38 @@ void server_update_blur_config(aurade_server_t *server) {
     wlr_scene_set_blur_data(server->scene, passes, eff_rad, noise, brightness, contrast, saturation);
 
     bool pause_blur = (
-        server->gesture_mode != GESTURE_MODE_IDLE ||
         server->gesture_in_progress ||
         server->gesture_animating ||
         server->workspace_animating
     );
 
     if (server->dock && server->dock->blur_node) {
-        bool dock_glass = (server->config.blur_dock || server->config.liquid_glass);
-        float dock_str = (float)str;
-        wlr_scene_blur_set_liquid_glass(server->dock->blur_node, server->config.liquid_glass);
+        glass_element_t g = server->config.glass_dock;
+        bool dock_glass = (g.blur > 0.01 || g.liquid_glass);
+        float dock_str = pause_blur ? 0.0f : (float)g.blur;
+        wlr_scene_blur_set_liquid_glass(server->dock->blur_node, g.liquid_glass);
         wlr_scene_blur_set_strength(server->dock->blur_node, dock_str);
         wlr_scene_node_set_enabled(&server->dock->blur_node->node,
                                    server->dock->enabled &&
                                    server->dock->hide_progress < 0.999 &&
                                    dock_uses_pill_blur(server->dock) &&
                                    dock_glass &&
-                                   (server->config.dock_opacity > 0.05));
+                                   (g.opacity > 0.05));
     }
     if (server->topbar) {
         if (server->topbar->blur_node) {
-            bool topbar_blur = server->config.blur_topbar;
-            float topbar_str = topbar_blur ? (float)str : 0.0f;
-            wlr_scene_blur_set_liquid_glass(server->topbar->blur_node, false);
+            glass_element_t g = server->config.glass_topbar;
+            bool topbar_blur = (g.blur > 0.01 || g.liquid_glass);
+            float topbar_str = pause_blur ? 0.0f : (float)g.blur;
+            wlr_scene_blur_set_liquid_glass(server->topbar->blur_node, g.liquid_glass);
             wlr_scene_blur_set_strength(server->topbar->blur_node, topbar_str);
             wlr_scene_node_set_enabled(&server->topbar->blur_node->node, topbar_blur && !pause_blur);
         }
         if (server->topbar->power_menu_blur_node) {
-            bool pm_glass = (server->config.blur_power_menu || server->config.liquid_glass);
-            float pm_str = server->config.blur_power_menu ? (float)str : 0.0f;
-            wlr_scene_blur_set_liquid_glass(server->topbar->power_menu_blur_node, server->config.liquid_glass);
+            glass_element_t g = server->config.glass_power_menu;
+            bool pm_glass = (g.blur > 0.01 || g.liquid_glass);
+            float pm_str = pause_blur ? 0.0f : (float)g.blur;
+            wlr_scene_blur_set_liquid_glass(server->topbar->power_menu_blur_node, g.liquid_glass);
             wlr_scene_blur_set_strength(server->topbar->power_menu_blur_node, pm_str);
             bool pm_open = topbar_power_menu_is_open(server->topbar);
             wlr_scene_node_set_enabled(&server->topbar->power_menu_blur_node->node,
@@ -118,21 +120,22 @@ void server_update_blur_config(aurade_server_t *server) {
         }
     }
     if (server->control_center && server->control_center->blur_node) {
-        bool cc_glass = (server->config.blur_control_center || server->config.liquid_glass);
-        float cc_str = server->config.blur_control_center ? (float)str : 0.0f;
-        wlr_scene_blur_set_liquid_glass(server->control_center->blur_node, server->config.liquid_glass);
-        wlr_scene_blur_set_strength(server->control_center->blur_node, cc_str);
+        glass_element_t g = server->config.glass_control_center;
+        bool cc_glass = (g.blur > 0.01 || g.liquid_glass);
+        wlr_scene_blur_set_liquid_glass(server->control_center->blur_node, g.liquid_glass);
+        wlr_scene_blur_set_strength(server->control_center->blur_node, (float)g.blur);
         wlr_scene_node_set_enabled(&server->control_center->blur_node->node,
                                    server->control_center->active &&
                                    (server->control_center->progress > 0.05) &&
                                    cc_glass);
     }
     if (server->notifications) {
-        bool notif_glass = (server->config.blur_notifications || server->config.liquid_glass);
-        float notif_str = server->config.blur_notifications ? (float)str : 0.0f;
+        glass_element_t g = server->config.glass_notifications;
+        bool notif_glass = (g.blur > 0.01 || g.liquid_glass);
+        float notif_str = pause_blur ? 0.0f : (float)g.blur;
         for (int i = 0; i < NOTIF_MAX_VISIBLE; i++) {
             if (server->notifications->blur_nodes[i]) {
-                wlr_scene_blur_set_liquid_glass(server->notifications->blur_nodes[i], server->config.liquid_glass);
+                wlr_scene_blur_set_liquid_glass(server->notifications->blur_nodes[i], g.liquid_glass);
                 wlr_scene_blur_set_strength(server->notifications->blur_nodes[i], notif_str);
                 if (!notif_glass) {
                     wlr_scene_node_set_enabled(&server->notifications->blur_nodes[i]->node, false);
@@ -141,9 +144,10 @@ void server_update_blur_config(aurade_server_t *server) {
         }
     }
     if (server->music_pill && server->music_pill->blur_node) {
-        bool pill_glass = (server->config.blur_dock || server->config.liquid_glass);
-        float pill_str = pill_glass ? (float)str : 0.0f;
-        wlr_scene_blur_set_liquid_glass(server->music_pill->blur_node, server->config.liquid_glass);
+        glass_element_t g = server->config.glass_music_pill;
+        bool pill_glass = (g.blur > 0.01 || g.liquid_glass);
+        float pill_str = pause_blur ? 0.0f : (float)g.blur;
+        wlr_scene_blur_set_liquid_glass(server->music_pill->blur_node, g.liquid_glass);
         wlr_scene_blur_set_strength(server->music_pill->blur_node, pill_str);
         if (!pill_glass) {
             wlr_scene_node_set_enabled(&server->music_pill->blur_node->node, false);
@@ -779,7 +783,7 @@ static void update_snap_preview(aurade_server_t *server, snap_action_t action) {
         // Draw translucent preview card with rounded corners
         draw_rounded_rect(cr, 0, 0, target_w, target_h, 16.0);
 
-        // Modern macOS accent blue fill
+        // Modern fluid accent blue fill
         cairo_set_source_rgba(cr, 0.0, 0.48, 1.0, 0.20);
         cairo_fill_preserve(cr);
 
@@ -1530,7 +1534,7 @@ static void cursor_button(struct wl_listener *listener, void *data) {
         dock_close_context_menu(server->dock);
     }
 
-    // Pressed — the Apple menu is modal and consumes the click. A secondary
+    // Pressed — the system menu is modal and consumes the click. A secondary
     // click dismisses it without activating a row.
     if (server->topbar && topbar_power_menu_is_open(server->topbar)) {
         if (left) {
@@ -2235,7 +2239,7 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
             return;
         }
 
-        // Lock screen activation shortcuts: Super+L, Ctrl+Alt+L, or Ctrl+Super+Q (macOS standard)
+        // Lock screen activation shortcuts: Super+L, Ctrl+Alt+L, or Ctrl+Super+Q (desktop standard)
         if ((super && (sym == XKB_KEY_l || sym == XKB_KEY_L || latin_sym == XKB_KEY_l || latin_sym == XKB_KEY_L)) ||
             (ctrl && alt && (sym == XKB_KEY_l || sym == XKB_KEY_L || latin_sym == XKB_KEY_l || latin_sym == XKB_KEY_L)) ||
             (ctrl && super && (sym == XKB_KEY_q || sym == XKB_KEY_Q || latin_sym == XKB_KEY_q || latin_sym == XKB_KEY_Q))) {
@@ -2261,7 +2265,7 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
             }
         }
 
-        // Global macOS-style shortcuts.
+        // Global glass-style shortcuts.
         if (super) {
             if (shift && (sym == XKB_KEY_s || sym == XKB_KEY_S || latin_sym == XKB_KEY_s || latin_sym == XKB_KEY_S)) {
                 if (server->screenshot) screenshot_begin(server->screenshot);
@@ -2281,7 +2285,7 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
                 return;
             }
             if (sym == XKB_KEY_space) {
-                // macOS/GNOME input-source switch. Cycles the XKB groups
+                // System input-source switch. Cycles the XKB groups
                 // loaded from the system layout, e.g. us -> ua -> us.
                 keyboard_cycle_layout(server, keyboard);
                 return;
@@ -2654,7 +2658,7 @@ static void server_new_input(struct wl_listener *listener, void *data) {
 }
 
 // -------------------------------------------------------------
-// Core Gesture Dispatcher & macOS Physics Integration
+// Core Gesture Dispatcher & fluid Physics Integration
 // -------------------------------------------------------------
 
 void server_handle_gesture_begin(aurade_server_t *server, gesture_action_type_t action) {
@@ -2671,7 +2675,7 @@ void server_handle_gesture_begin(aurade_server_t *server, gesture_action_type_t 
         return;
     }
 
-    // Opening an overlay dismisses the Apple menu.
+    // Opening an overlay dismisses the system menu.
     if (server->topbar) topbar_close_power_menu(server->topbar);
 
     // An overlay is already visible. Direct manipulation closing:
@@ -2865,7 +2869,7 @@ void server_handle_gesture_update(aurade_server_t *server, double delta_x, doubl
         case GESTURE_MODE_WORKSPACE_CAROUSEL: {
             int screen_w = server->screen_width > 0 ? server->screen_width : 1920;
 
-            // Reference pixels -> screen pixels, then the macOS-like gain that
+            // Reference pixels -> screen pixels, then the fluid gain that
             // lets a short swipe move a whole space.
             double eff_sens = fmax(sens, 0.85);
             double ref_to_screen = (double)screen_w / GESTURE_REFERENCE_PX;
@@ -3654,7 +3658,7 @@ int main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
     printf("====================================================\n");
-    printf("   AuraDE - Fluid macOS-Logic Gesture Compositor    \n");
+    printf("   AuraDE - Fluid Gesture Compositor                \n");
     printf("====================================================\n");
 
     signal(SIGSEGV, crash_handler);
@@ -3902,7 +3906,7 @@ if (server.config_inotify_fd >= 0) {
     system("dbus-update-activation-environment --all 2>/dev/null &");
     system("if command -v systemctl >/dev/null 2>&1; then systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP QT_QPA_PLATFORMTHEME GTK_USE_PORTAL 2>/dev/null & fi");
     printf("[AuraDE] Running on WAYLAND_DISPLAY=%s\n", socket_name);
-    printf("[AuraDE] macOS Gestures Active: Swipe Up (Mission Control), Down (Exposé), Horizontal (Spaces), Pinch In (Launchpad), Spread (Show Desktop)\n");
+    printf("[AuraDE] Gestures Active: Swipe Up (Mission Control), Down (Exposé), Horizontal (Spaces), Pinch In (Launchpad), Spread (Show Desktop)\n");
     fflush(stdout);
 
     server_export_running_windows(&server);

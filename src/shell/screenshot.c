@@ -483,7 +483,7 @@ static void render_overlay(aurade_screenshot_t *shot) {
                   shot->width / 2.0, hby + 17.0, true, true);
     }
 
-    // 2. Modern macOS Floating Control Bar (omitted in direct region crop mode)
+    // 2. Modern fluid Floating Control Bar (omitted in direct region crop mode)
     if (shot->direct_crop) {
         shot->bar_x = 0;
         shot->bar_y = 0;
@@ -664,7 +664,7 @@ static void render_overlay(aurade_screenshot_t *shot) {
     bool can_act = (shot->target != SHOT_TARGET_SELECTION || (shot->has_selection && shot->sel_w >= 10.0 && shot->sel_h >= 10.0));
     draw_rounded_rect(cr, act_x, seg_y, act_w, seg_h, 16.0);
     if (shot->mode == SHOT_MODE_STILL) {
-        // macOS Glass Blue Capture
+        // fluid Glass Blue Capture
         if (!can_act) {
             cairo_set_source_rgba(cr, 0.10, 0.42, 0.92, 0.35);
         } else if (shot->hover_button == 6) {
