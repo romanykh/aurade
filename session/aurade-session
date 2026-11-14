@@ -31,5 +31,5 @@ for version in 3.0 4.0; do
 done
 
 mkdir -p "$HOME/.cache/aurade"
-python3 /home/user/AI/aura-connect/linux/aura_connect_daemon.py >>"$HOME/.cache/aurade/aura-connect.log" 2>&1 &
+/home/user/AI/aura-connect/linux/aura_connect --daemon >>"$HOME/.cache/aurade/aura-connect.log" 2>&1 &
 exec /home/user/AI/de/aurade >>"$HOME/.cache/aurade/aurade.log" 2>&1

@@ -9,7 +9,24 @@
 #include "../render/cairo_buffer.h"
 
 #define NOTIF_MAX_VISIBLE 6
+#define NOTIF_HISTORY_MAX 48
 #define NOTIF_CARD_W 350.0
+#define NOTIF_CENTER_W 360.0
+
+typedef struct {
+    uint32_t id;
+    char app_name[64];
+    char app_icon[128];
+    char summary[128];
+    char body[512];
+    char time_str[16];
+    cairo_surface_t *icon_surface;
+
+    double card_y;           // layout Y inside NC scroll area (pre-scroll)
+    double card_h;
+    bool hover;
+    bool close_hover;
+} notif_history_item_t;
 
 typedef struct {
     uint32_t id;
@@ -41,6 +58,20 @@ typedef struct aurade_notifications {
     int count;
     uint32_t next_id;
 
+    // Notification Center (persistent history + slide-out panel)
+    notif_history_item_t history[NOTIF_HISTORY_MAX];
+    int history_count;
+    cairo_buffer_t *nc_buffer;
+    struct wlr_scene_buffer *nc_scene_buffer;
+    struct wlr_scene_blur *nc_blur_node;
+    int nc_panel_h;
+    bool nc_open;
+    double nc_progress;
+    double nc_target;
+    double nc_scroll_y;
+    double nc_max_scroll;
+    bool nc_clear_hover;
+
     // Inter-thread pipe to deliver D-Bus calls into Wayland main loop
     int pipe_read_fd;
     int pipe_write_fd;
@@ -69,5 +100,13 @@ bool notifications_is_animating(const aurade_notifications_t *notif);
 bool notifications_handle_motion(aurade_notifications_t *notif, double mouse_x, double mouse_y);
 bool notifications_handle_click(aurade_notifications_t *notif, double mouse_x, double mouse_y);
 bool notifications_pointer_owns(aurade_notifications_t *notif, double x, double y);
+
+// Notification Center API
+void notifications_nc_open(aurade_notifications_t *notif);
+void notifications_nc_close(aurade_notifications_t *notif);
+void notifications_nc_toggle(aurade_notifications_t *notif);
+bool notifications_nc_is_open(const aurade_notifications_t *notif);
+bool notifications_nc_pointer_owns(const aurade_notifications_t *notif, double x, double y);
+bool notifications_nc_handle_scroll(aurade_notifications_t *notif, double delta_y);
 
 #endif // AURADE_NOTIFICATIONS_H

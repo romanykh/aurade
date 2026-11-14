@@ -35,6 +35,9 @@ typedef struct aurade_topbar {
     bool hover_apple;
     double cc_x, cc_y, cc_w, cc_h;
     bool hover_cc;
+    double nc_x, nc_y, nc_w, nc_h;
+    bool hover_nc;
+    double clock_x, clock_w;
     double rec_x, rec_y, rec_w, rec_h;
     bool hover_rec;
 

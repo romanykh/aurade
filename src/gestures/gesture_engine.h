@@ -72,6 +72,12 @@ typedef struct gesture_engine {
     // frame can otherwise report thousands of px/s and fling an overlay open.
     double travel_x, travel_y;
 
+    // Two-finger touchpad edge swipe for Notification Center
+    bool nc_two_finger_active;
+    bool nc_two_finger_triggered;
+    bool nc_in_edge;
+    double nc_start_ccx, nc_start_ccy;
+
     // Time source. NULL uses the real clock; the offline gesture simulation
     // replaces it with a deterministic counter.
     uint64_t (*now_fn)(void);
@@ -80,6 +86,8 @@ typedef struct gesture_engine {
     int ipc_fd;
     int ipc_client_fd;
     struct wl_event_source *ipc_event_source;
+    int remote_fd;
+    struct wl_event_source *remote_event_source;
 } gesture_engine_t;
 
 gesture_engine_t *gesture_engine_create(aurade_server_t *server, struct wl_event_loop *loop);

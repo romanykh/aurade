@@ -64,6 +64,12 @@ typedef struct {
 } cc_sub_rect_t;
 
 typedef struct {
+    char profile[64];
+    char label[32];
+    cc_sub_rect_t rect;
+} cc_bt_codec_t;
+
+typedef struct {
     bool wifi_enabled;
     bool wifi_available;
     char wifi_ssid[96];
@@ -105,6 +111,12 @@ typedef struct {
 
     cc_bt_item_t bt_items[24];
     int bt_count;
+
+    char bt_codec_card[64];
+    char bt_codec_dev_name[64];
+    cc_bt_codec_t bt_codecs[10];
+    int bt_codec_count;
+    int bt_codec_active;
 
     cc_audio_device_t audio_outputs[12];
     int audio_output_count;
@@ -171,6 +183,12 @@ typedef struct aurade_control_center {
     bool bt_scanning;
     uint64_t bt_scan_until_ms;
     char bt_status_msg[96];
+    char bt_codec_card[64];
+    char bt_codec_dev_name[64];
+    cc_bt_codec_t bt_codecs[10];
+    int bt_codec_count;
+    int bt_codec_active;
+    int bt_codec_hover;
 
     // Subpage Sound data
     cc_audio_device_t audio_outputs[12];

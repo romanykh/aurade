@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <sys/utsname.h>
 #include <glob.h>
+#include <gio/gdesktopappinfo.h>
 
 const action_item_t GESTURE_ACTIONS[] = {
     { ACTION_MISSION_CONTROL, "mission_control", "Mission Control" },
@@ -214,6 +215,42 @@ static void on_bt_device_action(GtkButton *btn, gpointer user_data) {
     run_cmd_async(cmd);
 }
 
+typedef struct {
+    char *card;
+    char *dev_name;
+    char **profiles;
+    char **labels;
+    int count;
+} bt_codec_ui_t;
+
+static void free_bt_codec_ui(gpointer data) {
+    bt_codec_ui_t *s = (bt_codec_ui_t *)data;
+    if (!s) return;
+    g_free(s->card);
+    g_free(s->dev_name);
+    for (int i = 0; i < s->count; i++) {
+        g_free(s->profiles[i]);
+        g_free(s->labels[i]);
+    }
+    g_free(s->profiles);
+    g_free(s->labels);
+    g_free(s);
+}
+
+static void on_bt_codec_selected(int idx, gpointer ud) {
+    bt_codec_ui_t *s = (bt_codec_ui_t *)ud;
+    if (!s || idx < 0 || idx >= s->count) return;
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "pactl set-card-profile \"%s\" \"%s\" 2>/dev/null",
+             s->card, s->profiles[idx]);
+    run_cmd_async(cmd);
+    if (g_status_label) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "Codec for %s set to %s", s->dev_name, s->labels[idx]);
+        gtk_label_set_text(GTK_LABEL(g_status_label), msg);
+    }
+}
+
 GtkWidget *build_page_bluetooth(void) {
     GtkWidget *page = ui_page_container("Bluetooth", "Connect wireless headphones, mice, keyboards and accessories.");
 
@@ -271,6 +308,102 @@ GtkWidget *build_page_bluetooth(void) {
     }
     if (dev_count == 0) {
         ui_add_row(c_devs, "No Paired Devices", "Put your Bluetooth device into pairing mode to connect", NULL, "bluetooth-symbolic", "badge-bluetooth");
+    }
+
+    // Audio Codecs for connected Bluetooth headphones/headsets
+    GtkWidget *c_codecs = ui_card(page, "AUDIO CODECS");
+    int codec_dev_count = 0;
+    char cards_buf[32768] = {0};
+    if (run_cmd_capture("pactl -f json list cards 2>/dev/null", cards_buf, sizeof(cards_buf))) {
+        struct json_object *root = json_tokener_parse(cards_buf);
+        if (root && json_object_is_type(root, json_type_array)) {
+            int len = json_object_array_length(root);
+            for (int i = 0; i < len; i++) {
+                struct json_object *card = json_object_array_get_idx(root, i);
+                struct json_object *jname = NULL, *jactive = NULL, *jprofiles = NULL, *jprops = NULL;
+                if (!json_object_object_get_ex(card, "name", &jname)) continue;
+                const char *cname = json_object_get_string(jname);
+                if (!cname || strncmp(cname, "bluez_card.", 11) != 0) continue;
+                if (!json_object_object_get_ex(card, "profiles", &jprofiles) ||
+                    !json_object_is_type(jprofiles, json_type_object)) continue;
+
+                const char *active_prof = json_object_object_get_ex(card, "active_profile", &jactive)
+                                          ? json_object_get_string(jactive) : "";
+
+                const char *prof_names[16];
+                const char *prof_labels[16];
+                char label_bufs[16][48];
+                int pcnt = 0;
+                int sel = 0;
+
+                json_object_object_foreach(jprofiles, key, val) {
+                    if (!key || strcmp(key, "off") == 0) continue;
+                    struct json_object *javail = NULL;
+                    if (json_object_is_type(val, json_type_object) &&
+                        json_object_object_get_ex(val, "available", &javail)) {
+                        const char *av = json_object_get_string(javail);
+                        if (av && strcmp(av, "no") == 0) continue;
+                    }
+                    if (pcnt < 15) {
+                        prof_names[pcnt] = key;
+                        if (strcmp(key, "a2dp-sink-ldac") == 0) snprintf(label_bufs[pcnt], 48, "LDAC (High Quality)");
+                        else if (strcmp(key, "a2dp-sink-aptx_hd") == 0) snprintf(label_bufs[pcnt], 48, "aptX HD");
+                        else if (strcmp(key, "a2dp-sink-aptx_ll") == 0) snprintf(label_bufs[pcnt], 48, "aptX Low Latency");
+                        else if (strcmp(key, "a2dp-sink-aptx") == 0) snprintf(label_bufs[pcnt], 48, "aptX");
+                        else if (strcmp(key, "a2dp-sink-aac") == 0) snprintf(label_bufs[pcnt], 48, "AAC");
+                        else if (strcmp(key, "a2dp-sink-sbc_xq") == 0) snprintf(label_bufs[pcnt], 48, "SBC-XQ");
+                        else if (strcmp(key, "a2dp-sink-sbc") == 0) snprintf(label_bufs[pcnt], 48, "SBC");
+                        else if (strcmp(key, "a2dp-sink") == 0) snprintf(label_bufs[pcnt], 48, "A2DP (Default)");
+                        else if (strcmp(key, "a2dp-auto-prefer-quality") == 0) snprintf(label_bufs[pcnt], 48, "Auto (Prefer Quality)");
+                        else if (strcmp(key, "a2dp-auto-prefer-latency") == 0) snprintf(label_bufs[pcnt], 48, "Auto (Low Latency)");
+                        else if (strncmp(key, "a2dp-sink-opus", 14) == 0) snprintf(label_bufs[pcnt], 48, "Opus");
+                        else if (strcmp(key, "headset-head-unit-cvsd") == 0) snprintf(label_bufs[pcnt], 48, "HFP / Mic (CVSD)");
+                        else if (strcmp(key, "headset-head-unit-msbc") == 0) snprintf(label_bufs[pcnt], 48, "HFP / Mic (mSBC)");
+                        else if (strcmp(key, "headset-head-unit") == 0) snprintf(label_bufs[pcnt], 48, "HFP / Mic");
+                        else snprintf(label_bufs[pcnt], 48, "%s", key);
+                        prof_labels[pcnt] = label_bufs[pcnt];
+                        if (active_prof && strcmp(key, active_prof) == 0) sel = pcnt;
+                        pcnt++;
+                    }
+                }
+
+                if (pcnt > 1) {
+                    const char *dev_title = cname + 11;
+                    if (json_object_object_get_ex(card, "properties", &jprops) &&
+                        json_object_is_type(jprops, json_type_object)) {
+                        struct json_object *jdesc = NULL;
+                        if (json_object_object_get_ex(jprops, "device.description", &jdesc) ||
+                            json_object_object_get_ex(jprops, "api.bluez5.name", &jdesc)) {
+                            const char *dn = json_object_get_string(jdesc);
+                            if (dn && dn[0]) dev_title = dn;
+                        }
+                    }
+
+                    bt_codec_ui_t *st = g_new0(bt_codec_ui_t, 1);
+                    st->card = g_strdup(cname);
+                    st->dev_name = g_strdup(dev_title);
+                    st->count = pcnt;
+                    st->profiles = g_new0(char *, pcnt);
+                    st->labels = g_new0(char *, pcnt);
+                    for (int p = 0; p < pcnt; p++) {
+                        st->profiles[p] = g_strdup(prof_names[p]);
+                        st->labels[p] = g_strdup(prof_labels[p]);
+                    }
+                    prof_labels[pcnt] = NULL;
+
+                    GtkWidget *dd = ui_dropdown(prof_labels, pcnt, sel, on_bt_codec_selected, st);
+                    g_signal_connect_swapped(dd, "destroy", G_CALLBACK(free_bt_codec_ui), st);
+                    ui_add_row(c_codecs, dev_title, "Select Bluetooth audio codec / profile", dd, "audio-headphones-symbolic", "badge-bluetooth");
+                    codec_dev_count++;
+                }
+            }
+            json_object_put(root);
+        } else if (root) {
+            json_object_put(root);
+        }
+    }
+    if (codec_dev_count == 0) {
+        ui_add_row(c_codecs, "No Bluetooth Audio Devices", "Connect headphones or a speaker to switch codecs (LDAC, aptX, AAC, SBC)", NULL, "audio-headphones-symbolic", "badge-bluetooth");
     }
 
     return page;
@@ -794,6 +927,17 @@ static void on_mouse_left_handed_toggled(bool active, gpointer user_data) {
     gsettings_set_bool("org.gnome.desktop.peripherals.mouse", "left-handed", active);
 }
 
+static void on_mouse_natural_scroll_toggled(bool active, gpointer user_data) {
+    (void)user_data;
+    g_config.mouse_natural_scroll = active;
+    gsettings_set_bool("org.gnome.desktop.peripherals.mouse", "natural-scroll", active);
+}
+
+static void on_smooth_wheel_toggled(bool active, gpointer user_data) {
+    (void)user_data;
+    g_config.smooth_wheel_scroll = active;
+}
+
 static void on_mouse_accel_changed(int idx, gpointer user_data) {
     (void)user_data;
     const char *mode = (idx == 1) ? "flat" : (idx == 2) ? "adaptive" : "default";
@@ -811,7 +955,7 @@ GtkWidget *build_page_mouse(void) {
     ui_add_row(c_tp, "Tap to Click", "Tap with one finger to click, two fingers to right-click", sw_tap, "input-mouse-symbolic", "badge-mouse");
 
     GtkWidget *sw_nat = ui_switch(g_config.natural_scroll, on_natural_scroll_toggled, NULL);
-    ui_add_row(c_tp, "Natural Scrolling", "Content tracks finger movement directly (macOS direction)", sw_nat, "input-mouse-symbolic", "badge-mouse");
+    ui_add_row(c_tp, "Natural Scrolling (Touchpad)", "Content tracks finger movement directly (macOS direction)", sw_nat, "input-mouse-symbolic", "badge-mouse");
 
     double tp_speed = gsettings_get_double("org.gnome.desktop.peripherals.touchpad", "speed", 0.0);
     GtkWidget *sc_tp_speed = ui_scale(tp_speed, -1.0, 1.0, 0.05, 2, on_touchpad_speed_changed, NULL);
@@ -830,6 +974,12 @@ GtkWidget *build_page_mouse(void) {
     bool left_handed = gsettings_get_bool("org.gnome.desktop.peripherals.mouse", "left-handed", false);
     GtkWidget *sw_left = ui_switch(left_handed, on_mouse_left_handed_toggled, NULL);
     ui_add_row(c_mouse, "Left-Handed Mouse", "Swap primary left and right click buttons", sw_left, "input-mouse-symbolic", "badge-mouse");
+
+    GtkWidget *sw_mouse_nat = ui_switch(g_config.mouse_natural_scroll, on_mouse_natural_scroll_toggled, NULL);
+    ui_add_row(c_mouse, "Natural Scrolling (Mouse)", "Invert physical mouse wheel scroll direction independently from touchpad", sw_mouse_nat, "input-mouse-symbolic", "badge-mouse");
+
+    GtkWidget *sw_wheel = ui_switch(g_config.smooth_wheel_scroll, on_smooth_wheel_toggled, NULL);
+    ui_add_row(c_mouse, "Smooth Mouse Wheel Scroll", "Kinetic inertia for mouse wheel (auto-paused in locked-pointer games)", sw_wheel, "input-mouse-symbolic", "badge-mouse");
 
     static const char *const ACCEL_MODES[] = { "Default", "Flat (No Acceleration)", "Adaptive", NULL };
     char *cur_accel = gsettings_get_string("org.gnome.desktop.peripherals.mouse", "accel-profile", "default");
@@ -1069,11 +1219,43 @@ static void on_dark_mode_toggled(bool active, gpointer user_data) {
     gsettings_set_string("org.gnome.desktop.interface", "color-scheme", active ? "prefer-dark" : "prefer-light");
 }
 
+static GtkWidget *g_accent_color_btn = NULL;
+static gboolean g_updating_accent_btn = FALSE;
+
+static void apply_accent_hex(const char *hex, gboolean update_picker) {
+    if (!hex || !hex[0]) return;
+    snprintf(g_config.accent_color, sizeof(g_config.accent_color), "%s", hex);
+    if (update_picker && g_accent_color_btn) {
+        GdkRGBA rgba;
+        if (gdk_rgba_parse(&rgba, hex)) {
+            g_updating_accent_btn = TRUE;
+            gtk_color_dialog_button_set_rgba(GTK_COLOR_DIALOG_BUTTON(g_accent_color_btn), &rgba);
+            g_updating_accent_btn = FALSE;
+        }
+    }
+    settings_schedule_save();
+}
+
 static void on_accent_color_clicked(GtkButton *btn, gpointer user_data) {
     (void)btn;
-    const char *hex = (const char *)user_data;
-    strncpy(g_config.accent_color, hex, sizeof(g_config.accent_color) - 1);
-    settings_schedule_save();
+    apply_accent_hex((const char *)user_data, TRUE);
+}
+
+static void on_custom_accent_rgba_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+    (void)pspec;
+    (void)user_data;
+    if (g_updating_accent_btn) return;
+    const GdkRGBA *rgba = gtk_color_dialog_button_get_rgba(GTK_COLOR_DIALOG_BUTTON(obj));
+    if (!rgba) return;
+    int r = (int)(rgba->red * 255.0 + 0.5);
+    int g = (int)(rgba->green * 255.0 + 0.5);
+    int b = (int)(rgba->blue * 255.0 + 0.5);
+    if (r < 0) r = 0; else if (r > 255) r = 255;
+    if (g < 0) g = 0; else if (g > 255) g = 255;
+    if (b < 0) b = 0; else if (b > 255) b = 255;
+    char hex[16];
+    snprintf(hex, sizeof(hex), "#%02X%02X%02X", r, g, b);
+    apply_accent_hex(hex, FALSE);
 }
 
 static void on_cursor_theme_changed(int idx, gpointer user_data) {
@@ -1366,7 +1548,23 @@ GtkWidget *build_page_appearance(void) {
         g_signal_connect(b, "clicked", G_CALLBACK(on_accent_color_clicked), (gpointer)ACCENTS[i].hex);
         gtk_box_append(GTK_BOX(box_accents), b);
     }
-    ui_add_row(c_theme, "Accent Colour", "Used for toggles, highlights and Control Center controls", box_accents, "applications-graphics-symbolic", "badge-wifi");
+    GtkColorDialog *color_dlg = gtk_color_dialog_new();
+    gtk_color_dialog_set_title(color_dlg, "Custom Accent Colour");
+    gtk_color_dialog_set_with_alpha(color_dlg, FALSE);
+    g_accent_color_btn = gtk_color_dialog_button_new(color_dlg);
+    GdkRGBA init_rgba;
+    if (!gdk_rgba_parse(&init_rgba, g_config.accent_color[0] ? g_config.accent_color : "#007AFF")) {
+        gdk_rgba_parse(&init_rgba, "#007AFF");
+    }
+    gtk_color_dialog_button_set_rgba(GTK_COLOR_DIALOG_BUTTON(g_accent_color_btn), &init_rgba);
+    gtk_widget_set_tooltip_text(g_accent_color_btn, "Choose custom accent colour");
+    g_signal_connect(g_accent_color_btn, "notify::rgba", G_CALLBACK(on_custom_accent_rgba_changed), NULL);
+    gtk_box_append(GTK_BOX(box_accents), g_accent_color_btn);
+    ui_add_row(c_theme, "Accent Colour", "Used for toggles, highlights and Control Center controls", NULL, "applications-graphics-symbolic", "badge-wifi");
+    gtk_widget_set_margin_start(box_accents, 56);
+    gtk_widget_set_margin_end(box_accents, 16);
+    gtk_widget_set_margin_bottom(box_accents, 12);
+    gtk_box_append(GTK_BOX(c_theme), box_accents);
 
     // Cursor Theme & Size Card
     GtkWidget *c_cursor = ui_card(page, "CURSOR & POINTER");
@@ -1573,6 +1771,7 @@ static void on_gesture_4_pin(int idx, gpointer user_data) { (void)user_data; g_c
 static void on_gesture_4_pout(int idx, gpointer user_data) { (void)user_data; g_config.pinch_out_4.type = dropdown_index_to_action(idx); }
 
 static void on_gesture_edge_rt(int idx, gpointer user_data) { (void)user_data; g_config.edge_swipe_right.type = dropdown_index_to_action(idx); }
+static void on_nc_side_changed(int idx, gpointer user_data) { (void)user_data; g_config.notif_center_left = (idx == 1); }
 
 static void on_spring_stiff_changed(double val, gpointer user_data) { (void)user_data; g_config.spring.stiffness = val; }
 static void on_spring_damp_changed(double val, gpointer user_data) { (void)user_data; g_config.spring.damping = val; }
@@ -1673,6 +1872,10 @@ GtkWidget *build_page_gestures(void) {
     GtkWidget *c_edge = ui_card(page, "EDGE GESTURES");
     GtkWidget *d_ert = ui_dropdown(ACTION_LABELS, GESTURE_ACTIONS_COUNT, action_to_dropdown_index(g_config.edge_swipe_right.type), on_gesture_edge_rt, NULL);
     ui_add_row(c_edge, "Right Edge Swipe", "Swipe inward from the right trackpad edge (Control Center)", d_ert, "go-previous-symbolic", "badge-gestures");
+
+    static const char *const NC_SIDE_LABELS[] = { "Right Edge", "Left Edge" };
+    GtkWidget *d_nc_side = ui_dropdown(NC_SIDE_LABELS, 2, g_config.notif_center_left ? 1 : 0, on_nc_side_changed, NULL);
+    ui_add_row(c_edge, "Notification Center Swipe Side", "Small edge zone where a 2-finger horizontal swipe slides open Notification Center", d_nc_side, "preferences-system-notifications-symbolic", "badge-gestures");
 
     // Physics Tuning Card
     GtkWidget *c_phys = ui_card(page, "PHYSICS & SPRINGS");
@@ -1917,6 +2120,266 @@ GtkWidget *build_page_about(void) {
 
     ui_add_row(c_cfg, "Configuration File", "JSON configuration live-reloaded by the AuraDE compositor", path_lbl, "document-properties-symbolic", "badge-about");
     ui_add_row(c_cfg, "Profile Actions", "Save, inspect, or reset all AuraDE settings to factory defaults", buttons, "preferences-system-symbolic", "badge-about");
+
+    return page;
+}
+
+typedef struct {
+    const char *title;
+    const char *subtitle;
+    const char *icon;
+    const char *badge;
+    const char *mimes[8];
+    bool is_terminal;
+} default_app_cat_t;
+
+typedef struct {
+    char *title;
+    GPtrArray *apps; /* GAppInfo* */
+    const char *mimes[8];
+    bool is_terminal;
+} default_app_state_t;
+
+static void free_default_app_state(gpointer data) {
+    default_app_state_t *st = (default_app_state_t *)data;
+    if (!st) return;
+    if (st->apps) g_ptr_array_unref(st->apps);
+    g_free(st->title);
+    g_free(st);
+}
+
+static void on_default_app_changed(int idx, gpointer user_data) {
+    default_app_state_t *st = (default_app_state_t *)user_data;
+    if (!st || !st->apps || idx < 0 || (guint)idx >= st->apps->len) return;
+
+    GAppInfo *app = G_APP_INFO(g_ptr_array_index(st->apps, (guint)idx));
+    const char *name = g_app_info_get_display_name(app);
+    const char *id = g_app_info_get_id(app);
+
+    if (st->is_terminal) {
+        if (id) {
+            const char *cfg_dir = g_get_user_config_dir();
+            g_mkdir_with_parents(cfg_dir, 0755);
+            char *path = g_build_filename(cfg_dir, "xdg-terminals.list", NULL);
+            g_file_set_contents(path, id, -1, NULL);
+            g_free(path);
+        }
+        const char *exec_bin = g_app_info_get_executable(app);
+        if (exec_bin && exec_bin[0]) {
+            gsettings_set_string("org.gnome.desktop.default-applications.terminal", "exec", exec_bin);
+        }
+    } else {
+        for (int i = 0; st->mimes[i] != NULL; i++) {
+            g_app_info_set_as_default_for_type(app, st->mimes[i], NULL);
+        }
+    }
+
+    if (g_status_label && name) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "Default %s set to %s", st->title, name);
+        gtk_label_set_text(GTK_LABEL(g_status_label), msg);
+    }
+}
+
+static bool app_in_ptr_array(GPtrArray *arr, const char *id) {
+    if (!id) return false;
+    for (guint i = 0; i < arr->len; i++) {
+        GAppInfo *a = G_APP_INFO(g_ptr_array_index(arr, i));
+        const char *aid = g_app_info_get_id(a);
+        if (aid && strcmp(aid, id) == 0) return true;
+    }
+    return false;
+}
+
+static void add_default_app_row(GtkWidget *card, const default_app_cat_t *cat) {
+    GPtrArray *apps = g_ptr_array_new_with_free_func(g_object_unref);
+    int selected = 0;
+
+    if (cat->is_terminal) {
+        char *cur_term_id = NULL;
+        char *list_path = g_build_filename(g_get_user_config_dir(), "xdg-terminals.list", NULL);
+        char *contents = NULL;
+        if (g_file_get_contents(list_path, &contents, NULL, NULL) && contents) {
+            char **lines = g_strsplit(contents, "\n", -1);
+            for (int i = 0; lines && lines[i]; i++) {
+                char *trimmed = g_strstrip(lines[i]);
+                if (trimmed[0] && trimmed[0] != '#') {
+                    cur_term_id = g_strdup(trimmed);
+                    break;
+                }
+            }
+            g_strfreev(lines);
+            g_free(contents);
+        }
+        g_free(list_path);
+
+        char *gs_exec = gsettings_get_string("org.gnome.desktop.default-applications.terminal", "exec", "");
+
+        GList *all = g_app_info_get_all();
+        for (GList *l = all; l != NULL; l = l->next) {
+            GAppInfo *app = G_APP_INFO(l->data);
+            if (!G_IS_DESKTOP_APP_INFO(app) || !g_app_info_should_show(app)) continue;
+            const char *cats = g_desktop_app_info_get_categories(G_DESKTOP_APP_INFO(app));
+            if (!cats || !strstr(cats, "TerminalEmulator")) continue;
+            const char *id = g_app_info_get_id(app);
+            if (!id || app_in_ptr_array(apps, id)) continue;
+
+            if (cur_term_id && strcmp(id, cur_term_id) == 0) {
+                selected = (int)apps->len;
+            } else if (!cur_term_id && gs_exec && gs_exec[0]) {
+                const char *exe = g_app_info_get_executable(app);
+                if (exe && g_str_has_suffix(exe, gs_exec)) {
+                    selected = (int)apps->len;
+                }
+            }
+            g_ptr_array_add(apps, g_object_ref(app));
+        }
+        g_list_free_full(all, g_object_unref);
+        g_free(cur_term_id);
+        g_free(gs_exec);
+    } else {
+        GAppInfo *def_app = g_app_info_get_default_for_type(cat->mimes[0], FALSE);
+        const char *def_id = def_app ? g_app_info_get_id(def_app) : NULL;
+
+        GList *list = g_app_info_get_all_for_type(cat->mimes[0]);
+        for (GList *l = list; l != NULL; l = l->next) {
+            GAppInfo *app = G_APP_INFO(l->data);
+            const char *id = g_app_info_get_id(app);
+            if (!id || app_in_ptr_array(apps, id)) continue;
+            if (def_id && strcmp(id, def_id) == 0) {
+                selected = (int)apps->len;
+            }
+            g_ptr_array_add(apps, g_object_ref(app));
+        }
+        g_list_free_full(list, g_object_unref);
+        if (def_app) g_object_unref(def_app);
+    }
+
+    if (apps->len == 0) {
+        g_ptr_array_unref(apps);
+        GtkWidget *none_lbl = gtk_label_new("No apps installed");
+        gtk_widget_add_css_class(none_lbl, "subtitle");
+        ui_add_row(card, cat->title, cat->subtitle, none_lbl, cat->icon, cat->badge);
+        return;
+    }
+
+    const char **labels = g_new0(const char *, apps->len + 1);
+    for (guint i = 0; i < apps->len; i++) {
+        GAppInfo *app = G_APP_INFO(g_ptr_array_index(apps, i));
+        labels[i] = g_app_info_get_display_name(app);
+    }
+
+    default_app_state_t *st = g_new0(default_app_state_t, 1);
+    st->title = g_strdup(cat->title);
+    st->apps = apps;
+    st->is_terminal = cat->is_terminal;
+    for (int i = 0; i < 8 && cat->mimes[i]; i++) {
+        st->mimes[i] = cat->mimes[i];
+    }
+
+    GtkWidget *dd = ui_dropdown(labels, (int)apps->len, selected, on_default_app_changed, st);
+    g_signal_connect_swapped(dd, "destroy", G_CALLBACK(free_default_app_state), st);
+    g_free(labels);
+
+    ui_add_row(card, cat->title, cat->subtitle, dd, cat->icon, cat->badge);
+}
+
+GtkWidget *build_page_default_apps(void) {
+    GtkWidget *page = ui_page_container("Default Apps", "Choose preferred applications for files, links, media, and terminal");
+
+    GtkWidget *c_sys = ui_card(page, "System & Internet");
+    static const default_app_cat_t SYS_CATS[] = {
+        {
+            "File Manager",
+            "Opens folders and downloads (e.g. Nautilus, Dolphin, Thunar)",
+            "system-file-manager-symbolic",
+            "badge-wifi",
+            { "inode/directory", NULL },
+            false
+        },
+        {
+            "Web Browser",
+            "Opens web links and HTML documents",
+            "web-browser-symbolic",
+            "badge-bluetooth",
+            { "x-scheme-handler/https", "x-scheme-handler/http", "text/html", "application/xhtml+xml", NULL },
+            false
+        },
+        {
+            "Terminal",
+            "Default terminal emulator",
+            "utilities-terminal-symbolic",
+            "badge-keyboard",
+            { NULL },
+            true
+        },
+        {
+            "Mail Client",
+            "Opens mailto: links and email messages",
+            "mail-unread-symbolic",
+            "badge-sound",
+            { "x-scheme-handler/mailto", NULL },
+            false
+        },
+    };
+    for (size_t i = 0; i < sizeof(SYS_CATS) / sizeof(SYS_CATS[0]); i++) {
+        add_default_app_row(c_sys, &SYS_CATS[i]);
+    }
+
+    GtkWidget *c_media = ui_card(page, "Media & Documents");
+    static const default_app_cat_t MEDIA_CATS[] = {
+        {
+            "Video Player",
+            "Plays MP4, MKV, WebM, AVI and MOV video files",
+            "video-x-generic-symbolic",
+            "badge-display",
+            { "video/mp4", "video/x-matroska", "video/webm", "video/x-msvideo", "video/quicktime", NULL },
+            false
+        },
+        {
+            "Music Player",
+            "Plays MP3, FLAC, OGG, WAV and AAC audio files",
+            "audio-x-generic-symbolic",
+            "badge-sound",
+            { "audio/mpeg", "audio/flac", "audio/ogg", "audio/x-wav", "audio/mp4", "audio/aac", NULL },
+            false
+        },
+        {
+            "Photo Viewer",
+            "Opens PNG, JPEG, WebP, GIF and SVG images",
+            "image-x-generic-symbolic",
+            "badge-appearance",
+            { "image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp", "image/svg+xml", NULL },
+            false
+        },
+        {
+            "PDF & Document Viewer",
+            "Opens PDF documents",
+            "x-office-document-symbolic",
+            "badge-workspaces",
+            { "application/pdf", NULL },
+            false
+        },
+        {
+            "Text & Code Editor",
+            "Opens plain text and configuration files",
+            "accessories-text-editor-symbolic",
+            "badge-mouse",
+            { "text/plain", NULL },
+            false
+        },
+        {
+            "Archive Manager",
+            "Opens ZIP, TAR, GZ, 7Z and RAR archives",
+            "package-x-generic-symbolic",
+            "badge-dock",
+            { "application/zip", "application/x-tar", "application/gzip", "application/x-7z-compressed", "application/vnd.rar", NULL },
+            false
+        },
+    };
+    for (size_t i = 0; i < sizeof(MEDIA_CATS) / sizeof(MEDIA_CATS[0]); i++) {
+        add_default_app_row(c_media, &MEDIA_CATS[i]);
+    }
 
     return page;
 }

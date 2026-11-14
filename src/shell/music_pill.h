@@ -71,6 +71,7 @@ typedef struct aurade_music_pill {
     // Dedicated overlay scene buffer for expanded Dynamic Island
     cairo_buffer_t *overlay_buffer;
     struct wlr_scene_buffer *overlay_scene;
+    struct wlr_scene_blur *blur_node;
     bool overlay_open;
     double overlay_x, overlay_y, overlay_w, overlay_h;
     double prev_btn_x, prev_btn_y, prev_btn_r;

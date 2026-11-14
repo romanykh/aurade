@@ -280,6 +280,10 @@ static cc_layout_t cc_layout_for_page(const aurade_control_center_t *cc, cc_page
             y += 24.0;
             int count = cc->bt_count > 0 ? (cc->bt_count > 6 ? 6 : cc->bt_count) : 1;
             y += count * 42.0;
+            if (cc->bt_codec_count > 0) {
+                int rows = (cc->bt_codec_count + 2) / 3;
+                y += 24.0 + rows * 28.0 + 6.0;
+            }
             y += 44.0;
         }
         y += CC_PAD;
@@ -677,14 +681,14 @@ static void cc_draw_connectivity_item(cairo_t *cr, cc_rect_t row, cc_rect_t badg
     double tx = badge.x + badge.w + 10.0;
     double max_w = row.x + row.w - tx - 18.0;
     cc_color_t title_color = available ? t->text : cc_fade(t->text, 0.45);
-    cc_color_t status_color = busy ? t->accent : (available ? t->text_dim : cc_fade(t->text_dim, 0.55));
+    cc_color_t status_color = busy ? cc_rgba(0.82, 0.85, 0.90, 0.94) : (available ? t->text_dim : cc_fade(t->text_dim, 0.55));
 
     cc_text_fit(cr, title, 12.0, true, title_color, tx, row.y + row.h / 2.0 - 7.0, max_w);
     cc_text_fit(cr, status, 10.0, false, status_color, tx, row.y + row.h / 2.0 + 8.0, max_w);
 
     // Spinner when connecting/disconnecting, otherwise chevron disclosure indicator
     if (busy) {
-        cc_draw_spinner(cr, row.x + row.w - 13.0, row.y + row.h / 2.0, 6.0, spinner_phase, t->accent);
+        cc_draw_spinner(cr, row.x + row.w - 13.0, row.y + row.h / 2.0, 6.0, spinner_phase, cc_rgba(0.82, 0.85, 0.90, 0.94));
     } else {
         cc_draw_chevron(cr, row.x + row.w - 12.0, row.y + row.h / 2.0, cc_fade(t->text_dim, 0.7));
     }
@@ -1378,8 +1382,8 @@ static void probe_worker_bluetooth(cc_probe_snapshot_t *snap, bool list_devices)
                 char *name = space + 1;
                 while (*name == ' ') name++;
                 char *nl = strchr(name, '\n');
-                if (nl) *nl = '\0';
-                snprintf(snap->bluetooth_device, sizeof(snap->bluetooth_device), "%s", name);
+                size_t len = nl ? (size_t)(nl - name) : strlen(name);
+                snprintf(snap->bluetooth_device, sizeof(snap->bluetooth_device), "%.*s", (int)len, name);
             }
         }
     }
@@ -1398,14 +1402,15 @@ static void probe_worker_bluetooth(cc_probe_snapshot_t *snap, bool list_devices)
         add_bt_lines_to_snap(snap, dev_buf, conn_buf, true);
     }
 
+    int top = 0;
     for (int i = 0; i < snap->bt_count; i++) {
         if (snap->bt_items[i].connected) {
-            if (i > 0) {
+            if (i > top) {
                 cc_bt_item_t tmp = snap->bt_items[i];
-                for (int j = i; j > 0; j--) snap->bt_items[j] = snap->bt_items[j - 1];
-                snap->bt_items[0] = tmp;
+                for (int j = i; j > top; j--) snap->bt_items[j] = snap->bt_items[j - 1];
+                snap->bt_items[top] = tmp;
             }
-            break;
+            top++;
         }
     }
 }
@@ -1651,6 +1656,96 @@ typedef struct {
     bool scan_wifi;
 } cc_probe_worker_args_t;
 
+static void bt_codec_pretty_label(const char *profile, char *out, size_t out_sz) {
+    if (!profile) { out[0] = '\0'; return; }
+    if (strcmp(profile, "a2dp-sink-ldac") == 0) snprintf(out, out_sz, "LDAC");
+    else if (strcmp(profile, "a2dp-sink-aptx_hd") == 0) snprintf(out, out_sz, "aptX HD");
+    else if (strcmp(profile, "a2dp-sink-aptx_ll") == 0) snprintf(out, out_sz, "aptX LL");
+    else if (strcmp(profile, "a2dp-sink-aptx") == 0) snprintf(out, out_sz, "aptX");
+    else if (strcmp(profile, "a2dp-sink-aac") == 0) snprintf(out, out_sz, "AAC");
+    else if (strcmp(profile, "a2dp-sink-sbc_xq") == 0) snprintf(out, out_sz, "SBC-XQ");
+    else if (strcmp(profile, "a2dp-sink-sbc") == 0) snprintf(out, out_sz, "SBC");
+    else if (strcmp(profile, "a2dp-sink") == 0) snprintf(out, out_sz, "A2DP");
+    else if (strcmp(profile, "a2dp-auto-prefer-quality") == 0) snprintf(out, out_sz, "Auto HQ");
+    else if (strcmp(profile, "a2dp-auto-prefer-latency") == 0) snprintf(out, out_sz, "Low Lat");
+    else if (strncmp(profile, "a2dp-sink-opus", 14) == 0) snprintf(out, out_sz, "Opus");
+    else if (strcmp(profile, "headset-head-unit-cvsd") == 0) snprintf(out, out_sz, "HFP CVSD");
+    else if (strcmp(profile, "headset-head-unit-msbc") == 0) snprintf(out, out_sz, "HFP mSBC");
+    else if (strcmp(profile, "headset-head-unit") == 0) snprintf(out, out_sz, "HFP / Mic");
+    else snprintf(out, out_sz, "%s", profile);
+}
+
+static void probe_worker_bt_codecs(cc_probe_snapshot_t *snap) {
+    snap->bt_codec_count = 0;
+    snap->bt_codec_active = -1;
+    snap->bt_codec_card[0] = '\0';
+    snap->bt_codec_dev_name[0] = '\0';
+    if (!snap->bluetooth_enabled) return;
+
+    char buf[32768] = {0};
+    if (run_cmd_capture("pactl -f json list cards 2>/dev/null", buf, sizeof(buf)) <= 0) return;
+
+    struct json_object *root = json_tokener_parse(buf);
+    if (!root || !json_object_is_type(root, json_type_array)) {
+        if (root) json_object_put(root);
+        return;
+    }
+
+    int len = json_object_array_length(root);
+    for (int i = 0; i < len; i++) {
+        struct json_object *card = json_object_array_get_idx(root, i);
+        struct json_object *jname = NULL, *jactive = NULL, *jprofiles = NULL, *jprops = NULL;
+        if (!json_object_object_get_ex(card, "name", &jname)) continue;
+        const char *cname = json_object_get_string(jname);
+        if (!cname || strncmp(cname, "bluez_card.", 11) != 0) continue;
+
+        if (!json_object_object_get_ex(card, "profiles", &jprofiles) ||
+            !json_object_is_type(jprofiles, json_type_object)) continue;
+
+        const char *active_prof = json_object_object_get_ex(card, "active_profile", &jactive)
+                                  ? json_object_get_string(jactive) : "";
+
+        cc_bt_codec_t tmp[10];
+        int cnt = 0;
+        int act = -1;
+
+        json_object_object_foreach(jprofiles, key, val) {
+            if (!key || strcmp(key, "off") == 0) continue;
+            struct json_object *javail = NULL;
+            if (json_object_is_type(val, json_type_object) &&
+                json_object_object_get_ex(val, "available", &javail)) {
+                const char *av = json_object_get_string(javail);
+                if (av && strcmp(av, "no") == 0) continue;
+            }
+            if (cnt < 10) {
+                snprintf(tmp[cnt].profile, sizeof(tmp[cnt].profile), "%s", key);
+                bt_codec_pretty_label(key, tmp[cnt].label, sizeof(tmp[cnt].label));
+                memset(&tmp[cnt].rect, 0, sizeof(tmp[cnt].rect));
+                if (active_prof && strcmp(key, active_prof) == 0) act = cnt;
+                cnt++;
+            }
+        }
+
+        if (cnt > 1) {
+            snprintf(snap->bt_codec_card, sizeof(snap->bt_codec_card), "%s", cname);
+            if (json_object_object_get_ex(card, "properties", &jprops) &&
+                json_object_is_type(jprops, json_type_object)) {
+                struct json_object *jdesc = NULL;
+                if (json_object_object_get_ex(jprops, "device.description", &jdesc) ||
+                    json_object_object_get_ex(jprops, "api.bluez5.name", &jdesc)) {
+                    const char *dn = json_object_get_string(jdesc);
+                    if (dn) snprintf(snap->bt_codec_dev_name, sizeof(snap->bt_codec_dev_name), "%s", dn);
+                }
+            }
+            memcpy(snap->bt_codecs, tmp, sizeof(tmp));
+            snap->bt_codec_count = cnt;
+            snap->bt_codec_active = act;
+            break;
+        }
+    }
+    json_object_put(root);
+}
+
 static void *cc_probe_worker_thread(void *data) {
     cc_probe_worker_args_t *args = (cc_probe_worker_args_t *)data;
     aurade_control_center_t *cc = args->cc;
@@ -1665,6 +1760,7 @@ static void *cc_probe_worker_thread(void *data) {
     // so opening Control Center or subpages is 100% instant with 0 latency.
     probe_worker_wifi(&snap, true, scan_wifi);
     probe_worker_bluetooth(&snap, true);
+    probe_worker_bt_codecs(&snap);
     probe_worker_dark_mode(&snap);
     probe_worker_dnd(&snap);
     probe_worker_brightness(&snap);
@@ -1798,9 +1894,15 @@ static int cc_probe_event_handler(int fd, uint32_t mask, void *data) {
 
         if (!snap.bluetooth_enabled) {
             cc->bt_count = 0;
+            cc->bt_codec_count = 0;
         } else {
             cc->bt_count = snap.bt_count;
             memcpy(cc->bt_items, snap.bt_items, sizeof(cc->bt_items));
+            cc->bt_codec_count = snap.bt_codec_count;
+            cc->bt_codec_active = snap.bt_codec_active;
+            snprintf(cc->bt_codec_card, sizeof(cc->bt_codec_card), "%s", snap.bt_codec_card);
+            snprintf(cc->bt_codec_dev_name, sizeof(cc->bt_codec_dev_name), "%s", snap.bt_codec_dev_name);
+            memcpy(cc->bt_codecs, snap.bt_codecs, sizeof(cc->bt_codecs));
         }
 
         if (cc->current_page == CC_PAGE_SOUND || snap.audio_output_count > 0) {
@@ -2806,7 +2908,7 @@ static void cc_draw_wifi_page(cairo_t *cr, const cc_layout_t *L, const cc_theme_
             bool is_err = (strstr(cc->wifi_status_msg, "fail") != NULL ||
                            strstr(cc->wifi_status_msg, "Incorrect") != NULL ||
                            strstr(cc->wifi_status_msg, "required") != NULL);
-            cc_color_t status_col = is_err ? cc_rgba(1.0, 0.40, 0.40, 0.95) : t->accent;
+            cc_color_t status_col = is_err ? cc_rgba(1.0, 0.40, 0.40, 0.95) : cc_rgba(0.82, 0.85, 0.90, 0.94);
             cc_text_fit(cr, cc->wifi_status_msg, 10.5, false, status_col,
                         CC_PAD + 14.0, cur_y + 86.0, CC_CONTENT_W - 148.0);
         }
@@ -2886,20 +2988,20 @@ static void cc_draw_wifi_page(cairo_t *cr, const cc_layout_t *L, const cc_theme_
                     CC_CONTENT_W - 108.0);
 
         if (is_connecting) {
-            cc_text_at(cr, "Connecting…", 9.8, false, t->accent,
+            cc_text_at(cr, "Connecting…", 9.8, false, cc_rgba(0.82, 0.85, 0.90, 0.94),
                        CC_PAD + 38.0, cur_y + 27.0, false, true);
         } else if (active) {
-            cc_text_at(cr, "Connected", 9.8, false, t->accent,
+            cc_text_at(cr, "Connected", 9.8, false, cc_rgba(0.82, 0.85, 0.90, 0.94),
                        CC_PAD + 38.0, cur_y + 27.0, false, true);
         }
 
         if (is_connecting) {
-            cc_draw_spinner(cr, CC_PAD + CC_CONTENT_W - 18.0, bcy, 7.0, cc->spinner_phase, t->accent);
+            cc_draw_spinner(cr, CC_PAD + CC_CONTENT_W - 18.0, bcy, 7.0, cc->spinner_phase, cc_rgba(0.82, 0.85, 0.90, 0.94));
         } else if (active) {
             if (cc->wifi_items[i].secure) {
                 cc_draw_lock_icon(cr, CC_PAD + CC_CONTENT_W - 36.0, bcy, 11.5, t->text_dim);
             }
-            cc_draw_checkmark(cr, CC_PAD + CC_CONTENT_W - 16.0, bcy, 12.0, t->accent);
+            cc_draw_checkmark(cr, CC_PAD + CC_CONTENT_W - 16.0, bcy, 12.0, cc_rgba(0.82, 0.85, 0.90, 0.94));
         } else {
             if (hov_a > 0.05) {
                 double pill_w = 44.0, pill_h = 22.0;
@@ -2923,7 +3025,7 @@ static void cc_draw_wifi_page(cairo_t *cr, const cc_layout_t *L, const cc_theme_
 
     if (cc->wifi_count == 0) {
         if (cc->wifi_scanning) {
-            cc_draw_spinner(cr, CC_WIDTH / 2.0 - 56.0, cur_y + 18.0, 6.5, cc->spinner_phase, t->accent);
+            cc_draw_spinner(cr, CC_WIDTH / 2.0 - 56.0, cur_y + 18.0, 6.5, cc->spinner_phase, cc_rgba(0.82, 0.85, 0.90, 0.94));
             cc_text_at(cr, "Scanning for networks…", 12.0, false, t->text_dim,
                        CC_WIDTH / 2.0 + 8.0, cur_y + 18.0, true, true);
         } else {
@@ -2981,7 +3083,7 @@ static void cc_draw_bluetooth_page(cairo_t *cr, const cc_layout_t *L, const cc_t
     if (cc->bt_status_msg[0]) {
         bool is_err = (strstr(cc->bt_status_msg, "fail") != NULL ||
                        strstr(cc->bt_status_msg, "Failed") != NULL);
-        cc_color_t scol = is_err ? cc_rgba(1.0, 0.42, 0.42, 0.95) : t->accent;
+        cc_color_t scol = is_err ? cc_rgba(1.0, 0.42, 0.42, 0.95) : cc_rgba(0.82, 0.85, 0.90, 0.94);
         cc_text_fit(cr, cc->bt_status_msg, 10.5, false, scol,
                     CC_PAD + 4.0, cur_y + 10.0, CC_CONTENT_W - 8.0);
         cur_y += 24.0;
@@ -3027,15 +3129,15 @@ static void cc_draw_bluetooth_page(cairo_t *cr, const cc_layout_t *L, const cc_t
                     t->text, CC_PAD + 38.0, cur_y + 14.0, CC_CONTENT_W - 116.0);
 
         const char *sub_txt = connected ? "Connected" : "Not Connected";
-        cc_color_t sub_col = connected ? t->accent : t->text_dim;
+        cc_color_t sub_col = connected ? cc_rgba(0.82, 0.85, 0.90, 0.94) : t->text_dim;
         if (is_busy) {
             sub_txt = cc->bt_disconnecting ? "Disconnecting…" : "Connecting…";
-            sub_col = t->accent;
+            sub_col = cc_rgba(0.82, 0.85, 0.90, 0.94);
         }
         cc_text_at(cr, sub_txt, 10.0, false, sub_col, CC_PAD + 38.0, cur_y + 29.0, false, true);
 
         if (is_busy) {
-            cc_draw_spinner(cr, CC_PAD + CC_CONTENT_W - 18.0, bcy, 7.5, cc->spinner_phase, t->accent);
+            cc_draw_spinner(cr, CC_PAD + CC_CONTENT_W - 18.0, bcy, 7.5, cc->spinner_phase, cc_rgba(0.82, 0.85, 0.90, 0.94));
         } else if (hov_a > 0.05) {
             const char *btn_lbl = connected ? "Disconnect" : "Connect";
             double pill_w = connected ? 70.0 : 58.0;
@@ -3052,7 +3154,7 @@ static void cc_draw_bluetooth_page(cairo_t *cr, const cc_layout_t *L, const cc_t
             cc_color_t lbl_col = connected ? cc_rgba(1.0, 0.55, 0.55, hov_a) : cc_rgba(1.0, 1.0, 1.0, hov_a);
             cc_text_at(cr, btn_lbl, 10.2, true, lbl_col, px + pill_w / 2.0, bcy, true, true);
         } else if (connected) {
-            cc_draw_checkmark(cr, CC_PAD + CC_CONTENT_W - 16.0, bcy, 12.0, t->accent);
+            cc_draw_checkmark(cr, CC_PAD + CC_CONTENT_W - 16.0, bcy, 12.0, cc_rgba(0.82, 0.85, 0.90, 0.94));
         }
 
         cur_y += rh;
@@ -3060,7 +3162,7 @@ static void cc_draw_bluetooth_page(cairo_t *cr, const cc_layout_t *L, const cc_t
 
     if (cc->bt_count == 0) {
         if (cc->bt_scanning) {
-            cc_draw_spinner(cr, CC_WIDTH / 2.0 - 60.0, cur_y + 18.0, 6.5, cc->spinner_phase, t->accent);
+            cc_draw_spinner(cr, CC_WIDTH / 2.0 - 60.0, cur_y + 18.0, 6.5, cc->spinner_phase, cc_rgba(0.82, 0.85, 0.90, 0.94));
             cc_text_at(cr, "Searching for devices…", 12.0, false, t->text_dim,
                        CC_WIDTH / 2.0 + 8.0, cur_y + 18.0, true, true);
         } else {
@@ -3068,6 +3170,53 @@ static void cc_draw_bluetooth_page(cairo_t *cr, const cc_layout_t *L, const cc_t
                        CC_WIDTH / 2.0, cur_y + 18.0, true, true);
         }
         cur_y += 38.0;
+    }
+
+    if (cc->bt_codec_count > 0) {
+        cur_y += 6.0;
+        char hdr[96];
+        if (cc->bt_codec_dev_name[0]) {
+            snprintf(hdr, sizeof(hdr), "AUDIO CODEC · %s", cc->bt_codec_dev_name);
+        } else {
+            snprintf(hdr, sizeof(hdr), "AUDIO CODEC");
+        }
+        cc_text_fit(cr, hdr, 10.0, true, t->text_faint,
+                    CC_PAD + 4.0, cur_y + 8.0, CC_CONTENT_W - 8.0);
+        cur_y += 18.0;
+
+        double gap = 6.0;
+        double pill_w = (CC_CONTENT_W - 2.0 * gap) / 3.0;
+        double pill_h = 24.0;
+        for (int i = 0; i < cc->bt_codec_count; i++) {
+            int col = i % 3;
+            int row = i / 3;
+            double px = CC_PAD + col * (pill_w + gap);
+            double py = cur_y + row * (pill_h + 4.0);
+            cc->bt_codecs[i].rect = (cc_sub_rect_t){px, py, pill_w, pill_h};
+
+            bool is_active = (i == cc->bt_codec_active);
+            bool is_hov = (i == cc->bt_codec_hover);
+
+            draw_rounded_rect(cr, px, py, pill_w, pill_h, 7.0);
+            if (is_active) {
+                cc_set(cr, t->accent);
+            } else if (is_hov) {
+                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.18);
+            } else {
+                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.08);
+            }
+            cairo_fill(cr);
+
+            cc_color_t txt_col = is_active ? cc_rgba(1.0, 1.0, 1.0, 0.98) : t->text;
+            cairo_save(cr);
+            cairo_rectangle(cr, px + 4.0, py, pill_w - 8.0, pill_h);
+            cairo_clip(cr);
+            cc_text_at(cr, cc->bt_codecs[i].label, 10.0, is_active, txt_col,
+                       px + pill_w / 2.0, py + pill_h / 2.0, true, true);
+            cairo_restore(cr);
+        }
+        int rows = (cc->bt_codec_count + 2) / 3;
+        cur_y += rows * (pill_h + 4.0);
     }
 
     cur_y += 6.0;
@@ -3150,12 +3299,12 @@ static void cc_draw_sound_page(cairo_t *cr, const cc_layout_t *L, const cc_theme
 
         draw_speaker_icon(cr, CC_PAD + 16.0, cur_y + 16.0, 13.0, 0.90);
 
-        cc_color_t name_col = cc->audio_outputs[i].is_default ? t->accent : t->text;
+        cc_color_t name_col = cc->audio_outputs[i].is_default ? cc_rgba(0.90, 0.92, 0.96, 0.98) : t->text;
         cc_text_fit(cr, cc->audio_outputs[i].description, 12.0, cc->audio_outputs[i].is_default,
                     name_col, CC_PAD + 34.0, cur_y + 16.0, CC_CONTENT_W - 60.0);
 
         if (cc->audio_outputs[i].is_default) {
-            cc_draw_checkmark(cr, CC_PAD + CC_CONTENT_W - 16.0, cur_y + 16.0, 12.0, t->accent);
+            cc_draw_checkmark(cr, CC_PAD + CC_CONTENT_W - 16.0, cur_y + 16.0, 12.0, cc_rgba(0.82, 0.85, 0.90, 0.94));
         }
 
         cur_y += 32.0;
@@ -3179,12 +3328,12 @@ static void cc_draw_sound_page(cairo_t *cr, const cc_layout_t *L, const cc_theme
 
         cc_icon(cr, CC_ICON_MOON, CC_PAD + 16.0, cur_y + 16.0, 13.0, cc_fade(t->text, 0.85));
 
-        cc_color_t name_col = cc->audio_inputs[i].is_default ? t->accent : t->text;
+        cc_color_t name_col = cc->audio_inputs[i].is_default ? cc_rgba(0.90, 0.92, 0.96, 0.98) : t->text;
         cc_text_fit(cr, cc->audio_inputs[i].description, 12.0, cc->audio_inputs[i].is_default,
                     name_col, CC_PAD + 34.0, cur_y + 16.0, CC_CONTENT_W - 60.0);
 
         if (cc->audio_inputs[i].is_default) {
-            cc_draw_checkmark(cr, CC_PAD + CC_CONTENT_W - 16.0, cur_y + 16.0, 12.0, t->accent);
+            cc_draw_checkmark(cr, CC_PAD + CC_CONTENT_W - 16.0, cur_y + 16.0, 12.0, cc_rgba(0.82, 0.85, 0.90, 0.94));
         }
 
         cur_y += 32.0;
@@ -3389,6 +3538,20 @@ static bool cc_handle_subpage_click(aurade_control_center_t *cc, double px, doub
     }
 
     if (cc->current_page == CC_PAGE_BLUETOOTH) {
+        for (int i = 0; i < cc->bt_codec_count; i++) {
+            if (cc_sub_hit(px, py, cc->bt_codecs[i].rect)) {
+                if (cc->bt_codec_card[0]) {
+                    char cmd[256];
+                    snprintf(cmd, sizeof(cmd), "pactl set-card-profile \"%s\" \"%s\" 2>/dev/null",
+                             cc->bt_codec_card, cc->bt_codecs[i].profile);
+                    run_cmd_async(cmd);
+                    cc->bt_codec_active = i;
+                    cc_schedule_refresh(cc, 400);
+                    control_center_render(cc);
+                }
+                return true;
+            }
+        }
         for (int i = 0; i < cc->bt_count && i < 6; i++) {
             if (py >= cc->bt_items[i].y && py <= cc->bt_items[i].y + cc->bt_items[i].h) {
                 connect_to_bluetooth(cc, cc->bt_items[i].mac, cc->bt_items[i].name,
@@ -3453,6 +3616,7 @@ static void cc_handle_subpage_motion(aurade_control_center_t *cc, double px, dou
     }
 
     int old_row = cc->sub_hover_row;
+    int old_codec_hover = cc->bt_codec_hover;
     bool old_back = cc->sub_hover_back;
     bool old_toggle = cc->sub_hover_toggle;
     bool old_scan = cc->sub_hover_scan;
@@ -3462,6 +3626,7 @@ static void cc_handle_subpage_motion(aurade_control_center_t *cc, double px, dou
     bool old_mute = cc->sub_hover_mute;
 
     cc->sub_hover_row = -1;
+    cc->bt_codec_hover = -1;
     cc->sub_hover_back = cc_sub_hit(px, py, cc->sub_back_rect);
     cc->sub_hover_toggle = cc_sub_hit(px, py, cc->sub_toggle_rect);
     cc->sub_hover_scan = cc_sub_hit(px, py, cc->sub_scan_rect);
@@ -3489,6 +3654,12 @@ static void cc_handle_subpage_motion(aurade_control_center_t *cc, double px, dou
                 break;
             }
         }
+        for (int i = 0; i < cc->bt_codec_count; i++) {
+            if (cc_sub_hit(px, py, cc->bt_codecs[i].rect)) {
+                cc->bt_codec_hover = i;
+                break;
+            }
+        }
     } else if (cc->current_page == CC_PAGE_SOUND) {
         cc->sub_hover_mute = cc_sub_hit(px, py, cc->sound_sub_mute_rect);
         for (int i = 0; i < cc->audio_output_count && i < 4; i++) {
@@ -3507,7 +3678,7 @@ static void cc_handle_subpage_motion(aurade_control_center_t *cc, double px, dou
         }
     }
 
-    if (old_row != cc->sub_hover_row || old_back != cc->sub_hover_back ||
+    if (old_row != cc->sub_hover_row || old_codec_hover != cc->bt_codec_hover || old_back != cc->sub_hover_back ||
         old_toggle != cc->sub_hover_toggle || old_scan != cc->sub_hover_scan ||
         old_settings != cc->sub_hover_settings || old_cancel != cc->sub_hover_cancel ||
         old_connect != cc->sub_hover_connect || old_mute != cc->sub_hover_mute) {

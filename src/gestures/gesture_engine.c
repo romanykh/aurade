@@ -1,4 +1,5 @@
 #include "gesture_engine.h"
+#include "../shell/notifications.h"
 #include <linux/input.h>
 #include <sys/ioctl.h>
 #include <fcntl.h>
@@ -160,6 +161,72 @@ static void setup_ipc_socket(gesture_engine_t *ge) {
     bind(ge->ipc_fd, (struct sockaddr *)&addr, sizeof(addr));
     listen(ge->ipc_fd, 4);
     ge->ipc_client_fd = -1;
+}
+
+static void trigger_remote_gesture(gesture_engine_t *ge, const char *cmd) {
+    if (!ge || !ge->server || !cmd) return;
+
+    if (strncmp(cmd, "mission_control", 15) == 0 || strncmp(cmd, "app_expose", 10) == 0) {
+        server_handle_gesture_begin(ge->server, ACTION_MISSION_CONTROL);
+        ge->server->gesture_in_progress = true;
+        server_handle_gesture_update(ge->server, 0.0, 260.0, 1.0);
+        server_handle_gesture_end(ge->server, false, 0.0, 800.0);
+    } else if (strncmp(cmd, "workspace_next", 14) == 0) {
+        server_handle_gesture_begin(ge->server, ACTION_WORKSPACE_NEXT);
+        ge->server->gesture_in_progress = true;
+        server_handle_gesture_update(ge->server, -320.0, 0.0, 1.0);
+        server_handle_gesture_end(ge->server, false, -900.0, 0.0);
+    } else if (strncmp(cmd, "workspace_prev", 14) == 0) {
+        server_handle_gesture_begin(ge->server, ACTION_WORKSPACE_PREV);
+        ge->server->gesture_in_progress = true;
+        server_handle_gesture_update(ge->server, 320.0, 0.0, 1.0);
+        server_handle_gesture_end(ge->server, false, 900.0, 0.0);
+    } else if (strncmp(cmd, "launchpad", 9) == 0) {
+        server_handle_gesture_begin(ge->server, ACTION_LAUNCHPAD);
+        ge->server->gesture_in_progress = true;
+        server_handle_gesture_update(ge->server, 0.0, 0.0, 0.65);
+        server_handle_gesture_end(ge->server, false, 0.0, 0.0);
+    }
+}
+
+static int remote_event_callback(int fd, uint32_t mask, void *data) {
+    (void)mask;
+    gesture_engine_t *ge = data;
+    for (;;) {
+        int client = accept(fd, NULL, NULL);
+        if (client < 0) break;
+        char buf[128];
+        ssize_t n = read(client, buf, sizeof(buf) - 1);
+        close(client);
+        if (n > 0) {
+            buf[n] = '\0';
+            trigger_remote_gesture(ge, buf);
+        }
+    }
+    return 0;
+}
+
+static void setup_remote_socket(gesture_engine_t *ge, struct wl_event_loop *loop) {
+    unlink("/tmp/aurade-remote.sock");
+    ge->remote_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    if (ge->remote_fd < 0) return;
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, "/tmp/aurade-remote.sock", sizeof(addr.sun_path) - 1);
+
+    if (bind(ge->remote_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0 ||
+        listen(ge->remote_fd, 8) < 0) {
+        close(ge->remote_fd);
+        ge->remote_fd = -1;
+        return;
+    }
+    if (loop) {
+        ge->remote_event_source = wl_event_loop_add_fd(loop, ge->remote_fd,
+                                                       WL_EVENT_READABLE,
+                                                       remote_event_callback, ge);
+    }
 }
 
 void gesture_engine_broadcast_telemetry(gesture_engine_t *ge, const char *status) {
@@ -394,11 +461,17 @@ static void process_multitouch_frame(gesture_engine_t *ge) {
     ge->finger_count = count;
 
     if (ge->wait_for_release) {
+        ge->nc_two_finger_active = false;
+        ge->nc_two_finger_triggered = false;
+        ge->nc_in_edge = false;
         if (count < 2) ge->wait_for_release = false;
         return;
     }
 
     if (count < 2) {
+        ge->nc_two_finger_active = false;
+        ge->nc_two_finger_triggered = false;
+        ge->nc_in_edge = false;
         if (ge->state == TRACKER_ACTIVE) finish_gesture(ge, false);
         reset_tracking(ge);
         return;
@@ -407,10 +480,19 @@ static void process_multitouch_frame(gesture_engine_t *ge) {
     // A palm or a whole resting hand: never a gesture. Cancel anything that is
     // already running rather than dragging an overlay around.
     if (count > MAX_GESTURE_FINGERS) {
+        ge->nc_two_finger_active = false;
+        ge->nc_two_finger_triggered = false;
+        ge->nc_in_edge = false;
         if (ge->state == TRACKER_ACTIVE) finish_gesture(ge, true);
         reset_tracking(ge);
         ge->wait_for_release = true;
         return;
+    }
+
+    if (count != 2) {
+        ge->nc_two_finger_active = false;
+        ge->nc_two_finger_triggered = false;
+        ge->nc_in_edge = false;
     }
 
     // Once a gesture is running, keep tracking exactly the contacts that
@@ -441,6 +523,45 @@ static void process_multitouch_frame(gesture_engine_t *ge) {
     double cy = sum_y / tracked_count;
     double ccx = (cx - ge->abs_x_min) * ge->px_scale_x;
     double ccy = (cy - ge->abs_y_min) * ge->px_scale_y;
+
+    // Two-finger horizontal swipe on the left/right edge of the physical touchpad
+    if (count == 2 && ge->state != TRACKER_ACTIVE && ge->server && ge->server->notifications) {
+        bool left_side = ge->server->config.notif_center_left;
+        double min_x = ge->abs_x_max, max_x = ge->abs_x_min;
+        for (int i = 0; i < MAX_TOUCH_SLOTS; i++) {
+            if (tracking & (1ULL << i)) {
+                if (ge->slots[i].x < min_x) min_x = ge->slots[i].x;
+                if (ge->slots[i].x > max_x) max_x = ge->slots[i].x;
+            }
+        }
+        double span = (double)(ge->abs_x_max - ge->abs_x_min);
+        double min_norm_x = (span > 0.0) ? (min_x - ge->abs_x_min) / span : 0.5;
+        double max_norm_x = (span > 0.0) ? (max_x - ge->abs_x_min) / span : 0.5;
+        if (!ge->nc_two_finger_active) {
+            ge->nc_two_finger_active = true;
+            ge->nc_two_finger_triggered = false;
+            ge->nc_start_ccx = ccx;
+            ge->nc_start_ccy = ccy;
+            ge->nc_in_edge = left_side ? (min_norm_x <= 0.28) : (max_norm_x >= 0.72);
+        } else if (!ge->nc_two_finger_triggered) {
+            double dx = ccx - ge->nc_start_ccx;
+            double dy = ccy - ge->nc_start_ccy;
+            bool nc_open = notifications_nc_is_open(ge->server->notifications);
+            if (fabs(dx) > fabs(dy) * 1.15 && fabs(dx) >= 55.0) {
+                if (!nc_open && ge->nc_in_edge) {
+                    if ((!left_side && dx <= -55.0) || (left_side && dx >= 55.0)) {
+                        notifications_nc_open(ge->server->notifications);
+                        ge->nc_two_finger_triggered = true;
+                    }
+                } else if (nc_open) {
+                    if ((!left_side && dx >= 55.0) || (left_side && dx <= -55.0)) {
+                        notifications_nc_close(ge->server->notifications);
+                        ge->nc_two_finger_triggered = true;
+                    }
+                }
+            }
+        }
+    }
 
     double sum_dist = 0.0;
     for (int i = 0; i < MAX_TOUCH_SLOTS; i++) {
@@ -740,9 +861,11 @@ gesture_engine_t *gesture_engine_create(aurade_server_t *server, struct wl_event
     ge->evdev_fd = -1;
     ge->ipc_fd = -1;
     ge->ipc_client_fd = -1;
+    ge->remote_fd = -1;
     ge->active_slot = 0;
 
     setup_ipc_socket(ge);
+    setup_remote_socket(ge, loop);
 
     // A nested AuraDE (test_nested.sh, or running inside another desktop)
     // shares the physical touchpad with the host compositor. Reading it there
@@ -817,5 +940,10 @@ void gesture_engine_destroy(gesture_engine_t *ge) {
     if (ge->ipc_client_fd >= 0) close(ge->ipc_client_fd);
     if (ge->ipc_fd >= 0) close(ge->ipc_fd);
     unlink("/tmp/aurade-gesture.sock");
+    if (ge->remote_event_source) {
+        wl_event_source_remove(ge->remote_event_source);
+    }
+    if (ge->remote_fd >= 0) close(ge->remote_fd);
+    unlink("/tmp/aurade-remote.sock");
     free(ge);
 }

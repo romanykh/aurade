@@ -15,6 +15,7 @@ typedef struct aurade_osd {
     aurade_server_t *server;
     cairo_buffer_t *buffer;
     struct wlr_scene_buffer *scene_buffer;
+    struct wlr_scene_blur *blur_node;
     int screen_width, screen_height;
 
     osd_type_t type;

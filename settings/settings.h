@@ -78,6 +78,7 @@ GtkWidget *build_page_keyboard(void);
 GtkWidget *build_page_appearance(void);
 GtkWidget *build_page_dock(void);
 GtkWidget *build_page_gestures(void);
+GtkWidget *build_page_default_apps(void);
 GtkWidget *build_page_about(void);
 
 #endif // AURADE_SETTINGS_H

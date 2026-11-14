@@ -462,10 +462,10 @@ bool app_launch_settings(const char *page) {
 
 bool app_launch_aura_connect(void) {
     char cmd[1024];
-    char script_path[1024] = {0};
+    char bin_path[1024] = {0};
 
-    if (access("../aura-connect/linux/aura_connect_app.py", R_OK) == 0) {
-        snprintf(script_path, sizeof(script_path), "../aura-connect/linux/aura_connect_app.py");
+    if (access("../aura-connect/linux/aura_connect", X_OK) == 0) {
+        snprintf(bin_path, sizeof(bin_path), "../aura-connect/linux/aura_connect");
     } else {
         char exe[512];
         ssize_t len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
@@ -475,18 +475,18 @@ bool app_launch_aura_connect(void) {
             if (last_slash) {
                 *last_slash = '\0';
                 char candidate[1024];
-                snprintf(candidate, sizeof(candidate), "%s/../aura-connect/linux/aura_connect_app.py", exe);
-                if (access(candidate, R_OK) == 0) {
-                    snprintf(script_path, sizeof(script_path), "%s", candidate);
+                snprintf(candidate, sizeof(candidate), "%s/../aura-connect/linux/aura_connect", exe);
+                if (access(candidate, X_OK) == 0) {
+                    snprintf(bin_path, sizeof(bin_path), "%s", candidate);
                 }
             }
         }
     }
 
-    if (script_path[0]) {
-        snprintf(cmd, sizeof(cmd), "python3 \"%s\" >/dev/null 2>&1 &", script_path);
+    if (bin_path[0]) {
+        snprintf(cmd, sizeof(cmd), "\"%s\" >/dev/null 2>&1 &", bin_path);
     } else {
-        snprintf(cmd, sizeof(cmd), "aura-connect 2>/dev/null || python3 -m aura_connect >/dev/null 2>&1 &");
+        snprintf(cmd, sizeof(cmd), "aura-connect >/dev/null 2>&1 &");
     }
     return app_launch_command(cmd);
 }

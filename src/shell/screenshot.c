@@ -48,7 +48,8 @@ struct aurade_screenshot {
     // Modes & Targets
     shot_mode_t mode;           // SHOT_MODE_STILL or SHOT_MODE_VIDEO
     shot_target_t target;       // SHOT_TARGET_SELECTION, FULLSCREEN
-    bool record_audio;          // Include microphone/audio in video recording
+    bool record_mic;            // Include microphone in video recording
+    bool record_sys_audio;      // Include system/desktop audio in video recording
     bool direct_crop;           // Direct region capture (Shift+Print): snap on release
 
     // Selection box geometry (screen coordinates)
@@ -62,7 +63,7 @@ struct aurade_screenshot {
 
     // Floating Toolbar geometry & hover states
     double bar_x, bar_y, bar_w, bar_h;
-    int hover_button; // 0 = none, 1 = still, 2 = video, 3 = full, 4 = sel, 5 = audio, 6 = action, 7 = close
+    int hover_button; // 0 = none, 1 = still, 2 = video, 3 = full, 4 = sel, 5 = mic, 6 = action, 7 = close, 8 = sys_audio
 
     // Live Recording State
     bool is_recording;
@@ -70,6 +71,8 @@ struct aurade_screenshot {
     uint64_t recording_start_ms;
     char recording_output_file[1024];
     struct wl_event_source *recording_timer;
+    int pa_mod_ids[3];
+    int pa_mod_count;
 
     // Asynchronous Reaping of Finalized Recording
     pid_t reaping_pid;
@@ -240,6 +243,44 @@ static void draw_mic_icon(cairo_t *cr, double cx, double cy, double sz, bool ena
     cairo_stroke(cr);
 
     // Diagonal mute slash if disabled
+    if (!enabled) {
+        cairo_set_source_rgba(cr, 0.95, 0.25, 0.25, 0.90);
+        cairo_set_line_width(cr, 1.6);
+        cairo_move_to(cr, cx - sz * 0.38, cy - sz * 0.38);
+        cairo_line_to(cr, cx + sz * 0.38, cy + sz * 0.38);
+        cairo_stroke(cr);
+    }
+
+    cairo_restore(cr);
+}
+
+static void draw_sys_audio_icon(cairo_t *cr, double cx, double cy, double sz, bool enabled) {
+    cairo_save(cr);
+    if (enabled) {
+        cairo_set_source_rgba(cr, 0.28, 0.65, 1.0, 1.0);
+    } else {
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.45);
+    }
+    cairo_set_line_width(cr, 1.4);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+
+    // Speaker body + cone
+    cairo_move_to(cr, cx - sz * 0.36, cy - sz * 0.14);
+    cairo_line_to(cr, cx - sz * 0.18, cy - sz * 0.14);
+    cairo_line_to(cr, cx + sz * 0.06, cy - sz * 0.34);
+    cairo_line_to(cr, cx + sz * 0.06, cy + sz * 0.34);
+    cairo_line_to(cr, cx - sz * 0.18, cy + sz * 0.14);
+    cairo_line_to(cr, cx - sz * 0.36, cy + sz * 0.14);
+    cairo_close_path(cr);
+    cairo_fill(cr);
+
+    // Sound waves
+    cairo_arc(cr, cx + sz * 0.06, cy, sz * 0.22, -M_PI / 3.5, M_PI / 3.5);
+    cairo_stroke(cr);
+    cairo_arc(cr, cx + sz * 0.06, cy, sz * 0.38, -M_PI / 3.5, M_PI / 3.5);
+    cairo_stroke(cr);
+
     if (!enabled) {
         cairo_set_source_rgba(cr, 0.95, 0.25, 0.25, 0.90);
         cairo_set_line_width(cr, 1.6);
@@ -453,7 +494,7 @@ static void render_overlay(aurade_screenshot_t *shot) {
         return;
     }
 
-    double bw = 416.0;
+    double bw = 454.0;
     double bh = 48.0;
     double bx = (shot->width - bw) / 2.0;
 
@@ -570,7 +611,7 @@ static void render_overlay(aurade_screenshot_t *shot) {
     cairo_fill(cr);
     cur_x += 9.0;
 
-    // Segment 3: Audio / Mic Toggle (Interactive in Video Mode)
+    // Segment 3: Audio / Mic & System Audio Toggles (Interactive in Video Mode)
     double mic_btn_w = 34.0;
     double mic_x = cur_x;
     if (shot->hover_button == 5 && shot->mode == SHOT_MODE_VIDEO) {
@@ -578,7 +619,7 @@ static void render_overlay(aurade_screenshot_t *shot) {
         cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12);
         cairo_fill(cr);
     }
-    if (shot->record_audio && shot->mode == SHOT_MODE_VIDEO) {
+    if (shot->record_mic && shot->mode == SHOT_MODE_VIDEO) {
         draw_rounded_rect(cr, mic_x, seg_y, mic_btn_w, seg_h, 8.0);
         cairo_set_source_rgba(cr, 0.18, 0.82, 0.40, 0.20);
         cairo_fill_preserve(cr);
@@ -587,9 +628,29 @@ static void render_overlay(aurade_screenshot_t *shot) {
         cairo_stroke(cr);
     }
     draw_mic_icon(cr, mic_x + mic_btn_w / 2.0, seg_y + seg_h / 2.0, 16.0,
-                  shot->mode == SHOT_MODE_VIDEO ? shot->record_audio : false);
+                  shot->mode == SHOT_MODE_VIDEO ? shot->record_mic : false);
 
-    cur_x += mic_btn_w + 8.0;
+    cur_x += mic_btn_w + 4.0;
+
+    double sys_btn_w = 34.0;
+    double sys_x = cur_x;
+    if (shot->hover_button == 8 && shot->mode == SHOT_MODE_VIDEO) {
+        draw_rounded_rect(cr, sys_x, seg_y, sys_btn_w, seg_h, 8.0);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12);
+        cairo_fill(cr);
+    }
+    if (shot->record_sys_audio && shot->mode == SHOT_MODE_VIDEO) {
+        draw_rounded_rect(cr, sys_x, seg_y, sys_btn_w, seg_h, 8.0);
+        cairo_set_source_rgba(cr, 0.18, 0.56, 0.98, 0.22);
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgba(cr, 0.35, 0.72, 1.0, 0.45);
+        cairo_set_line_width(cr, 1.0);
+        cairo_stroke(cr);
+    }
+    draw_sys_audio_icon(cr, sys_x + sys_btn_w / 2.0, seg_y + seg_h / 2.0, 16.0,
+                        shot->mode == SHOT_MODE_VIDEO ? shot->record_sys_audio : false);
+
+    cur_x += sys_btn_w + 8.0;
 
     // Divider 3
     cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.14);
@@ -812,6 +873,78 @@ static void start_wf_recorder(aurade_screenshot_t *shot, int x, int y, int w, in
         snprintf(geom_str, sizeof(geom_str), "%d,%d %dx%d", x, y, ew, eh);
     }
 
+    // Prepare audio device flag for wf-recorder
+    char audio_arg[300] = {0};
+    bool use_audio = (shot->record_mic || shot->record_sys_audio);
+    if (use_audio) {
+        if (shot->record_mic && !shot->record_sys_audio) {
+            snprintf(audio_arg, sizeof(audio_arg), "-a");
+        } else {
+            char def_sink[192] = {0};
+            FILE *fp = popen("pactl get-default-sink 2>/dev/null", "r");
+            if (fp) {
+                if (fgets(def_sink, sizeof(def_sink), fp)) {
+                    def_sink[strcspn(def_sink, "\r\n")] = '\0';
+                }
+                pclose(fp);
+            }
+
+            if (shot->record_sys_audio && !shot->record_mic) {
+                if (def_sink[0]) {
+                    snprintf(audio_arg, sizeof(audio_arg), "--audio=%s.monitor", def_sink);
+                }
+            } else if (shot->record_sys_audio && shot->record_mic) {
+                char def_src[192] = {0};
+                FILE *fps = popen("pactl get-default-source 2>/dev/null", "r");
+                if (fps) {
+                    if (fgets(def_src, sizeof(def_src), fps)) {
+                        def_src[strcspn(def_src, "\r\n")] = '\0';
+                    }
+                    pclose(fps);
+                }
+                shot->pa_mod_count = 0;
+                int mod_sink = -1;
+                FILE *fm1 = popen("pactl load-module module-null-sink sink_name=aurade_rec_mix sink_properties=device.description=AuraDE_Rec_Mix 2>/dev/null", "r");
+                if (fm1) {
+                    if (fscanf(fm1, "%d", &mod_sink) != 1) mod_sink = -1;
+                    pclose(fm1);
+                }
+                if (mod_sink >= 0) {
+                    shot->pa_mod_ids[shot->pa_mod_count++] = mod_sink;
+                    if (def_sink[0]) {
+                        char cmd[320];
+                        snprintf(cmd, sizeof(cmd), "pactl load-module module-loopback source=\"%s.monitor\" sink=aurade_rec_mix latency_msec=20 2>/dev/null", def_sink);
+                        FILE *fm2 = popen(cmd, "r");
+                        if (fm2) {
+                            int mid = -1;
+                            if (fscanf(fm2, "%d", &mid) == 1 && mid >= 0 && shot->pa_mod_count < 3) {
+                                shot->pa_mod_ids[shot->pa_mod_count++] = mid;
+                            }
+                            pclose(fm2);
+                        }
+                    }
+                    if (def_src[0]) {
+                        char cmd[320];
+                        snprintf(cmd, sizeof(cmd), "pactl load-module module-loopback source=\"%s\" sink=aurade_rec_mix latency_msec=20 2>/dev/null", def_src);
+                        FILE *fm3 = popen(cmd, "r");
+                        if (fm3) {
+                            int mid = -1;
+                            if (fscanf(fm3, "%d", &mid) == 1 && mid >= 0 && shot->pa_mod_count < 3) {
+                                shot->pa_mod_ids[shot->pa_mod_count++] = mid;
+                            }
+                            pclose(fm3);
+                        }
+                    }
+                    snprintf(audio_arg, sizeof(audio_arg), "--audio=aurade_rec_mix.monitor");
+                } else if (def_sink[0]) {
+                    snprintf(audio_arg, sizeof(audio_arg), "--audio=%s.monitor", def_sink);
+                } else {
+                    snprintf(audio_arg, sizeof(audio_arg), "-a");
+                }
+            }
+        }
+    }
+
     pid_t pid = fork();
     if (pid < 0) {
         fprintf(stderr, "[AuraDE] Failed to fork wf-recorder\n");
@@ -844,8 +977,8 @@ static void start_wf_recorder(aurade_screenshot_t *shot, int x, int y, int w, in
             argv[argc++] = "-g";
             argv[argc++] = geom_str;
         }
-        if (shot->record_audio) {
-            argv[argc++] = "-a";
+        if (audio_arg[0] != '\0') {
+            argv[argc++] = audio_arg;
         }
         argv[argc] = NULL;
 
@@ -923,6 +1056,15 @@ void screenshot_stop_recording(aurade_screenshot_t *shot) {
             }
         }
     }
+
+    for (int i = shot->pa_mod_count - 1; i >= 0; i--) {
+        if (shot->pa_mod_ids[i] >= 0) {
+            char ucmd[128];
+            snprintf(ucmd, sizeof(ucmd), "pactl unload-module %d >/dev/null 2>&1 &", shot->pa_mod_ids[i]);
+            app_launch_command(ucmd);
+        }
+    }
+    shot->pa_mod_count = 0;
 }
 
 bool screenshot_is_recording(aurade_screenshot_t *shot) {
@@ -1003,7 +1145,8 @@ aurade_screenshot_t *screenshot_create(aurade_server_t *server) {
     shot->height = 1080;
     shot->mode = SHOT_MODE_STILL;
     shot->target = SHOT_TARGET_SELECTION;
-    shot->record_audio = true; // Audio enabled by default for video recording
+    shot->record_mic = true;        // Microphone enabled by default for video recording
+    shot->record_sys_audio = false; // System audio disabled by default until toggled
 
     shot->buffer = cairo_buffer_create(shot->width, shot->height);
     if (!shot->buffer) {
@@ -1133,8 +1276,12 @@ static int toolbar_button_at(aurade_screenshot_t *shot, double x, double y) {
     if (x >= cur_x + 36.0 && x <= cur_x + 70.0) return 4;
     cur_x += 70.0 + 17.0;
 
-    // Option 5: Audio toggle
+    // Option 5: Mic toggle
     if (x >= cur_x && x <= cur_x + 34.0) return 5;
+    cur_x += 34.0 + 4.0;
+
+    // Option 8: System audio toggle
+    if (x >= cur_x && x <= cur_x + 34.0) return 8;
     cur_x += 34.0 + 17.0;
 
     // Action 6: Capture / Record
@@ -1318,9 +1465,14 @@ bool screenshot_handle_button(aurade_screenshot_t *shot, double x, double y,
                 case 4: // Selection target
                     shot->target = SHOT_TARGET_SELECTION;
                     break;
-                case 5: // Audio toggle
+                case 5: // Mic toggle
                     if (shot->mode == SHOT_MODE_VIDEO) {
-                        shot->record_audio = !shot->record_audio;
+                        shot->record_mic = !shot->record_mic;
+                    }
+                    break;
+                case 8: // System audio toggle
+                    if (shot->mode == SHOT_MODE_VIDEO) {
+                        shot->record_sys_audio = !shot->record_sys_audio;
                     }
                     break;
                 case 6: // Action (Capture / Record)
@@ -1435,7 +1587,15 @@ bool screenshot_handle_key(aurade_screenshot_t *shot, uint32_t sym, bool pressed
         }
         if (sym == XKB_KEY_m || sym == XKB_KEY_a) {
             if (shot->mode == SHOT_MODE_VIDEO) {
-                shot->record_audio = !shot->record_audio;
+                shot->record_mic = !shot->record_mic;
+                render_overlay(shot);
+                if (shot->server) schedule_all_outputs(shot->server);
+            }
+            return true;
+        }
+        if (sym == XKB_KEY_s) {
+            if (shot->mode == SHOT_MODE_VIDEO) {
+                shot->record_sys_audio = !shot->record_sys_audio;
                 render_overlay(shot);
                 if (shot->server) schedule_all_outputs(shot->server);
             }

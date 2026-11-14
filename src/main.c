@@ -95,6 +95,7 @@ void server_update_blur_config(aurade_server_t *server) {
         wlr_scene_node_set_enabled(&server->dock->blur_node->node,
                                    server->dock->enabled &&
                                    server->dock->hide_progress < 0.999 &&
+                                   dock_uses_pill_blur(server->dock) &&
                                    dock_glass &&
                                    (server->config.dock_opacity > 0.05));
     }
@@ -137,6 +138,15 @@ void server_update_blur_config(aurade_server_t *server) {
                     wlr_scene_node_set_enabled(&server->notifications->blur_nodes[i]->node, false);
                 }
             }
+        }
+    }
+    if (server->music_pill && server->music_pill->blur_node) {
+        bool pill_glass = (server->config.blur_dock || server->config.liquid_glass);
+        float pill_str = pill_glass ? (float)str : 0.0f;
+        wlr_scene_blur_set_liquid_glass(server->music_pill->blur_node, server->config.liquid_glass);
+        wlr_scene_blur_set_strength(server->music_pill->blur_node, pill_str);
+        if (!pill_glass) {
+            wlr_scene_node_set_enabled(&server->music_pill->blur_node->node, false);
         }
     }
     if (server->views.next && server->views.prev) {
@@ -1488,7 +1498,7 @@ static void cursor_button(struct wl_listener *listener, void *data) {
         }
     }
 
-    // Notifications popups consume clicks first.
+    // Notifications popups & Notification Center consume clicks first.
     if (server->notifications && notifications_pointer_owns(server->notifications, lx, ly)) {
         if (left) {
             notifications_handle_click(server->notifications, lx, ly);
@@ -1496,6 +1506,16 @@ static void cursor_button(struct wl_listener *listener, void *data) {
         server_dismiss_popups(server);
         wlr_seat_pointer_clear_focus(server->seat);
         return;
+    }
+
+    if (server->notifications && notifications_nc_is_open(server->notifications)) {
+        bool on_clock = (server->topbar && ly <= server->topbar->height &&
+                         server->topbar->clock_w > 0 &&
+                         lx >= server->topbar->clock_x &&
+                         lx <= server->topbar->clock_x + server->topbar->clock_w);
+        if (!on_clock) {
+            notifications_nc_close(server->notifications);
+        }
     }
 
     // Dock context menu consumes clicks while open.
@@ -1705,11 +1725,18 @@ aurade_view_t *server_view_at(aurade_server_t *server, double lx, double ly,
                               struct wlr_surface **surface, double *sx, double *sy) {
     struct wlr_scene_node *node = wlr_scene_node_at(&server->scene->tree.node, lx, ly, sx, sy);
 
-    // The dock renders into an oversized transparent buffer: it needs headroom
-    // for magnified icons and tooltips. A hit on that empty headroom must not
-    // eat a click meant for the window underneath (that was the dead strip
-    // above the dock). Retry the hit test with just the dock hidden; the pill
-    // itself keeps capturing the pointer via dock_handle_motion().
+    // The dock and notifications render into oversized transparent buffers.
+    // A hit on empty transparent space must not eat clicks meant for windows
+    // or popups underneath (which would trigger desktop-click unfocus/dismiss).
+    if (node && server->notifications && server->notifications->scene_buffer &&
+        node == &server->notifications->scene_buffer->node &&
+        !notifications_pointer_owns(server->notifications, lx, ly)) {
+        wlr_scene_node_set_enabled(node, false);
+        node = wlr_scene_node_at(&server->scene->tree.node, lx, ly, sx, sy);
+        wlr_scene_node_set_enabled(&server->notifications->scene_buffer->node,
+                                   server->notifications->count > 0);
+    }
+
     if (node && server->dock && server->dock->scene_buffer &&
         node == &server->dock->scene_buffer->node &&
         !dock_pointer_owns(server->dock, lx, ly)) {
@@ -1762,12 +1789,57 @@ static void cursor_axis(struct wl_listener *listener, void *data) {
         return;
     }
 
+    // Suppress horizontal scroll events while performing a 2-finger touchpad edge swipe
+    if (event->source == WL_POINTER_AXIS_SOURCE_FINGER &&
+        event->orientation == WL_POINTER_AXIS_HORIZONTAL_SCROLL &&
+        server->gesture_engine &&
+        (server->gesture_engine->nc_in_edge || server->gesture_engine->nc_two_finger_triggered)) {
+        return;
+    }
+
     // libinput defaults to traditional scrolling. "Natural Direction" only
     // affects two-finger scrolling; touchpad gestures always follow the
     // physical direction of the fingers.
-    if (server->config.natural_scroll) {
+    bool is_wheel = (event->source == WL_POINTER_AXIS_SOURCE_WHEEL ||
+                     event->source == WL_POINTER_AXIS_SOURCE_WHEEL_TILT);
+    bool use_natural = is_wheel ? server->config.mouse_natural_scroll
+                                : server->config.natural_scroll;
+    if (use_natural) {
         delta = -delta;
         delta_discrete = -delta_discrete;
+    }
+
+    if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL && server->notifications &&
+        notifications_nc_pointer_owns(server->notifications, server->cursor->x, server->cursor->y)) {
+        notifications_nc_handle_scroll(server->notifications, delta);
+        return;
+    }
+
+    if (event->source == WL_POINTER_AXIS_SOURCE_WHEEL && delta_discrete != 0 &&
+        server->config.smooth_wheel_scroll && !server->active_constraint) {
+        if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL) {
+            server->wheel_vel_y += delta * 7.5;
+            if (server->wheel_vel_y > 3200.0) server->wheel_vel_y = 3200.0;
+            if (server->wheel_vel_y < -3200.0) server->wheel_vel_y = -3200.0;
+            server->wheel_scrolling_y = true;
+        } else {
+            server->wheel_vel_x += delta * 7.5;
+            if (server->wheel_vel_x > 3200.0) server->wheel_vel_x = 3200.0;
+            if (server->wheel_vel_x < -3200.0) server->wheel_vel_x = -3200.0;
+            server->wheel_scrolling_x = true;
+        }
+        server->wheel_last_time_msec = event->time_msec;
+        schedule_all_outputs(server);
+        return;
+    }
+
+    // Touchpad/continuous input: cancel any residual wheel momentum and forward 1:1
+    if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL) {
+        server->wheel_vel_y = 0.0;
+        server->wheel_scrolling_y = false;
+    } else {
+        server->wheel_vel_x = 0.0;
+        server->wheel_scrolling_x = false;
     }
 
     wlr_seat_pointer_notify_axis(server->seat, event->time_msec, event->orientation,
@@ -2126,6 +2198,12 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
         // Escape dismisses dock context menu.
         if (sym == XKB_KEY_Escape && server->dock && dock_context_menu_is_open(server->dock)) {
             dock_close_context_menu(server->dock);
+            return;
+        }
+
+        // Escape dismisses Notification Center.
+        if (sym == XKB_KEY_Escape && server->notifications && notifications_nc_is_open(server->notifications)) {
+            notifications_nc_close(server->notifications);
             return;
         }
 
@@ -3453,8 +3531,62 @@ void server_tick_animations(aurade_server_t *server, double dt) {
         }
     }
 
-    // 3. Launchpad Spring Animations (page switch & folder open/close)
-    if (server->launchpad && (server->launchpad->page_animating || server->launchpad->folder_animating)) {
+    // 2.5 System-wide Kinetic Wheel Scrolling
+    if (server->wheel_scrolling_y || server->wheel_scrolling_x) {
+        server->wheel_last_time_msec += (uint32_t)fmax(1.0, lround(dt * 1000.0));
+        double decay = exp(-8.5 * dt);
+        bool sent_axis = false;
+
+        if (server->wheel_scrolling_y) {
+            double step = server->wheel_vel_y * dt;
+            server->wheel_vel_y *= decay;
+            if (fabs(server->wheel_vel_y) < 4.0) {
+                server->wheel_vel_y = 0.0;
+                server->wheel_scrolling_y = false;
+                wlr_seat_pointer_notify_axis(server->seat, server->wheel_last_time_msec,
+                                             WL_POINTER_AXIS_VERTICAL_SCROLL,
+                                             0.0, 0, WL_POINTER_AXIS_SOURCE_CONTINUOUS,
+                                             WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
+                sent_axis = true;
+            } else if (fabs(step) > 0.01) {
+                wlr_seat_pointer_notify_axis(server->seat, server->wheel_last_time_msec,
+                                             WL_POINTER_AXIS_VERTICAL_SCROLL,
+                                             step, 0, WL_POINTER_AXIS_SOURCE_CONTINUOUS,
+                                             WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
+                sent_axis = true;
+            }
+        }
+
+        if (server->wheel_scrolling_x) {
+            double step = server->wheel_vel_x * dt;
+            server->wheel_vel_x *= decay;
+            if (fabs(server->wheel_vel_x) < 4.0) {
+                server->wheel_vel_x = 0.0;
+                server->wheel_scrolling_x = false;
+                wlr_seat_pointer_notify_axis(server->seat, server->wheel_last_time_msec,
+                                             WL_POINTER_AXIS_HORIZONTAL_SCROLL,
+                                             0.0, 0, WL_POINTER_AXIS_SOURCE_CONTINUOUS,
+                                             WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
+                sent_axis = true;
+            } else if (fabs(step) > 0.01) {
+                wlr_seat_pointer_notify_axis(server->seat, server->wheel_last_time_msec,
+                                             WL_POINTER_AXIS_HORIZONTAL_SCROLL,
+                                             step, 0, WL_POINTER_AXIS_SOURCE_CONTINUOUS,
+                                             WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
+                sent_axis = true;
+            }
+        }
+
+        if (sent_axis) {
+            wlr_seat_pointer_notify_frame(server->seat);
+        }
+        if (server->wheel_scrolling_y || server->wheel_scrolling_x) {
+            schedule_all_outputs(server);
+        }
+    }
+
+    // 3. Launchpad Spring Animations (page switch, folder open/close, kinetic scroll)
+    if (server->launchpad && launchpad_is_animating(server->launchpad)) {
         launchpad_tick(server->launchpad, dt);
     }
 
@@ -3764,9 +3896,11 @@ if (server.config_inotify_fd >= 0) {
 
     setenv("WAYLAND_DISPLAY", socket_name, 1);
     setenv("XDG_CURRENT_DESKTOP", "AuraDE", 1);
+    if (!getenv("QT_QPA_PLATFORMTHEME")) setenv("QT_QPA_PLATFORMTHEME", "xdgdesktopportal", 1);
+    if (!getenv("GTK_USE_PORTAL")) setenv("GTK_USE_PORTAL", "1", 1);
     // Sync session environment with D-Bus (portable for all init systems: OpenRC, runit, systemd, s6)
     system("dbus-update-activation-environment --all 2>/dev/null &");
-    system("if command -v systemctl >/dev/null 2>&1; then systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP 2>/dev/null & fi");
+    system("if command -v systemctl >/dev/null 2>&1; then systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP QT_QPA_PLATFORMTHEME GTK_USE_PORTAL 2>/dev/null & fi");
     printf("[AuraDE] Running on WAYLAND_DISPLAY=%s\n", socket_name);
     printf("[AuraDE] macOS Gestures Active: Swipe Up (Mission Control), Down (Exposé), Horizontal (Spaces), Pinch In (Launchpad), Spread (Show Desktop)\n");
     fflush(stdout);

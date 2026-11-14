@@ -6,9 +6,86 @@ GtkWidget *g_main_window = NULL;
 GtkWidget *g_stack = NULL;
 GtkWidget *g_status_label = NULL;
 GtkWidget *g_sidebar_list = NULL;
+static GtkWidget *g_frame_bg = NULL;
+static GtkWidget *g_sidebar_widget = NULL;
 GtkCssProvider *g_css_provider = NULL;
 guint g_save_timeout_id = 0;
 char g_target_page[64] = {0};
+
+static void cairo_rounded_rect_path(cairo_t *cr, double x, double y, double w, double h, double r) {
+    if (r > w * 0.5) r = w * 0.5;
+    if (r > h * 0.5) r = h * 0.5;
+    cairo_new_sub_path(cr);
+    cairo_arc(cr, x + w - r, y + r, r, -G_PI_2, 0.0);
+    cairo_arc(cr, x + w - r, y + h - r, r, 0.0, G_PI_2);
+    cairo_arc(cr, x + r, y + h - r, r, G_PI_2, G_PI);
+    cairo_arc(cr, x + r, y + r, r, G_PI, 1.5 * G_PI);
+    cairo_close_path(cr);
+}
+
+static void draw_frame_bg(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer user_data) {
+    (void)user_data;
+    if (width <= 0 || height <= 0) return;
+
+    cairo_save(cr);
+    // Solid GTK gray outer frame with rounded bottom corners (14px) matching headerbar
+    double r = 14.0;
+    cairo_new_sub_path(cr);
+    cairo_move_to(cr, 0.0, 0.0);
+    cairo_line_to(cr, width, 0.0);
+    cairo_line_to(cr, width, height - r);
+    cairo_arc(cr, width - r, height - r, r, 0.0, G_PI_2);
+    cairo_line_to(cr, r, height);
+    cairo_arc(cr, r, height - r, r, G_PI_2, G_PI);
+    cairo_close_path(cr);
+
+    if (g_config.dark_mode) {
+        cairo_set_source_rgba(cr, 0.165, 0.165, 0.180, 1.0); // #2a2a2e
+    } else {
+        cairo_set_source_rgba(cr, 0.910, 0.910, 0.925, 1.0); // #e8e8ec
+    }
+    cairo_fill(cr);
+
+    // Punch transparent cutouts ONLY for the Liquid Glass panels (.sidebar and .content-stack)
+    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 1.0);
+
+    graphene_rect_t bounds;
+    graphene_rect_t sb_win = {0}, ct_win = {0};
+    bool has_sb = false, has_ct = false;
+    if (g_sidebar_widget && gtk_widget_compute_bounds(g_sidebar_widget, GTK_WIDGET(area), &bounds)) {
+        cairo_rounded_rect_path(cr, bounds.origin.x + 1.0, bounds.origin.y + 1.0,
+                                bounds.size.width - 2.0, bounds.size.height - 2.0, 15.0);
+        cairo_fill(cr);
+        has_sb = gtk_widget_compute_bounds(g_sidebar_widget, g_main_window, &sb_win);
+    }
+    if (g_stack && gtk_widget_compute_bounds(g_stack, GTK_WIDGET(area), &bounds)) {
+        cairo_rounded_rect_path(cr, bounds.origin.x + 1.0, bounds.origin.y + 1.0,
+                                bounds.size.width - 2.0, bounds.size.height - 2.0, 15.0);
+        cairo_fill(cr);
+        has_ct = gtk_widget_compute_bounds(g_stack, g_main_window, &ct_win);
+    }
+    if (has_sb && has_ct) {
+        static int prev[8] = {0};
+        int cur[8] = {
+            (int)roundf(sb_win.origin.x), (int)roundf(sb_win.origin.y),
+            (int)roundf(sb_win.size.width), (int)roundf(sb_win.size.height),
+            (int)roundf(ct_win.origin.x), (int)roundf(ct_win.origin.y),
+            (int)roundf(ct_win.size.width), (int)roundf(ct_win.size.height)
+        };
+        if (memcmp(prev, cur, sizeof(cur)) != 0) {
+            memcpy(prev, cur, sizeof(cur));
+            FILE *fp = fopen("/tmp/aurade-settings-panels.rect", "w");
+            if (fp) {
+                fprintf(fp, "%d %d %d %d %d %d %d %d\n",
+                        cur[0], cur[1], cur[2], cur[3],
+                        cur[4], cur[5], cur[6], cur[7]);
+                fclose(fp);
+            }
+        }
+    }
+    cairo_restore(cr);
+}
 
 typedef struct {
     const char *id;
@@ -32,6 +109,7 @@ static page_meta_t PAGES[] = {
     { "appearance",  "Appearance",       "preferences-desktop-wallpaper-symbolic","badge-appearance", build_page_appearance,  NULL, NULL, false },
     { "dock",        "Dock",             "view-paged-symbolic",                   "badge-dock",        build_page_dock,        NULL, NULL, false },
     { "gestures",    "Gestures",         "input-touchpad-symbolic",               "badge-gestures",    build_page_gestures,    NULL, NULL, false },
+    { "default-apps","Default Apps",     "preferences-desktop-apps-symbolic",     "badge-appearance",  build_page_default_apps,NULL, NULL, false },
     { "about",       "About",            "help-about-symbolic",                   "badge-about",       build_page_about,       NULL, NULL, false },
 };
 static const int PAGES_COUNT = sizeof(PAGES) / sizeof(PAGES[0]);
@@ -40,6 +118,7 @@ void apply_theme(bool dark_mode) {
     if (!g_css_provider) return;
     const char *css = settings_get_css(dark_mode);
     gtk_css_provider_load_from_string(g_css_provider, css);
+    if (g_frame_bg) gtk_widget_queue_draw(g_frame_bg);
 }
 
 void settings_save_now(void) {
@@ -232,6 +311,7 @@ static void on_app_activate(GtkApplication *app, gpointer user_data) {
 
     // Main window
     g_main_window = gtk_application_window_new(app);
+    gtk_widget_add_css_class(g_main_window, "settings-main-window");
     gtk_window_set_title(GTK_WINDOW(g_main_window), "Settings");
     gtk_window_set_default_size(GTK_WINDOW(g_main_window), 840, 580);
     gtk_widget_set_size_request(GTK_WIDGET(g_main_window), 360, 240);
@@ -261,8 +341,8 @@ static void on_app_activate(GtkApplication *app, gpointer user_data) {
     GtkWidget *main_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_add_css_class(main_hbox, "main-hbox");
 
-    GtkWidget *sidebar = build_sidebar();
-    gtk_box_append(GTK_BOX(main_hbox), sidebar);
+    g_sidebar_widget = build_sidebar();
+    gtk_box_append(GTK_BOX(main_hbox), g_sidebar_widget);
 
     // Content Stack
     g_stack = gtk_stack_new();
@@ -276,7 +356,16 @@ static void on_app_activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_set_vexpand(g_stack, TRUE);
     gtk_box_append(GTK_BOX(main_hbox), g_stack);
 
-    gtk_window_set_child(GTK_WINDOW(g_main_window), main_hbox);
+    GtkWidget *overlay = gtk_overlay_new();
+    g_frame_bg = gtk_drawing_area_new();
+    gtk_widget_set_hexpand(g_frame_bg, TRUE);
+    gtk_widget_set_vexpand(g_frame_bg, TRUE);
+    gtk_widget_set_can_target(g_frame_bg, FALSE);
+    gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(g_frame_bg), draw_frame_bg, NULL, NULL);
+    gtk_overlay_set_child(GTK_OVERLAY(overlay), g_frame_bg);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), main_hbox);
+
+    gtk_window_set_child(GTK_WINDOW(g_main_window), overlay);
 
     // Select target page or default to first (lazy builds that page only)
     int target_idx = 0;

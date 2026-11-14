@@ -378,6 +378,300 @@ static cairo_surface_t *resolve_notification_icon(aurade_notifications_t *notif,
     return NULL;
 }
 
+static int nc_compute_panel_h(int screen_h) {
+    int h = screen_h - 38 - 108;
+    if (h < 280) h = 280;
+    return h;
+}
+
+static void nc_panel_rect(const aurade_notifications_t *notif, double *out_x, double *out_y, double *out_w, double *out_h) {
+    double w = NOTIF_CENTER_W;
+    double h = notif->nc_panel_h > 0 ? (double)notif->nc_panel_h : 500.0;
+    double y = 38.0;
+    bool left = notif->server && notif->server->config.notif_center_left;
+    double closed_x = left ? (-w - 16.0) : (notif->screen_width + 16.0);
+    double open_x = left ? 12.0 : (notif->screen_width - w - 12.0);
+    double x = closed_x + (open_x - closed_x) * notif->nc_progress;
+    if (out_x) *out_x = x;
+    if (out_y) *out_y = y;
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+}
+
+static void nc_draw_liquid_glass_panel(cairo_t *cr, double x, double y, double w, double h,
+                                       double r, double opacity) {
+    cairo_save(cr);
+
+    draw_rounded_rect(cr, x, y, w, h, r);
+    cairo_pattern_t *bg = cairo_pattern_create_linear(x, y, x, y + h);
+    cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.13, 0.14, 0.19, 0.80 * opacity);
+    cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.08, 0.09, 0.12, 0.88 * opacity);
+    cairo_set_source(cr, bg);
+    cairo_fill(cr);
+    cairo_pattern_destroy(bg);
+
+    cairo_save(cr);
+    draw_rounded_rect(cr, x, y, w, h, r);
+    cairo_clip(cr);
+    double sheen_h = 80.0;
+    cairo_pattern_t *sheen = cairo_pattern_create_linear(x, y, x, y + sheen_h);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.045 * opacity);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.6, 1.0, 1.0, 1.0, 0.01 * opacity);
+    cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
+    cairo_rectangle(cr, x, y, w, sheen_h);
+    cairo_set_source(cr, sheen);
+    cairo_fill(cr);
+    cairo_pattern_destroy(sheen);
+    cairo_restore(cr);
+
+    draw_refractive_glass_rim(cr, x, y, w, h, r, 0.90 * opacity);
+    cairo_restore(cr);
+}
+
+static void nc_update_scene_nodes(aurade_notifications_t *notif) {
+    if (!notif || !notif->nc_scene_buffer) return;
+    if (notif->nc_progress <= 0.002) {
+        wlr_scene_node_set_enabled(&notif->nc_scene_buffer->node, false);
+        if (notif->nc_blur_node) wlr_scene_node_set_enabled(&notif->nc_blur_node->node, false);
+        return;
+    }
+
+    double px, py, pw, ph;
+    nc_panel_rect(notif, &px, &py, &pw, &ph);
+    int ix = (int)lround(px);
+    int iy = (int)lround(py);
+
+    wlr_scene_node_set_position(&notif->nc_scene_buffer->node, ix, iy);
+    wlr_scene_node_set_enabled(&notif->nc_scene_buffer->node, true);
+    wlr_scene_node_raise_to_top(&notif->nc_scene_buffer->node);
+
+    if (notif->nc_blur_node) {
+        bool liquid = notif->server && notif->server->config.liquid_glass;
+        bool blur_enabled = notif->server ? (liquid || notif->server->config.blur_notifications || notif->server->config.blur_dock) : true;
+        if (blur_enabled && notif->nc_progress > 0.05) {
+            wlr_scene_blur_set_size(notif->nc_blur_node, (int)pw, (int)ph);
+            wlr_scene_blur_set_corner_radius(notif->nc_blur_node, 20);
+            wlr_scene_node_set_position(&notif->nc_blur_node->node, ix, iy);
+            wlr_scene_blur_set_liquid_glass(notif->nc_blur_node, liquid);
+            float str = (notif->server && notif->server->config.blur_strength > 0.01)
+                            ? (float)notif->server->config.blur_strength
+                            : 0.7f;
+            wlr_scene_blur_set_strength(notif->nc_blur_node, str);
+            wlr_scene_blur_set_alpha(notif->nc_blur_node, (float)notif->nc_progress);
+            wlr_scene_node_set_enabled(&notif->nc_blur_node->node, true);
+            wlr_scene_node_place_below(&notif->nc_blur_node->node, &notif->nc_scene_buffer->node);
+        } else {
+            wlr_scene_node_set_enabled(&notif->nc_blur_node->node, false);
+        }
+    }
+}
+
+static void notifications_nc_render(aurade_notifications_t *notif) {
+    if (!notif || !notif->nc_buffer || !notif->nc_buffer->cr) return;
+    cairo_t *cr = notif->nc_buffer->cr;
+    cairo_buffer_clear(notif->nc_buffer);
+
+    if (notif->nc_progress <= 0.002) {
+        nc_update_scene_nodes(notif);
+        return;
+    }
+
+    double w = NOTIF_CENTER_W;
+    double h = notif->nc_panel_h > 0 ? (double)notif->nc_panel_h : 500.0;
+    double a = notif->nc_progress;
+    if (a > 1.0) a = 1.0;
+
+    bool liquid = notif->server && notif->server->config.liquid_glass;
+    bool blur_enabled = notif->server ? (liquid || notif->server->config.blur_notifications || notif->server->config.blur_dock) : true;
+
+    if (liquid) {
+        nc_draw_liquid_glass_panel(cr, 0.0, 0.0, w, h, 20.0, a);
+    } else {
+        draw_glass_panel(cr, 0.0, 0.0, w, h, 20.0, 0.12, 0.13, 0.17, (blur_enabled ? 0.88 : 0.92) * a);
+    }
+
+    // Header
+    draw_text(cr, "Notifications", NOTIF_FONT, 15.0, true,
+              1.0, 1.0, 1.0, 0.95 * a, 18.0, 27.0, false, true);
+
+    if (notif->history_count > 0) {
+        double btn_w = 70.0, btn_h = 24.0;
+        double btn_x = w - btn_w - 16.0, btn_y = 15.0;
+        draw_rounded_rect(cr, btn_x, btn_y, btn_w, btn_h, 12.0);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (notif->nc_clear_hover ? 0.24 : 0.13) * a);
+        cairo_fill(cr);
+        draw_text(cr, "Clear All", NOTIF_FONT, 11.0, true,
+                  1.0, 1.0, 1.0, 0.90 * a,
+                  btn_x + btn_w / 2.0, btn_y + btn_h / 2.0, true, true);
+    }
+
+    // Subtle divider
+    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.10 * a);
+    cairo_set_line_width(cr, 1.0);
+    cairo_move_to(cr, 16.0, 50.0);
+    cairo_line_to(cr, w - 16.0, 50.0);
+    cairo_stroke(cr);
+
+    double list_top = 58.0;
+    double list_h = h - list_top - 14.0;
+
+    if (notif->history_count == 0) {
+        notif->nc_max_scroll = 0.0;
+        notif->nc_scroll_y = 0.0;
+        draw_text(cr, "No Notifications", NOTIF_FONT, 13.5, false,
+                  1.0, 1.0, 1.0, 0.45 * a,
+                  w / 2.0, list_top + list_h * 0.42, true, true);
+        cairo_buffer_apply_to_scene(notif->nc_buffer, notif->nc_scene_buffer);
+        nc_update_scene_nodes(notif);
+        return;
+    }
+
+    // Compute layout heights and max scroll
+    double cur_y = 0.0;
+    for (int i = 0; i < notif->history_count; i++) {
+        notif_history_item_t *hi = &notif->history[i];
+        double ch = hi->body[0] ? (strlen(hi->body) > 60 ? 92.0 : 80.0) : 70.0;
+        hi->card_y = cur_y;
+        hi->card_h = ch;
+        cur_y += ch + 10.0;
+    }
+    double total_h = cur_y > 0.0 ? cur_y - 10.0 : 0.0;
+    notif->nc_max_scroll = total_h > list_h ? (total_h - list_h) : 0.0;
+    if (notif->nc_scroll_y < 0.0) notif->nc_scroll_y = 0.0;
+    if (notif->nc_scroll_y > notif->nc_max_scroll) notif->nc_scroll_y = notif->nc_max_scroll;
+
+    cairo_save(cr);
+    cairo_rectangle(cr, 8.0, list_top, w - 16.0, list_h);
+    cairo_clip(cr);
+
+    for (int i = 0; i < notif->history_count; i++) {
+        notif_history_item_t *hi = &notif->history[i];
+        double cx = 14.0;
+        double cy = list_top + hi->card_y - notif->nc_scroll_y;
+        double cw = w - 28.0;
+        double ch = hi->card_h;
+
+        if (cy + ch < list_top || cy > list_top + list_h) continue;
+
+        // Card container
+        draw_rounded_rect(cr, cx, cy, cw, ch, 14.0);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (hi->hover ? 0.14 : 0.08) * a);
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12 * a);
+        cairo_set_line_width(cr, 1.0);
+        cairo_stroke(cr);
+
+        // App icon
+        double icon_cx = cx + 20.0;
+        double icon_cy = cy + 16.0;
+        if (hi->icon_surface) {
+            int sw = cairo_image_surface_get_width(hi->icon_surface);
+            int sh = cairo_image_surface_get_height(hi->icon_surface);
+            if (sw > 0 && sh > 0) {
+                cairo_save(cr);
+                cairo_translate(cr, icon_cx - 9.0, icon_cy - 9.0);
+                cairo_scale(cr, 18.0 / sw, 18.0 / sh);
+                cairo_set_source_surface(cr, hi->icon_surface, 0, 0);
+                cairo_paint_with_alpha(cr, a);
+                cairo_restore(cr);
+            }
+        } else {
+            cairo_arc(cr, icon_cx, icon_cy, 8.0, 0, 2 * M_PI);
+            cairo_set_source_rgba(cr, 0.35, 0.65, 1.0, 0.85 * a);
+            cairo_fill(cr);
+        }
+
+        // App name + timestamp
+        draw_text(cr, hi->app_name, NOTIF_FONT, 10.5, true,
+                  1.0, 1.0, 1.0, 0.65 * a, cx + 34.0, icon_cy, false, true);
+
+        if (hi->time_str[0]) {
+            draw_text(cr, hi->time_str, NOTIF_FONT, 10.0, false,
+                      1.0, 1.0, 1.0, 0.45 * a, cx + cw - 34.0, icon_cy, true, true);
+        }
+
+        // Close button (on hover)
+        if (hi->hover || hi->close_hover) {
+            double bx = cx + cw - 16.0;
+            double by = icon_cy;
+            cairo_arc(cr, bx, by, 8.5, 0, 2 * M_PI);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (hi->close_hover ? 0.28 : 0.14) * a);
+            cairo_fill(cr);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.90 * a);
+            cairo_set_line_width(cr, 1.3);
+            cairo_move_to(cr, bx - 3.0, by - 3.0);
+            cairo_line_to(cr, bx + 3.0, by + 3.0);
+            cairo_move_to(cr, bx + 3.0, by - 3.0);
+            cairo_line_to(cr, bx - 3.0, by + 3.0);
+            cairo_stroke(cr);
+        }
+
+        // Summary & body
+        PangoLayout *layout = pango_cairo_create_layout(cr);
+        PangoFontDescription *desc = pango_font_description_from_string(NOTIF_FONT " Bold 11");
+        pango_layout_set_font_description(layout, desc);
+        pango_layout_set_text(layout, hi->summary[0] ? hi->summary : hi->app_name, -1);
+        pango_layout_set_width(layout, (int)((cw - 32.0) * PANGO_SCALE));
+        pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.96 * a);
+        cairo_move_to(cr, cx + 16.0, cy + 29.0);
+        pango_cairo_show_layout(cr, layout);
+        pango_font_description_free(desc);
+        g_object_unref(layout);
+
+        if (hi->body[0]) {
+            PangoLayout *bl = pango_cairo_create_layout(cr);
+            PangoFontDescription *bdesc = pango_font_description_from_string(NOTIF_FONT " 10");
+            pango_layout_set_font_description(bl, bdesc);
+            pango_layout_set_text(bl, hi->body, -1);
+            pango_layout_set_width(bl, (int)((cw - 32.0) * PANGO_SCALE));
+            pango_layout_set_height(bl, (int)((ch - 50.0) * PANGO_SCALE));
+            pango_layout_set_wrap(bl, PANGO_WRAP_WORD_CHAR);
+            pango_layout_set_ellipsize(bl, PANGO_ELLIPSIZE_END);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.78 * a);
+            cairo_move_to(cr, cx + 16.0, cy + 48.0);
+            pango_cairo_show_layout(cr, bl);
+            pango_font_description_free(bdesc);
+            g_object_unref(bl);
+        }
+    }
+
+    cairo_restore(cr);
+
+    cairo_buffer_apply_to_scene(notif->nc_buffer, notif->nc_scene_buffer);
+    nc_update_scene_nodes(notif);
+}
+
+static void nc_history_push(aurade_notifications_t *notif, const notification_item_t *item) {
+    if (!notif || !item) return;
+    if (notif->history_count >= NOTIF_HISTORY_MAX) {
+        if (notif->history[NOTIF_HISTORY_MAX - 1].icon_surface) {
+            cairo_surface_destroy(notif->history[NOTIF_HISTORY_MAX - 1].icon_surface);
+            notif->history[NOTIF_HISTORY_MAX - 1].icon_surface = NULL;
+        }
+        notif->history_count = NOTIF_HISTORY_MAX - 1;
+    }
+    for (int i = notif->history_count; i > 0; i--) {
+        notif->history[i] = notif->history[i - 1];
+    }
+    notif->history_count++;
+
+    notif_history_item_t *hi = &notif->history[0];
+    memset(hi, 0, sizeof(*hi));
+    hi->id = item->id;
+    snprintf(hi->app_name, sizeof(hi->app_name), "%s", item->app_name);
+    snprintf(hi->app_icon, sizeof(hi->app_icon), "%s", item->app_icon);
+    snprintf(hi->summary, sizeof(hi->summary), "%s", item->summary);
+    snprintf(hi->body, sizeof(hi->body), "%s", item->body);
+    if (item->icon_surface) {
+        hi->icon_surface = cairo_surface_reference(item->icon_surface);
+    }
+    time_t now = time(NULL);
+    struct tm tm;
+    localtime_r(&now, &tm);
+    strftime(hi->time_str, sizeof(hi->time_str), "%H:%M", &tm);
+}
+
 static void notifications_add(aurade_notifications_t *notif, const notif_cmd_t *cmd) {
     if (!notif) return;
 
@@ -398,11 +692,13 @@ static void notifications_add(aurade_notifications_t *notif, const notif_cmd_t *
             emit_signal_closed(notif, notif->items[0].id, 1);
             if (notif->items[0].icon_surface) {
                 cairo_surface_destroy(notif->items[0].icon_surface);
+                notif->items[0].icon_surface = NULL;
             }
             for (int i = 0; i < notif->count - 1; i++) {
                 notif->items[i] = notif->items[i + 1];
             }
             notif->count--;
+            memset(&notif->items[notif->count], 0, sizeof(notif->items[notif->count]));
         }
         target_idx = notif->count++;
     }
@@ -427,6 +723,8 @@ static void notifications_add(aurade_notifications_t *notif, const notif_cmd_t *
     item->hover = false;
     item->close_hover = false;
 
+    nc_history_push(notif, item);
+
     // Play subtle audio alert ping like macOS
     app_launch_command("pw-play /usr/share/sounds/freedesktop/stereo/message.oga >/dev/null 2>&1 &");
 
@@ -438,6 +736,9 @@ static void notifications_add(aurade_notifications_t *notif, const notif_cmd_t *
         wlr_scene_node_raise_to_top(&notif->scene_buffer->node);
     }
     notifications_render(notif);
+    if (notif->nc_progress > 0.002) {
+        notifications_nc_render(notif);
+    }
     if (notif->server) schedule_all_outputs(notif->server);
 }
 
@@ -490,6 +791,18 @@ aurade_notifications_t *notifications_create(aurade_server_t *server) {
             wlr_scene_blur_set_corner_radius(notif->blur_nodes[i], 16);
             wlr_scene_node_set_enabled(&notif->blur_nodes[i]->node, false);
         }
+    }
+
+    notif->nc_panel_h = nc_compute_panel_h(notif->screen_height);
+    notif->nc_buffer = cairo_buffer_create((int)NOTIF_CENTER_W, notif->nc_panel_h);
+    notif->nc_scene_buffer = wlr_scene_buffer_create(server->overlay_tree, &notif->nc_buffer->base);
+    if (notif->nc_scene_buffer) {
+        wlr_scene_node_set_enabled(&notif->nc_scene_buffer->node, false);
+    }
+    notif->nc_blur_node = wlr_scene_blur_create(server->overlay_tree, (int)NOTIF_CENTER_W, notif->nc_panel_h);
+    if (notif->nc_blur_node) {
+        wlr_scene_blur_set_corner_radius(notif->nc_blur_node, 20);
+        wlr_scene_node_set_enabled(&notif->nc_blur_node->node, false);
     }
 
     // Setup inter-thread pipe
@@ -550,6 +863,20 @@ void notifications_destroy(aurade_notifications_t *notif) {
         }
     }
 
+    for (int i = 0; i < notif->history_count; i++) {
+        if (notif->history[i].icon_surface) {
+            cairo_surface_destroy(notif->history[i].icon_surface);
+            notif->history[i].icon_surface = NULL;
+        }
+    }
+    if (notif->nc_blur_node) {
+        wlr_scene_node_destroy(&notif->nc_blur_node->node);
+        notif->nc_blur_node = NULL;
+    }
+    if (notif->nc_buffer) {
+        wlr_buffer_drop(&notif->nc_buffer->base);
+    }
+
     if (notif->buffer) {
         wlr_buffer_drop(&notif->buffer->base);
     }
@@ -566,10 +893,26 @@ void notifications_resize(aurade_notifications_t *notif, int width, int height) 
     if (notif->scene_buffer) {
         wlr_scene_node_set_position(&notif->scene_buffer->node, pos_x, pos_y);
     }
+
+    int new_h = nc_compute_panel_h(height);
+    if (new_h != notif->nc_panel_h && notif->nc_scene_buffer) {
+        notif->nc_panel_h = new_h;
+        cairo_buffer_t *nb = cairo_buffer_create((int)NOTIF_CENTER_W, new_h);
+        if (nb) {
+            wlr_scene_buffer_set_buffer(notif->nc_scene_buffer, &nb->base);
+            if (notif->nc_buffer) wlr_buffer_drop(&notif->nc_buffer->base);
+            notif->nc_buffer = nb;
+        }
+    }
+    if (notif->nc_progress > 0.002) {
+        notifications_nc_render(notif);
+    }
 }
 
 bool notifications_is_animating(const aurade_notifications_t *notif) {
-    if (!notif || notif->count <= 0) return false;
+    if (!notif) return false;
+    if (fabs(notif->nc_progress - notif->nc_target) > 0.002) return true;
+    if (notif->count <= 0) return false;
     for (int i = 0; i < notif->count; i++) {
         const notification_item_t *item = &notif->items[i];
         if (item->slide_progress < 1.0 || item->alpha < 1.0) return true;
@@ -619,7 +962,21 @@ static void notifications_arm_dismiss_timer(aurade_notifications_t *notif) {
 }
 
 void notifications_tick(aurade_notifications_t *notif, double dt) {
-    if (!notif || notif->count <= 0) return;
+    if (!notif) return;
+
+    if (fabs(notif->nc_progress - notif->nc_target) > 0.002) {
+        double prev = notif->nc_progress;
+        notif->nc_progress += (notif->nc_target - notif->nc_progress) * (1.0 - exp(-15.0 * dt));
+        if (fabs(notif->nc_progress - notif->nc_target) <= 0.002) {
+            notif->nc_progress = notif->nc_target;
+        }
+        if ((prev <= 0.05 && notif->nc_progress > 0.05) || notif->nc_progress == notif->nc_target || notif->nc_progress > 0.002) {
+            notifications_nc_render(notif);
+        }
+        if (notif->server) schedule_all_outputs(notif->server);
+    }
+
+    if (notif->count <= 0) return;
 
     bool needs_redraw = false;
     for (int i = 0; i < notif->count; i++) {
@@ -660,6 +1017,7 @@ void notifications_tick(aurade_notifications_t *notif, double dt) {
                     notif->items[j] = notif->items[j + 1];
                 }
                 notif->count--;
+                memset(&notif->items[notif->count], 0, sizeof(notif->items[notif->count]));
                 i--;
                 continue;
             }
@@ -699,6 +1057,9 @@ void notifications_render(aurade_notifications_t *notif) {
             if (notif->blur_nodes[i]) {
                 wlr_scene_node_set_enabled(&notif->blur_nodes[i]->node, false);
             }
+        }
+        if (notif->scene_buffer) {
+            wlr_scene_node_set_enabled(&notif->scene_buffer->node, false);
         }
         cairo_buffer_apply_to_scene(notif->buffer, notif->scene_buffer);
         return;
@@ -896,7 +1257,9 @@ void notifications_render(aurade_notifications_t *notif) {
 }
 
 bool notifications_pointer_owns(aurade_notifications_t *notif, double x, double y) {
-    if (!notif || notif->count <= 0) return false;
+    if (!notif) return false;
+    if (notifications_nc_pointer_owns(notif, x, y)) return true;
+    if (notif->count <= 0) return false;
 
     int screen_x = notif->screen_width - NOTIF_BUFFER_W - 8;
     int screen_y = 36;
@@ -918,8 +1281,59 @@ bool notifications_pointer_owns(aurade_notifications_t *notif, double x, double 
     return false;
 }
 
+static bool nc_handle_motion(aurade_notifications_t *notif, double mouse_x, double mouse_y) {
+    if (!notif || notif->nc_progress <= 0.05) return false;
+
+    double px, py, pw, ph;
+    nc_panel_rect(notif, &px, &py, &pw, &ph);
+    bool over_panel = (mouse_x >= px && mouse_x <= px + pw && mouse_y >= py && mouse_y <= py + ph);
+    double lx = mouse_x - px;
+    double ly = mouse_y - py;
+
+    bool changed = false;
+    bool new_clear_hover = false;
+    if (over_panel && notif->history_count > 0) {
+        double btn_w = 70.0, btn_h = 24.0;
+        double btn_x = pw - btn_w - 16.0, btn_y = 15.0;
+        if (lx >= btn_x && lx <= btn_x + btn_w && ly >= btn_y && ly <= btn_y + btn_h) {
+            new_clear_hover = true;
+        }
+    }
+    if (new_clear_hover != notif->nc_clear_hover) {
+        notif->nc_clear_hover = new_clear_hover;
+        changed = true;
+    }
+
+    double list_top = 58.0;
+    double list_h = ph - list_top - 14.0;
+    for (int i = 0; i < notif->history_count; i++) {
+        notif_history_item_t *hi = &notif->history[i];
+        double cx = 14.0;
+        double cy = list_top + hi->card_y - notif->nc_scroll_y;
+        double cw = pw - 28.0;
+        double ch = hi->card_h;
+
+        bool was_h = hi->hover;
+        bool was_ch = hi->close_hover;
+        bool in_list = over_panel && ly >= list_top && ly <= list_top + list_h;
+        hi->hover = in_list && (lx >= cx && lx <= cx + cw && ly >= cy && ly <= cy + ch);
+        double bx = cx + cw - 16.0;
+        double by = cy + 16.0;
+        hi->close_hover = in_list && (hypot(lx - bx, ly - by) <= 12.0);
+        if (hi->hover != was_h || hi->close_hover != was_ch) changed = true;
+    }
+
+    if (changed) {
+        notifications_nc_render(notif);
+        if (notif->server) schedule_all_outputs(notif->server);
+    }
+    return over_panel;
+}
+
 bool notifications_handle_motion(aurade_notifications_t *notif, double mouse_x, double mouse_y) {
-    if (!notif || notif->count <= 0) return false;
+    if (!notif) return false;
+    bool nc_owned = nc_handle_motion(notif, mouse_x, mouse_y);
+    if (notif->count <= 0) return nc_owned;
 
     notif->mouse_x = mouse_x;
     notif->mouse_y = mouse_y;
@@ -956,7 +1370,7 @@ bool notifications_handle_motion(aurade_notifications_t *notif, double mouse_x, 
         if (notif->server) schedule_all_outputs(notif->server);
         notifications_arm_dismiss_timer(notif);
     }
-    return notifications_pointer_owns(notif, mouse_x, mouse_y);
+    return nc_owned || notifications_pointer_owns(notif, mouse_x, mouse_y);
 }
 
 static bool app_name_matches(const char *app_id, const char *name) {
@@ -967,8 +1381,100 @@ static bool app_name_matches(const char *app_id, const char *name) {
     return false;
 }
 
+static void focus_or_launch_app(aurade_notifications_t *notif, const char *app_name) {
+    if (!notif || !notif->server || !app_name || !app_name[0]) return;
+    bool found = false;
+    aurade_view_t *view;
+    wl_list_for_each(view, &notif->server->views, link) {
+        const char *app_id = view->xdg_toplevel ? view->xdg_toplevel->app_id :
+            (view->xwayland_surface ? view->xwayland_surface->class : NULL);
+        if (app_id && app_name_matches(app_id, app_name)) {
+            view->demands_attention = false;
+            view_restore(view);
+            found = true;
+            break;
+        }
+    }
+    if (!found && notif->server->apps) {
+        desktop_app_t *app = apps_find(notif->server->apps, app_name);
+        if (app && app->exec[0]) {
+            app_launch_command(app->exec);
+        }
+    }
+}
+
+static bool nc_handle_click(aurade_notifications_t *notif, double mouse_x, double mouse_y) {
+    if (!notif || notif->nc_progress <= 0.05) return false;
+    double px, py, pw, ph;
+    nc_panel_rect(notif, &px, &py, &pw, &ph);
+    if (mouse_x < px || mouse_x > px + pw || mouse_y < py || mouse_y > py + ph) {
+        return false;
+    }
+
+    double lx = mouse_x - px;
+    double ly = mouse_y - py;
+
+    if (notif->history_count > 0) {
+        double btn_w = 70.0, btn_h = 24.0;
+        double btn_x = pw - btn_w - 16.0, btn_y = 15.0;
+        if (lx >= btn_x && lx <= btn_x + btn_w && ly >= btn_y && ly <= btn_y + btn_h) {
+            for (int i = 0; i < notif->history_count; i++) {
+                if (notif->history[i].icon_surface) {
+                    cairo_surface_destroy(notif->history[i].icon_surface);
+                    notif->history[i].icon_surface = NULL;
+                }
+            }
+            notif->history_count = 0;
+            notif->nc_scroll_y = 0.0;
+            notif->nc_clear_hover = false;
+            notifications_nc_render(notif);
+            if (notif->server) schedule_all_outputs(notif->server);
+            return true;
+        }
+    }
+
+    double list_top = 58.0;
+    double list_h = ph - list_top - 14.0;
+    if (ly >= list_top && ly <= list_top + list_h) {
+        for (int i = 0; i < notif->history_count; i++) {
+            notif_history_item_t *hi = &notif->history[i];
+            double cx = 14.0;
+            double cy = list_top + hi->card_y - notif->nc_scroll_y;
+            double cw = pw - 28.0;
+            double ch = hi->card_h;
+
+            if (lx >= cx && lx <= cx + cw && ly >= cy && ly <= cy + ch) {
+                double bx = cx + cw - 16.0;
+                double by = cy + 16.0;
+                if (hypot(lx - bx, ly - by) <= 14.0) {
+                    if (hi->icon_surface) {
+                        cairo_surface_destroy(hi->icon_surface);
+                        hi->icon_surface = NULL;
+                    }
+                    for (int j = i; j < notif->history_count - 1; j++) {
+                        notif->history[j] = notif->history[j + 1];
+                    }
+                    notif->history_count--;
+                    notifications_nc_render(notif);
+                    if (notif->server) schedule_all_outputs(notif->server);
+                    return true;
+                } else {
+                    char app_copy[64];
+                    snprintf(app_copy, sizeof(app_copy), "%s", hi->app_name);
+                    notifications_nc_close(notif);
+                    focus_or_launch_app(notif, app_copy);
+                    return true;
+                }
+            }
+        }
+    }
+    return true;
+}
+
 bool notifications_handle_click(aurade_notifications_t *notif, double mouse_x, double mouse_y) {
-    if (!notif || notif->count <= 0) return false;
+    if (!notif) return false;
+    if (nc_handle_click(notif, mouse_x, mouse_y)) return true;
+    if (notif->count <= 0) return false;
 
     int screen_x = notif->screen_width - NOTIF_BUFFER_W - 8;
     int screen_y = 36;
@@ -996,28 +1502,7 @@ bool notifications_handle_click(aurade_notifications_t *notif, double mouse_x, d
                 // Clicked notification body: invoke default action and focus/launch app
                 emit_signal_action(notif, item->id, "default");
                 item->dismissing = true;
-
-                // Focus window if running
-                bool found = false;
-                if (notif->server) {
-                    aurade_view_t *view;
-                    wl_list_for_each(view, &notif->server->views, link) {
-                        const char *app_id = view->xdg_toplevel ? view->xdg_toplevel->app_id :
-                            (view->xwayland_surface ? view->xwayland_surface->class : NULL);
-                        if (app_id && app_name_matches(app_id, item->app_name)) {
-                            view->demands_attention = false;
-                            view_restore(view);
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found && notif->server->apps) {
-                        desktop_app_t *app = apps_find(notif->server->apps, item->app_name);
-                        if (app && app->exec[0]) {
-                            app_launch_command(app->exec);
-                        }
-                    }
-                }
+                focus_or_launch_app(notif, item->app_name);
             }
 
             notifications_render(notif);
@@ -1026,4 +1511,47 @@ bool notifications_handle_click(aurade_notifications_t *notif, double mouse_x, d
         }
     }
     return false;
+}
+
+void notifications_nc_open(aurade_notifications_t *notif) {
+    if (!notif) return;
+    notif->nc_open = true;
+    notif->nc_target = 1.0;
+    if (notif->nc_progress <= 0.002) notif->nc_progress = 0.01;
+    notifications_nc_render(notif);
+    if (notif->server) schedule_all_outputs(notif->server);
+}
+
+void notifications_nc_close(aurade_notifications_t *notif) {
+    if (!notif) return;
+    notif->nc_open = false;
+    notif->nc_target = 0.0;
+    if (notif->server) schedule_all_outputs(notif->server);
+}
+
+void notifications_nc_toggle(aurade_notifications_t *notif) {
+    if (!notif) return;
+    if (notif->nc_open) notifications_nc_close(notif);
+    else notifications_nc_open(notif);
+}
+
+bool notifications_nc_is_open(const aurade_notifications_t *notif) {
+    return notif && (notif->nc_open || notif->nc_progress > 0.05);
+}
+
+bool notifications_nc_pointer_owns(const aurade_notifications_t *notif, double x, double y) {
+    if (!notif || notif->nc_progress <= 0.05) return false;
+    double px, py, pw, ph;
+    nc_panel_rect(notif, &px, &py, &pw, &ph);
+    return (x >= px && x <= px + pw && y >= py && y <= py + ph);
+}
+
+bool notifications_nc_handle_scroll(aurade_notifications_t *notif, double delta_y) {
+    if (!notif || notif->nc_progress <= 0.05) return false;
+    notif->nc_scroll_y += delta_y * 1.2;
+    if (notif->nc_scroll_y < 0.0) notif->nc_scroll_y = 0.0;
+    if (notif->nc_scroll_y > notif->nc_max_scroll) notif->nc_scroll_y = notif->nc_max_scroll;
+    notifications_nc_render(notif);
+    if (notif->server) schedule_all_outputs(notif->server);
+    return true;
 }

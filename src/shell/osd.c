@@ -26,11 +26,22 @@ aurade_osd_t *osd_create(aurade_server_t *server) {
 
     osd->buffer = cairo_buffer_create(OSD_BUFFER_W, OSD_BUFFER_H);
     osd->scene_buffer = wlr_scene_buffer_create(server->overlay_tree, &osd->buffer->base);
+    osd->blur_node = wlr_scene_blur_create(server->overlay_tree, (int)OSD_PILL_W, (int)OSD_PILL_H);
 
     int pos_x = (osd->screen_width - OSD_BUFFER_W) / 2;
     int pos_y = 54;
     wlr_scene_node_set_position(&osd->scene_buffer->node, pos_x, pos_y);
     wlr_scene_node_set_enabled(&osd->scene_buffer->node, false);
+
+    if (osd->blur_node) {
+        wlr_scene_node_place_below(&osd->blur_node->node, &osd->scene_buffer->node);
+        wlr_scene_node_set_position(&osd->blur_node->node, pos_x + (int)OSD_PAD_X, pos_y + (int)OSD_PAD_Y);
+        wlr_scene_blur_set_corner_radius(osd->blur_node, (int)OSD_CORNER);
+        wlr_scene_blur_set_liquid_glass(osd->blur_node, server->config.liquid_glass);
+        float str = server->config.blur_strength > 0.01 ? (float)server->config.blur_strength : 0.7f;
+        wlr_scene_blur_set_strength(osd->blur_node, str);
+        wlr_scene_node_set_enabled(&osd->blur_node->node, false);
+    }
 
     return osd;
 }
@@ -64,6 +75,9 @@ void osd_resize(aurade_osd_t *osd, int width, int height) {
     if (osd->scene_buffer) {
         wlr_scene_node_set_position(&osd->scene_buffer->node, pos_x, pos_y);
     }
+    if (osd->blur_node) {
+        wlr_scene_node_set_position(&osd->blur_node->node, pos_x + (int)OSD_PAD_X, pos_y + (int)OSD_PAD_Y);
+    }
 }
 
 static void osd_arm_fade_timer(aurade_osd_t *osd, int delay_ms) {
@@ -94,6 +108,9 @@ void osd_show_volume(aurade_osd_t *osd, double level, bool muted) {
     if (osd->scene_buffer) {
         wlr_scene_node_set_enabled(&osd->scene_buffer->node, true);
         wlr_scene_node_raise_to_top(&osd->scene_buffer->node);
+        if (osd->blur_node) {
+            wlr_scene_node_place_below(&osd->blur_node->node, &osd->scene_buffer->node);
+        }
     }
     osd_render(osd);
     if (osd->server) schedule_all_outputs(osd->server);
@@ -116,6 +133,9 @@ void osd_show_brightness(aurade_osd_t *osd, double level) {
     if (osd->scene_buffer) {
         wlr_scene_node_set_enabled(&osd->scene_buffer->node, true);
         wlr_scene_node_raise_to_top(&osd->scene_buffer->node);
+        if (osd->blur_node) {
+            wlr_scene_node_place_below(&osd->blur_node->node, &osd->scene_buffer->node);
+        }
     }
     osd_render(osd);
     if (osd->server) schedule_all_outputs(osd->server);
@@ -140,9 +160,46 @@ void osd_tick(aurade_osd_t *osd, double dt) {
         if (osd->scene_buffer) {
             wlr_scene_node_set_enabled(&osd->scene_buffer->node, false);
         }
+        if (osd->blur_node) {
+            wlr_scene_node_set_enabled(&osd->blur_node->node, false);
+        }
         return;
     }
     osd_render(osd);
+}
+
+static void osd_draw_liquid_glass_capsule(cairo_t *cr, double x, double y, double w, double h,
+                                          double r, double opacity) {
+    cairo_save(cr);
+
+    // 1. Refractive depth gradient body tint overlay
+    draw_rounded_rect(cr, x, y, w, h, r);
+    cairo_pattern_t *bg = cairo_pattern_create_linear(x, y, x, y + h);
+    cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.14, 0.16, 0.22, 0.28 * opacity);
+    cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.06, 0.07, 0.10, 0.40 * opacity);
+    cairo_set_source(cr, bg);
+    cairo_fill(cr);
+    cairo_pattern_destroy(bg);
+
+    // 2. Caustic surface sheen wash across top 40%
+    cairo_save(cr);
+    draw_rounded_rect(cr, x, y, w, h, r);
+    cairo_clip(cr);
+    double sheen_h = h * 0.40;
+    cairo_pattern_t *sheen = cairo_pattern_create_linear(x, y, x, y + sheen_h);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.04 * opacity);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.6, 1.0, 1.0, 1.0, 0.01 * opacity);
+    cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
+    cairo_rectangle(cr, x, y, w, sheen_h);
+    cairo_set_source(cr, sheen);
+    cairo_fill(cr);
+    cairo_pattern_destroy(sheen);
+    cairo_restore(cr);
+
+    // 3. Refractive edge cushion
+    draw_refractive_glass_rim(cr, x, y, w, h, r, 0.90 * opacity);
+
+    cairo_restore(cr);
 }
 
 void osd_render(aurade_osd_t *osd) {
@@ -151,8 +208,29 @@ void osd_render(aurade_osd_t *osd) {
     cairo_buffer_clear(osd->buffer);
 
     double a = osd->alpha;
-    if (a <= 0.001) return;
+    if (a <= 0.001) {
+        if (osd->blur_node) wlr_scene_node_set_enabled(&osd->blur_node->node, false);
+        return;
+    }
     if (a > 1.0) a = 1.0;
+
+    bool liquid = osd->server && osd->server->config.liquid_glass;
+    bool blur_enabled = osd->server ? (liquid || osd->server->config.blur_dock || osd->server->config.blur_notifications) : true;
+
+    if (osd->blur_node) {
+        if (blur_enabled && a > 0.05) {
+            wlr_scene_blur_set_liquid_glass(osd->blur_node, liquid);
+            float str = (osd->server && osd->server->config.blur_strength > 0.01)
+                            ? (float)osd->server->config.blur_strength
+                            : 0.7f;
+            wlr_scene_blur_set_strength(osd->blur_node, str);
+            wlr_scene_blur_set_alpha(osd->blur_node, (float)a);
+            wlr_scene_node_set_enabled(&osd->blur_node->node, true);
+            wlr_scene_node_place_below(&osd->blur_node->node, &osd->scene_buffer->node);
+        } else {
+            wlr_scene_node_set_enabled(&osd->blur_node->node, false);
+        }
+    }
 
     double px = OSD_PAD_X;
     double py = OSD_PAD_Y;
@@ -160,11 +238,12 @@ void osd_render(aurade_osd_t *osd) {
     double ph = OSD_PILL_H;
     double pr = OSD_CORNER;
 
-    // Drop shadow
-    draw_drop_shadow(cr, px, py, pw, ph, pr, 10.0, 0.42 * a);
-
-    // Frosted glass capsule body
-    draw_glass_panel(cr, px, py, pw, ph, pr, 0.11, 0.12, 0.15, 0.86 * a);
+    // Capsule body (Liquid Glass when enabled, frosted glass fallback otherwise)
+    if (liquid) {
+        osd_draw_liquid_glass_capsule(cr, px, py, pw, ph, pr, a);
+    } else {
+        draw_glass_panel(cr, px, py, pw, ph, pr, 0.11, 0.12, 0.15, (blur_enabled ? 0.58 : 0.86) * a);
+    }
 
     // Left Icon (Speaker or Sun)
     double icon_cx = px + 25.0;

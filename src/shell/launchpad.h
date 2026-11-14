@@ -77,9 +77,11 @@ typedef struct aurade_launchpad {
     char folder_rename_buf[64];
     int hovered_folder_app_idx;
 
-    // Folder vertical scroll state
+    // Folder vertical scroll state (kinetic + elastic overscroll)
     double folder_scroll_y;
     double folder_target_scroll_y;
+    double folder_scroll_vel_y;
+    uint64_t folder_last_scroll_ms;
     bool folder_scrollbar_dragging;
     double folder_drag_start_mouse_y;
     double folder_drag_start_scroll_y;
@@ -89,6 +91,15 @@ typedef struct aurade_launchpad {
     double folder_anim_target;   // 0.0 or 1.0
     bool folder_animating;
     spring_simulation_t folder_spring;
+
+    // Hardware-accelerated folder modal overlay
+    struct wlr_scene_rect *folder_dim_rect;
+    cairo_buffer_t *folder_buffer;
+    struct wlr_scene_buffer *folder_scene_buffer;
+    cairo_surface_t *folder_bg_cache;
+    int folder_bg_cache_w;
+    int folder_bg_cache_h;
+    bool folder_needs_render;
 
     // Hover state on main grid
     int hovered_index;
@@ -117,6 +128,7 @@ void launchpad_begin(aurade_launchpad_t *lp);
 void launchpad_update_progress(aurade_launchpad_t *lp, double progress);
 void launchpad_end(aurade_launchpad_t *lp, bool opened);
 void launchpad_switch_page(aurade_launchpad_t *lp, int new_page, bool animate);
+bool launchpad_is_animating(aurade_launchpad_t *lp);
 void launchpad_tick(aurade_launchpad_t *lp, double dt);
 void launchpad_handle_axis(aurade_launchpad_t *lp, enum wl_pointer_axis orientation,
                            double delta, int32_t delta_discrete);

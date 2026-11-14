@@ -643,6 +643,7 @@ static int music_pill_anim_tick(void *data) {
                 pill->overlay_open = false;
                 pill->expand_progress = 0.0;
                 wlr_scene_node_set_enabled(&pill->overlay_scene->node, false);
+                if (pill->blur_node) wlr_scene_node_set_enabled(&pill->blur_node->node, false);
                 if (pill->server && pill->server->topbar) {
                     topbar_render(pill->server->topbar);
                 }
@@ -711,6 +712,15 @@ aurade_music_pill_t *music_pill_create(aurade_server_t *server) {
     // Create overlay buffer & scene on overlay_tree (above desktop & windows)
     pill->overlay_buffer = cairo_buffer_create((int)OVERLAY_WIDTH, (int)OVERLAY_HEIGHT);
     pill->overlay_scene = wlr_scene_buffer_create(server->overlay_tree, &pill->overlay_buffer->base);
+    pill->blur_node = wlr_scene_blur_create(server->overlay_tree, (int)OVERLAY_WIDTH, (int)OVERLAY_HEIGHT);
+    if (pill->blur_node) {
+        wlr_scene_node_place_below(&pill->blur_node->node, &pill->overlay_scene->node);
+        wlr_scene_blur_set_corner_radius(pill->blur_node, (int)OVERLAY_RADIUS);
+        wlr_scene_blur_set_liquid_glass(pill->blur_node, server->config.liquid_glass);
+        float str = server->config.blur_strength > 0.01 ? (float)server->config.blur_strength : 0.7f;
+        wlr_scene_blur_set_strength(pill->blur_node, str);
+        wlr_scene_node_set_enabled(&pill->blur_node->node, false);
+    }
     pill->overlay_open = false;
     wlr_scene_node_set_enabled(&pill->overlay_scene->node, false);
 
@@ -725,6 +735,42 @@ aurade_music_pill_t *music_pill_create(aurade_server_t *server) {
     }
 
     return pill;
+}
+
+static void draw_liquid_glass_capsule(cairo_t *cr, double x, double y, double w, double h,
+                                      double r, double opacity, bool hover) {
+    cairo_save(cr);
+
+    // 1. Refractive depth gradient body tint overlay (matches Dock Liquid Glass)
+    draw_rounded_rect(cr, x, y, w, h, r);
+    cairo_pattern_t *bg = cairo_pattern_create_linear(x, y, x, y + h);
+    double top_a = (hover ? 0.36 : 0.28) * opacity;
+    double bot_a = (hover ? 0.48 : 0.40) * opacity;
+    cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.14, 0.16, 0.22, top_a);
+    cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.06, 0.07, 0.10, bot_a);
+    cairo_set_source(cr, bg);
+    cairo_fill(cr);
+    cairo_pattern_destroy(bg);
+
+    // 2. Caustic surface sheen wash across top 40%
+    cairo_save(cr);
+    draw_rounded_rect(cr, x, y, w, h, r);
+    cairo_clip(cr);
+    double sheen_h = h * 0.40;
+    cairo_pattern_t *sheen = cairo_pattern_create_linear(x, y, x, y + sheen_h);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, (hover ? 0.06 : 0.035) * opacity);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.6, 1.0, 1.0, 1.0, 0.01 * opacity);
+    cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
+    cairo_rectangle(cr, x, y, w, sheen_h);
+    cairo_set_source(cr, sheen);
+    cairo_fill(cr);
+    cairo_pattern_destroy(sheen);
+    cairo_restore(cr);
+
+    // 3. Apple Liquid Glass Refractive Edge Cushion
+    draw_refractive_glass_rim(cr, x, y, w, h, r, (hover ? 1.0 : 0.90) * opacity);
+
+    cairo_restore(cr);
 }
 
 void music_pill_destroy(aurade_music_pill_t *pill) {
@@ -792,19 +838,20 @@ void music_pill_render_topbar(aurade_music_pill_t *pill, cairo_t *cr, int topbar
     // Drop shadow
     draw_drop_shadow(cr, x, y, w, h, h / 2.0, 5.0, 0.40);
 
-    // Jet-black Apple Dynamic Island capsule fill
-    draw_rounded_rect(cr, x, y, w, h, h / 2.0);
-    if (pill->hover_topbar_pill) {
-        cairo_set_source_rgba(cr, 0.08, 0.08, 0.11, 0.98);
+    if (pill->server && (pill->server->config.blur_dock || pill->server->config.liquid_glass)) {
+        draw_liquid_glass_capsule(cr, x, y, w, h, h / 2.0, 1.0, pill->hover_topbar_pill);
     } else {
-        cairo_set_source_rgba(cr, 0.04, 0.04, 0.06, 0.94);
+        draw_rounded_rect(cr, x, y, w, h, h / 2.0);
+        if (pill->hover_topbar_pill) {
+            cairo_set_source_rgba(cr, 0.08, 0.08, 0.11, 0.98);
+        } else {
+            cairo_set_source_rgba(cr, 0.04, 0.04, 0.06, 0.94);
+        }
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, pill->hover_topbar_pill ? 0.28 : 0.16);
+        cairo_set_line_width(cr, 0.75);
+        cairo_stroke(cr);
     }
-    cairo_fill_preserve(cr);
-
-    // Hairline glass border
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, pill->hover_topbar_pill ? 0.28 : 0.16);
-    cairo_set_line_width(cr, 0.75);
-    cairo_stroke(cr);
 
     // Left: Artwork thumbnail or colorful gradient music note
     double icon_x = x + pad;
@@ -883,20 +930,47 @@ static void music_pill_render_overlay(aurade_music_pill_t *pill) {
     pill->overlay_w = curr_w;
     pill->overlay_h = curr_h;
 
+    bool glass_enabled = pill->server && (pill->server->config.blur_dock || pill->server->config.liquid_glass);
+    if (pill->blur_node) {
+        if (glass_enabled && pill->overlay_open && curr_w >= 8.0 && curr_h >= 8.0) {
+            int bw = (int)round(curr_w);
+            int bh = (int)round(curr_h);
+            int br = (int)round(curr_r);
+            int max_r = (bw < bh ? bw : bh) / 2;
+            if (br > max_r) br = max_r;
+            wlr_scene_node_set_position(&pill->blur_node->node,
+                                        scene_x + (int)round(bx),
+                                        scene_y + (int)round(by));
+            wlr_scene_blur_set_size(pill->blur_node, bw, bh);
+            wlr_scene_blur_set_corner_radius(pill->blur_node, br);
+            wlr_scene_blur_set_liquid_glass(pill->blur_node, pill->server->config.liquid_glass);
+            float str = pill->server->config.blur_strength > 0.01 ? (float)pill->server->config.blur_strength : 0.7f;
+            wlr_scene_blur_set_strength(pill->blur_node, str);
+            wlr_scene_node_place_below(&pill->blur_node->node, &pill->overlay_scene->node);
+            wlr_scene_node_set_enabled(&pill->blur_node->node, true);
+        } else {
+            wlr_scene_node_set_enabled(&pill->blur_node->node, false);
+        }
+    }
+
     // Drop shadow
     if (p > 0.05) {
         draw_drop_shadow(cr, bx + 2.0, by + 2.0, curr_w - 4.0, curr_h - 4.0, curr_r, 10.0 * p, 0.50 * p);
     }
 
-    // Jet-black Apple Dynamic Island capsule body
-    draw_rounded_rect(cr, bx, by, curr_w, curr_h, curr_r);
-    cairo_set_source_rgba(cr, 0.04, 0.04, 0.06, 0.96);
-    cairo_fill_preserve(cr);
+    if (glass_enabled) {
+        draw_liquid_glass_capsule(cr, bx, by, curr_w, curr_h, curr_r, 1.0, false);
+    } else {
+        // Jet-black Apple Dynamic Island capsule body
+        draw_rounded_rect(cr, bx, by, curr_w, curr_h, curr_r);
+        cairo_set_source_rgba(cr, 0.04, 0.04, 0.06, 0.96);
+        cairo_fill_preserve(cr);
 
-    // Hairline glass border
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.18 + 0.10 * p);
-    cairo_set_line_width(cr, 0.85);
-    cairo_stroke(cr);
+        // Hairline glass border
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.18 + 0.10 * p);
+        cairo_set_line_width(cr, 0.85);
+        cairo_stroke(cr);
+    }
 
     // Smooth crossfade: compact content fades out as p rises
     if (p < 0.35) {
@@ -1235,19 +1309,20 @@ void music_pill_render_dock(aurade_music_pill_t *pill, cairo_t *cr,
     // Drop shadow
     draw_drop_shadow(cr, x, y, w, h, r, 8.0, 0.45);
 
-    // Jet black glass pill
-    draw_rounded_rect(cr, x, y, w, h, r);
-    if (pill->hover_dock_pill) {
-        cairo_set_source_rgba(cr, 0.08, 0.08, 0.11, 0.98);
+    if (pill->server && (pill->server->config.blur_dock || pill->server->config.liquid_glass)) {
+        draw_liquid_glass_capsule(cr, x, y, w, h, r, 1.0, pill->hover_dock_pill);
     } else {
-        cairo_set_source_rgba(cr, 0.04, 0.04, 0.06, 0.92);
+        draw_rounded_rect(cr, x, y, w, h, r);
+        if (pill->hover_dock_pill) {
+            cairo_set_source_rgba(cr, 0.08, 0.08, 0.11, 0.98);
+        } else {
+            cairo_set_source_rgba(cr, 0.04, 0.04, 0.06, 0.92);
+        }
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, pill->hover_dock_pill ? 0.26 : 0.16);
+        cairo_set_line_width(cr, 0.85);
+        cairo_stroke(cr);
     }
-    cairo_fill_preserve(cr);
-
-    // Border
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, pill->hover_dock_pill ? 0.26 : 0.16);
-    cairo_set_line_width(cr, 0.85);
-    cairo_stroke(cr);
 
     // Left artwork icon
     double art_sz = h - 14.0;

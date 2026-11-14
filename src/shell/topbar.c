@@ -1,6 +1,7 @@
 #include "topbar.h"
 #include "control_center.h"
 #include "music_pill.h"
+#include "notifications.h"
 #include "screenshot.h"
 #include "wallpaper.h"
 #include <time.h>
@@ -304,6 +305,56 @@ void topbar_set_active_app(aurade_topbar_t *bar, const char *title) {
     topbar_render(bar);
 }
 
+static void draw_nc_bell_pill(aurade_topbar_t *bar, cairo_t *cr, double x, double y, double pw, double ph) {
+    bar->nc_x = x;
+    bar->nc_y = y;
+    bar->nc_w = pw;
+    bar->nc_h = ph;
+
+    bool nc_open = bar->server && bar->server->notifications &&
+                   notifications_nc_is_open(bar->server->notifications);
+    bool has_notifs = bar->server && bar->server->notifications &&
+                      bar->server->notifications->history_count > 0;
+
+    draw_rounded_rect(cr, x, y, pw, ph, ph / 2.0);
+    if (bar->hover_nc || nc_open) {
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.22);
+    } else {
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12);
+    }
+    cairo_fill_preserve(cr);
+    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.18);
+    cairo_set_line_width(cr, 1.0);
+    cairo_stroke(cr);
+
+    double cx = x + pw / 2.0;
+    double cy = y + ph / 2.0;
+    double a = (bar->hover_nc || nc_open) ? 1.0 : 0.88;
+    cairo_save(cr);
+    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, a);
+    cairo_set_line_width(cr, 1.35);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+    cairo_move_to(cr, cx - 4.0, cy + 2.5);
+    cairo_line_to(cr, cx + 4.0, cy + 2.5);
+    cairo_line_to(cr, cx + 3.0, cy + 1.0);
+    cairo_line_to(cr, cx + 3.0, cy - 1.5);
+    cairo_arc_negative(cr, cx, cy - 1.5, 3.0, 0.0, M_PI);
+    cairo_line_to(cr, cx - 3.0, cy + 1.0);
+    cairo_close_path(cr);
+    cairo_stroke(cr);
+
+    cairo_arc(cr, cx, cy + 4.0, 1.0, 0.0, 2.0 * M_PI);
+    cairo_fill(cr);
+
+    if (has_notifs && !nc_open) {
+        cairo_arc(cr, cx + 5.0, cy - 3.5, 2.0, 0.0, 2.0 * M_PI);
+        cairo_set_source_rgba(cr, 0.25, 0.62, 1.0, 0.95);
+        cairo_fill(cr);
+    }
+    cairo_restore(cr);
+}
+
 void topbar_render(aurade_topbar_t *bar) {
     if (!bar || !bar->buffer || !bar->buffer->cr) return;
     bar->needs_render = false;
@@ -344,11 +395,6 @@ void topbar_render(aurade_topbar_t *bar) {
     }
     draw_sun_logo(cr, 18.0, h / 2.0 + 1.0, 16.0, 0.94);
 
-    // Active application name
-    double app_x = 36.0;
-    draw_text(cr, bar->active_app_title, FONT_UI, 13.0, true,
-              1.0, 1.0, 1.0, 0.96, app_x, h / 2.0, false, true);
-
     // Right-hand status area, laid out from the clock inwards.
     time_t now = time(NULL);
     static time_t last_clock_sec = 0;
@@ -363,6 +409,8 @@ void topbar_render(aurade_topbar_t *bar) {
     }
 
     double clock_x = w - 14.0 - cached_clock_w;
+    bar->clock_x = clock_x - 4.0;
+    bar->clock_w = cached_clock_w + 18.0;
     draw_text(cr, cached_clock_str, FONT_UI, 12.5, true,
               1.0, 1.0, 1.0, 0.92, clock_x, h / 2.0, false, true);
 
@@ -403,6 +451,14 @@ void topbar_render(aurade_topbar_t *bar) {
                              (bar->hover_cc || cc_open) ? 1.0 : 0.88);
 
     cursor_x -= 8.0;
+
+    bool nc_left = bar->server && bar->server->config.notif_center_left;
+    if (!nc_left) {
+        double nc_w = 26.0, nc_h = 17.0;
+        cursor_x -= nc_w;
+        draw_nc_bell_pill(bar, cr, cursor_x, (h - nc_h) / 2.0, nc_w, nc_h);
+        cursor_x -= 8.0;
+    }
 
     // Processor Temperature Widget (Average and Max)
     bool show_cpu = bar->server && bar->server->config.topbar_cpu_temp;
@@ -561,7 +617,28 @@ void topbar_render(aurade_topbar_t *bar) {
         music_pill_render_topbar(bar->server->music_pill, cr, w, h);
     }
 
-
+    // Active application name clamped before the Dynamic Pill / right status area
+    {
+        double app_x = 36.0;
+        if (nc_left) {
+            double nc_w = 26.0, nc_h = 17.0;
+            draw_nc_bell_pill(bar, cr, 36.0, (h - nc_h) / 2.0, nc_w, nc_h);
+            app_x += nc_w + 8.0;
+        }
+        double right_limit = (bar->rec_w > 0.0 && bar->rec_x < cursor_x) ? (bar->rec_x - 12.0) : (cursor_x - 14.0);
+        if (bar->server->music_pill &&
+            music_pill_get_pos(bar->server->music_pill) == MUSIC_PILL_POS_TOPBAR_CENTER &&
+            bar->server->music_pill->active &&
+            bar->server->music_pill->pill_w > 0.0) {
+            double pill_left = bar->server->music_pill->pill_x - 14.0;
+            if (pill_left < right_limit) right_limit = pill_left;
+        }
+        double max_app_w = right_limit - app_x;
+        if (max_app_w > 24.0) {
+            draw_text_clamped(cr, bar->active_app_title, FONT_UI, 13.0, true,
+                              1.0, 1.0, 1.0, 0.96, app_x, h / 2.0, max_app_w);
+        }
+    }
 
     cairo_buffer_apply_to_scene(bar->buffer, bar->scene_buffer);
 }
@@ -895,8 +972,9 @@ bool topbar_handle_motion(aurade_topbar_t *bar, double x, double y) {
     }
 
     if (y > bar->height + 2.0) {
-        if (bar->hover_cc || bar->hover_apple || bar->hover_rec || bar->hover_cpu_temp) {
+        if (bar->hover_cc || bar->hover_nc || bar->hover_apple || bar->hover_rec || bar->hover_cpu_temp) {
             bar->hover_cc = false;
+            bar->hover_nc = false;
             bar->hover_apple = false;
             bar->hover_rec = false;
             bar->hover_cpu_temp = false;
@@ -907,6 +985,9 @@ bool topbar_handle_motion(aurade_topbar_t *bar, double x, double y) {
 
     bool cc = (x >= bar->cc_x && x <= bar->cc_x + bar->cc_w &&
                y >= bar->cc_y && y <= bar->cc_y + bar->cc_h);
+    bool nc = (bar->nc_w > 0 &&
+               x >= bar->nc_x && x <= bar->nc_x + bar->nc_w &&
+               y >= bar->nc_y && y <= bar->nc_y + bar->nc_h);
     bool apple = (x >= bar->apple_x && x <= bar->apple_x + bar->apple_w &&
                   y >= bar->apple_y && y <= bar->apple_y + bar->apple_h);
     bool rec = (bar->rec_w > 0 &&
@@ -916,8 +997,9 @@ bool topbar_handle_motion(aurade_topbar_t *bar, double x, double y) {
                  x >= bar->cpu_temp_x && x <= bar->cpu_temp_x + bar->cpu_temp_w &&
                  y >= bar->cpu_temp_y && y <= bar->cpu_temp_y + bar->cpu_temp_h);
 
-    if (cc != bar->hover_cc || apple != bar->hover_apple || rec != bar->hover_rec || temp != bar->hover_cpu_temp) {
+    if (cc != bar->hover_cc || nc != bar->hover_nc || apple != bar->hover_apple || rec != bar->hover_rec || temp != bar->hover_cpu_temp) {
         bar->hover_cc = cc;
+        bar->hover_nc = nc;
         bar->hover_apple = apple;
         bar->hover_rec = rec;
         bar->hover_cpu_temp = temp;
@@ -977,6 +1059,16 @@ bool topbar_handle_click(aurade_topbar_t *bar, double x, double y) {
         return true;
     }
 
+    // Notification Center button
+    if (bar->nc_w > 0 &&
+        x >= bar->nc_x && x <= bar->nc_x + bar->nc_w &&
+        y >= bar->nc_y && y <= bar->nc_y + bar->nc_h) {
+        if (bar->server && bar->server->notifications) {
+            notifications_nc_toggle(bar->server->notifications);
+        }
+        return true;
+    }
+
     // Control Center
     if (x >= bar->cc_x && x <= bar->cc_x + bar->cc_w &&
         y >= bar->cc_y && y <= bar->cc_y + bar->cc_h) {
@@ -985,6 +1077,14 @@ bool topbar_handle_click(aurade_topbar_t *bar, double x, double y) {
         server_handle_gesture_begin(bar->server, ACTION_CONTROL_CENTER);
         server_handle_gesture_update(bar->server, -90.0, 0, 1.0);
         server_handle_gesture_end(bar->server, false, -500.0, 0);
+        return true;
+    }
+
+    // Clock -> Toggle Notification Center
+    if (bar->clock_w > 0 && x >= bar->clock_x && x <= bar->clock_x + bar->clock_w) {
+        if (bar->server && bar->server->notifications) {
+            notifications_nc_toggle(bar->server->notifications);
+        }
         return true;
     }
 

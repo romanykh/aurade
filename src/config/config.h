@@ -51,6 +51,7 @@ typedef struct {
 
     // Edge gestures
     gesture_action_t edge_swipe_right;
+    bool notif_center_left;         // false = right edge swipe/slide, true = left edge swipe/slide
 
     // Physics
     spring_config_t spring;
@@ -59,8 +60,10 @@ typedef struct {
     double flick_velocity_threshold;// e.g. 350.0 px/sec
     double rubber_band_limit;       // e.g. 180.0 px
     double deadzone_px;             // e.g. 8.0 px
-    bool natural_scroll;            // true for macOS direction
-    bool disable_while_typing;       // true to lock touchpad while typing; false for gaming
+    bool natural_scroll;            // true for macOS direction (touchpad)
+    bool mouse_natural_scroll;      // true for macOS direction (physical mouse)
+    bool disable_while_typing;      // true to lock touchpad while typing; false for gaming
+    bool smooth_wheel_scroll;       // true for kinetic mouse wheel scrolling
 
     // Keyboard. Empty strings mean "auto-detect from XKB env or
     // /etc/vconsole.conf", which keeps AuraDE in sync with the system layout.

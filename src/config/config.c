@@ -156,6 +156,7 @@ aurade_config_t config_get_defaults(void) {
 
         // Edge gestures
         .edge_swipe_right = { .type = ACTION_CONTROL_CENTER },
+        .notif_center_left = false,
 
         // Physics
         .spring = spring_config_default(),
@@ -165,7 +166,9 @@ aurade_config_t config_get_defaults(void) {
         .rubber_band_limit = 180.0,
         .deadzone_px = 40.0,
         .natural_scroll = true,
+        .mouse_natural_scroll = false,
         .disable_while_typing = false,
+        .smooth_wheel_scroll = true,
 
         // Keyboard: auto-detect (see config.h)
         .kb_layout = "",
@@ -307,6 +310,11 @@ bool config_load(aurade_config_t *cfg, const char *path) {
         read_action(gestures, "pinch_out_4", &cfg->pinch_out_4);
 
         read_action(gestures, "edge_swipe_right", &cfg->edge_swipe_right);
+        struct json_object *v;
+        if (json_object_object_get_ex(gestures, "notification_center_side", &v)) {
+            const char *s = json_object_get_string(v);
+            if (s) cfg->notif_center_left = (strcasecmp(s, "left") == 0);
+        }
     }
 
     struct json_object *physics = NULL;
@@ -321,7 +329,9 @@ bool config_load(aurade_config_t *cfg, const char *path) {
         if (json_object_object_get_ex(physics, "rubber_band_limit", &v)) cfg->rubber_band_limit = json_object_get_double(v);
         if (json_object_object_get_ex(physics, "deadzone_px", &v)) cfg->deadzone_px = json_object_get_double(v);
         if (json_object_object_get_ex(physics, "natural_scroll", &v)) cfg->natural_scroll = json_object_get_boolean(v);
+        if (json_object_object_get_ex(physics, "mouse_natural_scroll", &v)) cfg->mouse_natural_scroll = json_object_get_boolean(v);
         if (json_object_object_get_ex(physics, "disable_while_typing", &v)) cfg->disable_while_typing = json_object_get_boolean(v);
+        if (json_object_object_get_ex(physics, "smooth_wheel_scroll", &v)) cfg->smooth_wheel_scroll = json_object_get_boolean(v);
     }
 
     struct json_object *touchpad = NULL;
@@ -613,6 +623,8 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     add_action(gestures, "pinch_out_4", &cfg->pinch_out_4);
 
     add_action(gestures, "edge_swipe_right", &cfg->edge_swipe_right);
+    json_object_object_add(gestures, "notification_center_side",
+                           json_object_new_string(cfg->notif_center_left ? "left" : "right"));
     json_object_object_add(root, "gestures", gestures);
 
     struct json_object *physics = json_object_new_object();
@@ -625,7 +637,9 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     json_object_object_add(physics, "rubber_band_limit", json_object_new_double(cfg->rubber_band_limit));
     json_object_object_add(physics, "deadzone_px", json_object_new_double(cfg->deadzone_px));
     json_object_object_add(physics, "natural_scroll", json_object_new_boolean(cfg->natural_scroll));
+    json_object_object_add(physics, "mouse_natural_scroll", json_object_new_boolean(cfg->mouse_natural_scroll));
     json_object_object_add(physics, "disable_while_typing", json_object_new_boolean(cfg->disable_while_typing));
+    json_object_object_add(physics, "smooth_wheel_scroll", json_object_new_boolean(cfg->smooth_wheel_scroll));
     json_object_object_add(root, "physics", physics);
 
     struct json_object *keyboard = json_object_new_object();

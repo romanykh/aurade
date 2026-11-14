@@ -104,6 +104,7 @@ void dock_update_running_state(aurade_dock_t *dock);
 void dock_refresh(aurade_server_t *server);
 void dock_render(aurade_dock_t *dock);
 void dock_apply_slide(aurade_dock_t *dock);
+bool dock_uses_pill_blur(aurade_dock_t *dock);
 bool dock_intersects_window(aurade_dock_t *dock);
 void dock_update_visibility(aurade_dock_t *dock);
 bool dock_contains_point(aurade_dock_t *dock, double x, double y);

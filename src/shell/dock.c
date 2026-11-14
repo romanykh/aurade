@@ -315,6 +315,10 @@ static inline bool dock_is_3d(aurade_dock_t *dock) {
     return (strcmp(dock->server->config.dock_theme, DOCK_THEME_TABLE_3D) == 0);
 }
 
+bool dock_uses_pill_blur(aurade_dock_t *dock) {
+    return dock && !dock_is_3d(dock) && !dock_is_plank(dock);
+}
+
 /* Distance the dock travels between "fully visible" and "fully hidden": just
  * enough for the pill to clear the bottom edge. */
 static double dock_slide_distance(aurade_dock_t *dock) {
@@ -411,6 +415,7 @@ void dock_apply_slide(aurade_dock_t *dock) {
         wlr_scene_blur_set_strength(dock->blur_node, dock_str);
         wlr_scene_node_set_enabled(&dock->blur_node->node,
                                    visible &&
+                                   dock_uses_pill_blur(dock) &&
                                    dock_glass &&
                                    (dock_op > 0.05));
     }
@@ -1318,7 +1323,7 @@ void dock_render(aurade_dock_t *dock) {
         dark = dock->server->control_center->dark_mode;
     }
     double front_rim_h = 5.0;
-    double shelf_depth = 14.0;
+    double shelf_depth = 18.0;
     double table_h = front_rim_h + shelf_depth;
     double plank_bar_h = 10.0;
 
@@ -1408,6 +1413,7 @@ void dock_render(aurade_dock_t *dock) {
         wlr_scene_blur_set_strength(dock->blur_node, dock_str);
         wlr_scene_node_set_enabled(&dock->blur_node->node,
                                    dock->enabled && dock->hide_progress < 0.999 &&
+                                   dock_uses_pill_blur(dock) &&
                                    dock_glass &&
                                    (dock_op > 0.05));
     }
@@ -1786,9 +1792,9 @@ void dock_render(aurade_dock_t *dock) {
 
     if (has_mp_dock && mp_draw_x >= 0.0) {
         double mp_h = is_3d ? (base * 0.72) : (is_plank ? (base * 0.75) : (pill_h - 12.0));
-        double mp_y = is_3d ? (shelf_rim_y - mp_h - 4.0) : (is_plank ? (bar_local_y - mp_h - 2.0) : (pill_local_y + 6.0));
+        double mp_y = is_3d ? (shelf_rim_y - mp_h - 8.0) : (is_plank ? (bar_local_y - mp_h - 2.0) : (pill_local_y + 6.0));
         dock->server->music_pill->dock_pill_x = mp_draw_x;
-        dock->server->music_pill->dock_pill_y = dock->pill_y + (is_3d ? (shelf_rim_y - pill_local_y - mp_h - 4.0) : (is_plank ? (bar_local_y - pill_local_y - mp_h - 2.0) : 6.0));
+        dock->server->music_pill->dock_pill_y = dock->pill_y + (is_3d ? (shelf_rim_y - pill_local_y - mp_h - 8.0) : (is_plank ? (bar_local_y - pill_local_y - mp_h - 2.0) : 6.0));
         dock->server->music_pill->dock_pill_w = mp_w;
         dock->server->music_pill->dock_pill_h = mp_h;
         music_pill_render_dock(dock->server->music_pill, cr, mp_draw_x, mp_y, mp_w, mp_h);
@@ -1797,7 +1803,7 @@ void dock_render(aurade_dock_t *dock) {
     dock->hovered_index = -1;
     double best_scale = 1.0;
 
-    double icon_bottom = is_3d ? (shelf_rim_y - 1.0) : (is_plank ? (bar_local_y + 1.0) : (pill_local_y + pill_h - 10.0));
+    double icon_bottom = is_3d ? (shelf_rim_y - 8.0) : (is_plank ? (bar_local_y + 1.0) : (pill_local_y + pill_h - 10.0));
     int drag_draw_idx = -1;
 
     for (int i = 0; i < count; i++) {
@@ -1809,22 +1815,34 @@ void dock_render(aurade_dock_t *dock) {
         double cx = dock->items[i].center_x;
         double cy = icon_bottom - w / 2.0 + dock->items[i].bounce_offset;
 
-        // In 3D Table mode, render subtle icon reflection on the glass tabletop
+        // In 3D Table mode, render subtle icon reflection strictly on the glass tabletop
         if (is_3d && dock->items[i].icon_surface) {
             cairo_surface_t *surf = dock->items[i].cached_base_surface ?
                                     dock->items[i].cached_base_surface : dock->items[i].icon_surface;
             int iw = cairo_image_surface_get_width(surf);
             int ih = cairo_image_surface_get_height(surf);
             if (iw > 0 && ih > 0) {
-                cairo_save(cr);
-                cairo_rectangle(cr, cx - w / 2.0 - 4.0, icon_bottom, w + 8.0, shelf_depth + front_rim_h + 4.0);
-                cairo_clip(cr);
-                cairo_translate(cr, cx - w / 2.0, icon_bottom);
-                cairo_scale(cr, w / (double)iw, -0.22 * (w / (double)ih));
-                cairo_set_source_surface(cr, surf, 0, -ih);
-                cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
-                cairo_paint_with_alpha(cr, dark ? 0.18 : 0.28);
-                cairo_restore(cr);
+                double refl_h = shelf_rim_y - icon_bottom;
+                if (refl_h > 1.0) {
+                    double dock_cx = pill_x + used / 2.0;
+                    double norm_offset = (used > 1.0) ? ((cx - dock_cx) / (used / 2.0)) : 0.0;
+                    if (norm_offset < -1.0) norm_offset = -1.0;
+                    if (norm_offset > 1.0) norm_offset = 1.0;
+                    double skew_x = norm_offset * 0.45;
+                    cairo_matrix_t shear;
+                    cairo_matrix_init(&shear, 1.0, 0.0, skew_x, 1.0, 0.0, 0.0);
+
+                    cairo_save(cr);
+                    cairo_rectangle(cr, cx - w / 2.0 - 8.0, icon_bottom, w + 16.0, refl_h);
+                    cairo_clip(cr);
+                    cairo_translate(cr, cx - w / 2.0, icon_bottom);
+                    cairo_transform(cr, &shear);
+                    cairo_scale(cr, w / (double)iw, -0.22 * (w / (double)ih));
+                    cairo_set_source_surface(cr, surf, 0, -ih);
+                    cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
+                    cairo_paint_with_alpha(cr, dark ? 0.18 : 0.28);
+                    cairo_restore(cr);
+                }
             }
         }
 

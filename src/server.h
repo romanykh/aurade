@@ -84,6 +84,8 @@ typedef struct aurade_view {
     struct wlr_scene_tree *scene_tree;
     struct wlr_scene_tree *content_tree; // xdg surface, aligned to the window rect
     struct wlr_scene_blur *blur_node;
+    struct wlr_scene_blur *settings_sidebar_blur;
+    struct wlr_scene_blur *settings_content_blur;
     struct wlr_xdg_toplevel_decoration_v1 *decoration;
     int workspace;
 
@@ -255,6 +257,18 @@ typedef struct aurade_server {
 
     // 1-second clock tick for the menu-bar clock
     struct wl_event_source *clock_timer;
+
+    // System-wide kinetic wheel scroll
+    double wheel_vel_x;
+    double wheel_vel_y;
+    bool wheel_scrolling_x;
+    bool wheel_scrolling_y;
+    uint32_t wheel_last_time_msec;
+
+    // Two-finger horizontal edge swipe for Notification Center
+    double nc_swipe_accum;
+    uint32_t nc_swipe_last_msec;
+    bool nc_swipe_triggered;
 
     // Workspaces
     int num_workspaces;

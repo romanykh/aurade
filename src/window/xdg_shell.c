@@ -437,6 +437,35 @@ static void view_scale_buffer_iterator(struct wlr_scene_buffer *scene_buffer,
     }
 }
 
+static void view_set_panel_blur(struct wlr_scene_blur **node_ptr, struct wlr_scene_tree *parent,
+                                struct wlr_scene_tree *below, int x, int y, int w, int h,
+                                int rad, bool liquid_glass, float strength, bool enabled) {
+    if (!*node_ptr && enabled && parent) {
+        *node_ptr = wlr_scene_blur_create(parent, w > 0 ? w : 100, h > 0 ? h : 100);
+    }
+    if (!*node_ptr) return;
+    wlr_scene_node_set_enabled(&(*node_ptr)->node, enabled);
+    if (enabled) {
+        if (w < 1) w = 1;
+        if (h < 1) h = 1;
+        int max_r = (w < h ? w : h) / 2;
+        if (rad > max_r) rad = max_r;
+        wlr_scene_node_set_position(&(*node_ptr)->node, x, y);
+        wlr_scene_blur_set_size(*node_ptr, w, h);
+        wlr_scene_blur_set_corner_radius(*node_ptr, rad);
+        wlr_scene_blur_set_liquid_glass(*node_ptr, liquid_glass);
+        wlr_scene_blur_set_strength(*node_ptr, strength);
+        if (below) wlr_scene_node_place_below(&(*node_ptr)->node, &below->node);
+    }
+}
+
+static void view_disable_all_blur(aurade_view_t *view) {
+    if (!view) return;
+    if (view->blur_node) wlr_scene_node_set_enabled(&view->blur_node->node, false);
+    if (view->settings_sidebar_blur) wlr_scene_node_set_enabled(&view->settings_sidebar_blur->node, false);
+    if (view->settings_content_blur) wlr_scene_node_set_enabled(&view->settings_content_blur->node, false);
+}
+
 void view_update_blur(aurade_view_t *view) {
     if (!view || !view->blur_node || !view->server) return;
     bool pause_blur = (
@@ -448,21 +477,58 @@ void view_update_blur(aurade_view_t *view) {
         (view->server->launchpad && view->server->launchpad->active)
     );
     const char *app_id = view_get_app_id(view);
-    bool is_settings = (app_id && (strcasestr(app_id, "settings") != NULL || strcasestr(app_id, "aurade-settings") != NULL));
+    bool is_settings_app = (app_id && (strcasestr(app_id, "settings") != NULL || strcasestr(app_id, "aurade-settings") != NULL));
+    bool is_settings = is_settings_app && (!view->xdg_toplevel || !view->xdg_toplevel->parent);
     bool enabled = (view->server->config.blur_windows || is_settings) &&
                    !pause_blur &&
                    !view->minimized &&
                    (view->scene_tree && view->scene_tree->node.enabled) &&
                    view->width > 0 && view->height > 0;
+    double sx = (view->current_scale > 0.0) ? view->current_scale : 1.0;
+
+    if (is_settings && enabled && view->width > 240 && view->height > 100) {
+        // Only the two transparent glass panels (.sidebar & .content-stack) get Liquid Glass refraction;
+        // the outer gray window frame stays crisp and unblurred.
+        wlr_scene_node_set_enabled(&view->blur_node->node, false);
+        bool lg = view->server->config.liquid_glass;
+        float str = (float)view->server->config.blur_strength;
+        int sx0 = 12, sy0 = 52, sw0 = 157, sh0 = view->height - 64;
+        int cx0 = 181, cy0 = 52, cw0 = view->width - 193, ch0 = view->height - 64;
+        FILE *fp = fopen("/tmp/aurade-settings-panels.rect", "r");
+        if (fp) {
+            int a[8];
+            if (fscanf(fp, "%d %d %d %d %d %d %d %d",
+                       &a[0], &a[1], &a[2], &a[3],
+                       &a[4], &a[5], &a[6], &a[7]) == 8 &&
+                a[2] > 20 && a[3] > 20 && a[6] > 20 && a[7] > 20) {
+                sx0 = a[0]; sy0 = a[1]; sw0 = a[2]; sh0 = a[3];
+                cx0 = a[4]; cy0 = a[5]; cw0 = a[6]; ch0 = a[7];
+            }
+            fclose(fp);
+        }
+        int rad = (int)round(16.0 * sx);
+        view_set_panel_blur(&view->settings_sidebar_blur, view->scene_tree, view->content_tree,
+                            (int)round(sx0 * sx), (int)round(sy0 * sx),
+                            (int)round(sw0 * sx), (int)round(sh0 * sx),
+                            rad, lg, str, true);
+        view_set_panel_blur(&view->settings_content_blur, view->scene_tree, view->content_tree,
+                            (int)round(cx0 * sx), (int)round(cy0 * sx),
+                            (int)round(cw0 * sx), (int)round(ch0 * sx),
+                            rad, lg, str, true);
+        return;
+    }
+
+    if (view->settings_sidebar_blur) wlr_scene_node_set_enabled(&view->settings_sidebar_blur->node, false);
+    if (view->settings_content_blur) wlr_scene_node_set_enabled(&view->settings_content_blur->node, false);
+
     wlr_scene_node_set_enabled(&view->blur_node->node, enabled);
     if (enabled) {
-        double sx = (view->current_scale > 0.0) ? view->current_scale : 1.0;
         int bw = (int)round(view->width * sx);
         int bh = (int)round(view->height * sx);
         if (bw < 1) bw = 1;
         if (bh < 1) bh = 1;
         wlr_scene_blur_set_size(view->blur_node, bw, bh);
-        int rad = 12;
+        int rad = is_settings ? 14 : 12;
         int max_r = (bw < bh ? bw : bh) / 4;
         if (rad > max_r) rad = max_r;
         wlr_scene_blur_set_corner_radius(view->blur_node, rad);
@@ -477,9 +543,7 @@ void view_update_blur(aurade_view_t *view) {
 void view_update_workspace_clip(aurade_view_t *view) {
     if (!view || !view->scene_tree || !view->server) return;
     if (view->minimized) {
-        if (view->blur_node) {
-            wlr_scene_node_set_enabled(&view->blur_node->node, false);
-        }
+        view_disable_all_blur(view);
         return;
     }
 
@@ -914,7 +978,9 @@ void view_focus(aurade_view_t *view) {
         }
 
         wlr_xwayland_surface_activate(xsurface, true);
-        wlr_xwayland_surface_restack(xsurface, NULL, XCB_STACK_MODE_ABOVE);
+        if (xsurface->surface) {
+            wlr_xwayland_surface_restack(xsurface, NULL, XCB_STACK_MODE_ABOVE);
+        }
 
         if (xsurface->surface) {
             struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
@@ -1566,9 +1632,7 @@ void view_minimize(aurade_view_t *view) {
     view->anim_target_x = dock_cx;
     view->anim_target_y = dock_cy;
 
-    if (view->blur_node) {
-        wlr_scene_node_set_enabled(&view->blur_node->node, false);
-    }
+    view_disable_all_blur(view);
 
     spring_config_t min_cfg = {
         .mass = 1.0,
@@ -1642,9 +1706,7 @@ void view_restore(aurade_view_t *view) {
     view->anim_target_x = view->x + view->width / 2.0;
     view->anim_target_y = view->y + view->height / 2.0;
 
-    if (view->blur_node) {
-        wlr_scene_node_set_enabled(&view->blur_node->node, false);
-    }
+    view_disable_all_blur(view);
 
     spring_config_t rest_cfg = {
         .mass = 1.0,
@@ -2126,6 +2188,8 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
         wlr_scene_node_destroy(&view->scene_tree->node);
         view->scene_tree = NULL;
         view->blur_node = NULL;
+        view->settings_sidebar_blur = NULL;
+        view->settings_content_blur = NULL;
     }
 
     if (server->config.tiling_enabled) {
