@@ -317,6 +317,9 @@ static void output_frame(struct wl_listener *listener, void *data) {
     if (server->lockscreen && server->lockscreen->needs_render) {
         lockscreen_render(server->lockscreen);
     }
+    if (server->control_center && server->control_center->active && server->control_center->needs_render) {
+        control_center_render(server->control_center);
+    }
 
     // Ensure views currently scaled (overview / animations) remain properly scaled
     // even if the client or any subsurface committed a buffer during the frame.
@@ -348,12 +351,13 @@ static void output_frame(struct wl_listener *listener, void *data) {
         (lockscreen_is_animating(server->lockscreen) || server->lockscreen->needs_render);
     bool mc_animating = server->mission_control &&
         (mission_control_is_animating(server->mission_control) || server->mission_control->needs_render);
+    bool cc_animating = server->control_center && server->control_center->active && server->control_center->needs_render;
     bool osd_animating = server->osd && osd_is_animating(server->osd);
     bool notif_animating = server->notifications && notifications_is_animating(server->notifications);
     bool close_animating = !wl_list_empty(&server->close_anims);
 
     if (view_animating || close_animating || dock_animating || topbar_animating || launchpad_animating || lockscreen_animating ||
-        mc_animating || server->gesture_animating || server->workspace_animating || server->gesture_in_progress ||
+        mc_animating || cc_animating || server->gesture_animating || server->workspace_animating || server->gesture_in_progress ||
         osd_animating || notif_animating ||
         wlr_scene_output_needs_frame(output->scene_output)) {
         wlr_output_schedule_frame(output->wlr_output);
@@ -1105,11 +1109,15 @@ static void cursor_motion(struct wl_listener *listener, void *data) {
         return;
     }
     if (server->control_center && server->control_center->active) {
+        static const char *last_cc_cursor = NULL;
         control_center_handle_motion(server->control_center, lx, ly);
         wlr_seat_pointer_clear_focus(server->seat);
         server_set_pointer_constraint(server, NULL);
-        wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr,
-                               control_center_cursor(server->control_center, lx, ly));
+        const char *cname = control_center_cursor(server->control_center, lx, ly);
+        if (!last_cc_cursor || strcmp(last_cc_cursor, cname) != 0) {
+            wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, cname);
+            last_cc_cursor = cname;
+        }
         return;
     }
 

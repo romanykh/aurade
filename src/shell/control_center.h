@@ -250,7 +250,13 @@ typedef struct aurade_control_center {
     int dragging;
     bool needs_render;
     uint64_t last_drag_apply_ms;
-    uint64_t last_drag_render_ms;
+
+    cairo_surface_t *bg_cache;
+    int bg_cache_w;
+    int bg_cache_h;
+    double bg_cache_panel_h;
+    bool bg_cache_dark;
+    char bg_cache_accent[32];
 
     // Hover / press feedback, so the panel feels alive like fluid.
     int hover;    // cc_module_t

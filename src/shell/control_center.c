@@ -2472,7 +2472,7 @@ static int cc_anim_tick(void *data) {
     }
 
     if (cc->active) {
-        control_center_render(cc);
+        cc->needs_render = true;
         if (cc->server) schedule_all_outputs(cc->server);
     }
 
@@ -2480,6 +2480,12 @@ static int cc_anim_tick(void *data) {
         wl_event_source_timer_update(cc->anim_timer, 16);
     }
     return 0;
+}
+
+static void cc_request_render(aurade_control_center_t *cc) {
+    if (!cc) return;
+    cc->needs_render = true;
+    if (cc->server) schedule_all_outputs(cc->server);
 }
 
 static void cc_arm_anim(aurade_control_center_t *cc) {
@@ -3391,20 +3397,48 @@ void control_center_render(aurade_control_center_t *cc) {
     if (!cc || !cc->buffer || !cc->buffer->cr) return;
     cc->needs_render = false;
     cairo_t *cr = cc->buffer->cr;
-    cairo_buffer_clear(cc->buffer);
 
     cc_layout_t L = cc_layout(cc);
     double panel_h = (cc->anim_panel_h > 100.0) ? cc->anim_panel_h : L.panel_h;
-    cc_theme_t theme = cc_theme(cc_is_dark(cc),
-                                cc->server ? cc->server->config.accent_color : NULL);
+    bool dark = cc_is_dark(cc);
+    const char *accent = (cc->server && cc->server->config.accent_color[0]) ? cc->server->config.accent_color : "";
+    cc_theme_t theme = cc_theme(dark, accent[0] ? accent : NULL);
 
-    draw_drop_shadow(cr, CC_SHADOW_PAD, CC_SHADOW_PAD, CC_WIDTH, panel_h,
-                     CC_RADIUS, 20.0, theme.shadow);
+    int bw = cc->buffer->width;
+    int bh = cc->buffer->height;
+    if (!cc->bg_cache || cc->bg_cache_w != bw || cc->bg_cache_h != bh ||
+        fabs(cc->bg_cache_panel_h - panel_h) > 0.25 ||
+        cc->bg_cache_dark != dark ||
+        strncmp(cc->bg_cache_accent, accent, sizeof(cc->bg_cache_accent)) != 0) {
+        if (!cc->bg_cache || cc->bg_cache_w != bw || cc->bg_cache_h != bh) {
+            if (cc->bg_cache) cairo_surface_destroy(cc->bg_cache);
+            cc->bg_cache = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, bw, bh);
+            cc->bg_cache_w = bw;
+            cc->bg_cache_h = bh;
+        }
+        cairo_t *bcr = cairo_create(cc->bg_cache);
+        cairo_set_operator(bcr, CAIRO_OPERATOR_CLEAR);
+        cairo_paint(bcr);
+        cairo_set_operator(bcr, CAIRO_OPERATOR_OVER);
+        draw_drop_shadow(bcr, CC_SHADOW_PAD, CC_SHADOW_PAD, CC_WIDTH, panel_h,
+                         CC_RADIUS, 20.0, theme.shadow);
+        cairo_translate(bcr, CC_SHADOW_PAD, CC_SHADOW_PAD);
+        cc_draw_panel(bcr, CC_WIDTH, panel_h, &theme, cc);
+        cairo_destroy(bcr);
+
+        cc->bg_cache_panel_h = panel_h;
+        cc->bg_cache_dark = dark;
+        snprintf(cc->bg_cache_accent, sizeof(cc->bg_cache_accent), "%s", accent);
+    }
+
+    cairo_save(cr);
+    cairo_set_source_surface(cr, cc->bg_cache, 0.0, 0.0);
+    cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+    cairo_paint(cr);
+    cairo_restore(cr);
 
     cairo_save(cr);
     cairo_translate(cr, CC_SHADOW_PAD, CC_SHADOW_PAD);
-
-    cc_draw_panel(cr, CC_WIDTH, panel_h, &theme, cc);
 
     // Clip content to rounded panel bounds for smooth page slide/height transitions
     draw_rounded_rect(cr, 0.0, 0.0, CC_WIDTH, panel_h, CC_RADIUS);
@@ -3622,10 +3656,7 @@ static void cc_handle_subpage_motion(aurade_control_center_t *cc, double px, dou
             cc->last_drag_apply_ms = now;
             apply_volume(cc);
         }
-        if (now - cc->last_drag_render_ms >= 12) {
-            cc->last_drag_render_ms = now;
-            control_center_render(cc);
-        }
+        cc_request_render(cc);
         return;
     }
 
@@ -3697,7 +3728,7 @@ static void cc_handle_subpage_motion(aurade_control_center_t *cc, double px, dou
         old_settings != cc->sub_hover_settings || old_cancel != cc->sub_hover_cancel ||
         old_connect != cc->sub_hover_connect || old_mute != cc->sub_hover_mute) {
         cc_arm_anim(cc);
-        control_center_render(cc);
+        cc_request_render(cc);
     }
 }
 
@@ -3849,11 +3880,7 @@ void control_center_handle_motion(aurade_control_center_t *cc, double x, double 
         double px = 0.0;
         cc_to_panel_coords(cc, x, y, &px, NULL);
         set_slider_from_x(cc, px, cc->dragging);
-        uint64_t now = cc_now_ms();
-        if (now - cc->last_drag_render_ms >= 12) {
-            cc->last_drag_render_ms = now;
-            control_center_render(cc);
-        }
+        cc_request_render(cc);
         return;
     }
 
@@ -3864,7 +3891,7 @@ void control_center_handle_motion(aurade_control_center_t *cc, double x, double 
 
     if (module != cc->hover) {
         cc->hover = module;
-        control_center_render(cc);
+        cc_request_render(cc);
     }
 }
 
@@ -3872,7 +3899,6 @@ void control_center_handle_release(aurade_control_center_t *cc, double x, double
     if (!cc) return;
     cc->pressed = CC_MODULE_NONE;
     cc->last_drag_apply_ms = 0;
-    cc->last_drag_render_ms = 0;
 
     if (cc->sub_dragging_slider) {
         cc->sub_dragging_slider = false;
@@ -3998,6 +4024,10 @@ void control_center_destroy(aurade_control_center_t *cc) {
     if (cc->blur_node) {
         wlr_scene_node_destroy(&cc->blur_node->node);
         cc->blur_node = NULL;
+    }
+    if (cc->bg_cache) {
+        cairo_surface_destroy(cc->bg_cache);
+        cc->bg_cache = NULL;
     }
     if (cc->buffer) wlr_buffer_drop(&cc->buffer->base);
     free(cc);
