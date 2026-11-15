@@ -660,12 +660,13 @@ void server_tick_view_animations(aurade_server_t *server, double dt) {
             case VIEW_ANIM_MAP: {
                 // p: 0.0 -> 1.0 with subtle natural overshoot (fluid window pop)
                 double p_clamp = p < 0.0 ? 0.0 : (p > 1.0 ? 1.0 : p);
-                double scale = 0.88 + 0.12 * p;
+                double scale = 0.78 + 0.22 * p;
                 if (scale < 0.1) scale = 0.1;
-                double opacity = p_clamp;
+                double opacity = p_clamp * 1.8;
+                if (opacity > 1.0) opacity = 1.0;
 
                 int render_x = (int)round(view->x + (view->width * (1.0 - scale)) / 2.0);
-                int render_y = (int)round(view->y + (view->height * (1.0 - scale)) / 2.0);
+                int render_y = (int)round(view->y + (view->height * (1.0 - scale)) / 2.0 + (1.0 - p) * 16.0);
 
                 wlr_scene_node_set_position(&view->scene_tree->node, render_x, render_y);
                 view_set_scale(view, scale, scale);
@@ -881,10 +882,11 @@ void server_tick_view_animations(aurade_server_t *server, double dt) {
             continue;
         }
 
-        // Snappy scale pop (1.0 -> 0.85) and smooth cubic fade out (1.0 -> 0.0)
-        double scale = 1.0 - 0.15 * p;
+        // Smooth ease-out scale shrink (1.0 -> 0.76), subtle downward glide, and fade out
+        double ease = 1.0 - pow(1.0 - p, 2.4);
+        double scale = 1.0 - 0.24 * ease;
         if (scale < 0.1) scale = 0.1;
-        double opacity = 1.0 - (p * p * (3.0 - 2.0 * p));
+        double opacity = 1.0 - pow(p, 1.35);
         if (opacity < 0.0) opacity = 0.0;
         if (opacity > 1.0) opacity = 1.0;
 
@@ -896,7 +898,7 @@ void server_tick_view_animations(aurade_server_t *server, double dt) {
         double cx = canim->start_x + canim->width / 2.0;
         double cy = canim->start_y + canim->height / 2.0;
         int rx = (int)round(cx - cur_w / 2.0);
-        int ry = (int)round(cy - cur_h / 2.0);
+        int ry = (int)round(cy - cur_h / 2.0 + 14.0 * ease);
 
         int max_r = (cur_w < cur_h ? cur_w : cur_h) / 4;
         int rad = 12;
@@ -1828,7 +1830,7 @@ void view_spawn_close_animation(aurade_view_t *view) {
     anim->width = (double)w;
     anim->height = (double)h;
     anim->elapsed = 0.0;
-    anim->duration = 0.18; // 180ms smooth fluid close pop & fade
+    anim->duration = 0.24; // 240ms smooth fluid close shrink & fade
 
     wl_list_insert(&view->server->close_anims, &anim->link);
     schedule_all_outputs(view->server);
@@ -1842,6 +1844,7 @@ void view_close(aurade_view_t *view) {
         wlr_xwayland_surface_close(view->xwayland_surface);
     }
 }
+
 
 static void xdg_surface_commit_debug(struct wl_listener *listener, void *data) {
     (void)data;
@@ -1881,6 +1884,9 @@ static void xdg_surface_commit_debug(struct wl_listener *listener, void *data) {
         view_set_scale(view, view->current_scale, view->current_scale);
     } else {
         view_update_workspace_clip(view);
+    }
+    if (view->anim_type != VIEW_ANIM_NONE) {
+        view_set_opacity(view, view->anim_alpha);
     }
 
 
@@ -2038,13 +2044,13 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
     wlr_scene_node_set_position(&view->scene_tree->node, view->x, view->y);
     view_focus(view);
 
-    // Map pop animation (0.88 -> 1.0 with subtle spring overshoot)
+    // Map pop animation (0.78 -> 1.0 with subtle spring overshoot + upward glide)
     view->anim_type = VIEW_ANIM_MAP;
     spring_config_t map_cfg = {
         .mass = 1.0,
-        .stiffness = 320.0,
-        .damping = 0.86,
-        .velocity_threshold = 0.01,
+        .stiffness = 280.0,
+        .damping = 0.78,
+        .velocity_threshold = 0.005,
         .position_threshold = 0.001,
     };
     spring_simulation_start(&view->anim_spring, &map_cfg, 0.0, 1.0, 0.0);
@@ -2053,12 +2059,13 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
         workspace_relayout_tiling(view->server, view->workspace);
     }
 
-    double initial_scale = 0.88;
+    double initial_scale = 0.78;
     int render_x = (int)round(view->x + (view->width * (1.0 - initial_scale)) / 2.0);
-    int render_y = (int)round(view->y + (view->height * (1.0 - initial_scale)) / 2.0);
+    int render_y = (int)round(view->y + (view->height * (1.0 - initial_scale)) / 2.0 + 16.0);
     wlr_scene_node_set_position(&view->scene_tree->node, render_x, render_y);
     view_set_scale(view, initial_scale, initial_scale);
     view_set_opacity(view, 0.0f);
+    schedule_all_outputs(view->server);
 
     if (view->server->dock) {
         const char *app_id = view_get_app_id(view);

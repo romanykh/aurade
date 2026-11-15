@@ -168,18 +168,18 @@ static void xwayland_surface_map(struct wl_listener *listener, void *data) {
         view->anim_type = VIEW_ANIM_MAP;
         spring_config_t map_cfg = {
             .mass = 1.0,
-            .stiffness = 320.0,
-            .damping = 0.86,
-            .velocity_threshold = 0.01,
+            .stiffness = 280.0,
+            .damping = 0.78,
+            .velocity_threshold = 0.005,
             .position_threshold = 0.001,
         };
         spring_simulation_start(&view->anim_spring, &map_cfg, 0.0, 1.0, 0.0);
         if (server->config.tiling_enabled) {
             workspace_relayout_tiling(server, view->workspace);
         }
-        double initial_scale = 0.88;
+        double initial_scale = 0.78;
         int render_x = (int)round(view->x + (view->width * (1.0 - initial_scale)) / 2.0);
-        int render_y = (int)round(view->y + (view->height * (1.0 - initial_scale)) / 2.0);
+        int render_y = (int)round(view->y + (view->height * (1.0 - initial_scale)) / 2.0 + 16.0);
         wlr_scene_node_set_position(&view->scene_tree->node, render_x, render_y);
         view_set_scale(view, initial_scale, initial_scale);
         view_set_opacity(view, 0.0f);
