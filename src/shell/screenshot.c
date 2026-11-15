@@ -6,6 +6,7 @@
 #include "../util/apps.h"
 
 #include <cairo.h>
+#include <drm_fourcc.h>
 #include <fcntl.h>
 #include <linux/input-event-codes.h>
 #include <math.h>
@@ -19,6 +20,8 @@
 #include <time.h>
 #include <unistd.h>
 #include <pwd.h>
+#include <wlr/render/wlr_texture.h>
+#include <wlr/types/wlr_output.h>
 #include <xkbcommon/xkbcommon.h>
 
 #define SHOT_FONT "Inter"
@@ -41,6 +44,9 @@ struct aurade_screenshot {
     aurade_server_t *server;
     cairo_buffer_t *buffer;
     struct wlr_scene_buffer *scene_buffer;
+    cairo_buffer_t *freeze_buf;
+    struct wlr_scene_buffer *freeze_scene;
+    bool freeze_valid;
 
     int width, height;
     bool active;
@@ -1084,12 +1090,159 @@ void screenshot_start_recording(aurade_screenshot_t *shot) {
     screenshot_begin(shot);
 }
 
+static void screenshot_capture_freeze(aurade_screenshot_t *shot) {
+    if (!shot || !shot->server || !shot->server->renderer) return;
+    shot->freeze_valid = false;
+    if (shot->freeze_scene) {
+        wlr_scene_node_set_enabled(&shot->freeze_scene->node, false);
+    }
+    if (shot->scene_buffer) {
+        wlr_scene_node_set_enabled(&shot->scene_buffer->node, false);
+    }
+
+    aurade_output_t *out = NULL;
+    aurade_output_t *it;
+    wl_list_for_each(it, &shot->server->outputs, link) {
+        if (it->scene_output && it->wlr_output) {
+            out = it;
+            break;
+        }
+    }
+    if (!out) return;
+
+    struct wlr_output_state state;
+    wlr_output_state_init(&state);
+    if (!wlr_scene_output_build_state(out->scene_output, &state, NULL) ||
+        !(state.committed & WLR_OUTPUT_STATE_BUFFER) || !state.buffer) {
+        wlr_output_state_finish(&state);
+        return;
+    }
+
+    struct wlr_texture *tex = wlr_texture_from_buffer(shot->server->renderer, state.buffer);
+    if (!tex || tex->width == 0 || tex->height == 0) {
+        if (tex) wlr_texture_destroy(tex);
+        wlr_output_state_finish(&state);
+        return;
+    }
+
+    int tw = (int)tex->width;
+    int th = (int)tex->height;
+    if (!shot->freeze_buf || shot->freeze_buf->width != tw || shot->freeze_buf->height != th) {
+        if (shot->freeze_buf) {
+            wlr_buffer_drop(&shot->freeze_buf->base);
+            shot->freeze_buf = NULL;
+        }
+        shot->freeze_buf = cairo_buffer_create(tw, th);
+    }
+    if (!shot->freeze_buf) {
+        wlr_texture_destroy(tex);
+        wlr_output_state_finish(&state);
+        return;
+    }
+
+    cairo_surface_flush(shot->freeze_buf->surface);
+    uint8_t *dst = cairo_image_surface_get_data(shot->freeze_buf->surface);
+    uint32_t stride = (uint32_t)cairo_image_surface_get_stride(shot->freeze_buf->surface);
+    struct wlr_texture_read_pixels_options opts = {
+        .data = dst,
+        .format = DRM_FORMAT_ARGB8888,
+        .stride = stride,
+    };
+    bool ok = wlr_texture_read_pixels(tex, &opts);
+    wlr_texture_destroy(tex);
+    wlr_output_state_finish(&state);
+    if (!ok) return;
+
+    for (int y = 0; y < th; y++) {
+        uint32_t *row = (uint32_t *)(dst + (size_t)y * (size_t)stride);
+        for (int x = 0; x < tw; x++) {
+            row[x] |= 0xff000000u;
+        }
+    }
+    cairo_surface_mark_dirty(shot->freeze_buf->surface);
+
+    if (!shot->freeze_scene) {
+        shot->freeze_scene = wlr_scene_buffer_create(shot->server->overlay_tree,
+                                                     &shot->freeze_buf->base);
+    } else {
+        cairo_buffer_apply_to_scene(shot->freeze_buf, shot->freeze_scene);
+    }
+    if (!shot->freeze_scene) return;
+
+    wlr_scene_node_set_position(&shot->freeze_scene->node, 0, 0);
+    wlr_scene_buffer_set_dest_size(shot->freeze_scene, shot->width, shot->height);
+    wlr_scene_node_set_enabled(&shot->freeze_scene->node, true);
+    wlr_scene_node_raise_to_top(&shot->freeze_scene->node);
+    shot->freeze_valid = true;
+}
+
+static bool screenshot_save_from_freeze(aurade_screenshot_t *shot, int rx, int ry, int rw, int rh) {
+    if (!shot || !shot->freeze_valid || !shot->freeze_buf || !shot->freeze_buf->surface) {
+        return false;
+    }
+    if (rw <= 0 || rh <= 0 || shot->width <= 0 || shot->height <= 0) return false;
+
+    double sx = (double)shot->freeze_buf->width / (double)shot->width;
+    double sy = (double)shot->freeze_buf->height / (double)shot->height;
+    int px = (int)floor(rx * sx);
+    int py = (int)floor(ry * sy);
+    int pw = (int)ceil(rw * sx);
+    int ph = (int)ceil(rh * sy);
+    if (px < 0) px = 0;
+    if (py < 0) py = 0;
+    if (px + pw > shot->freeze_buf->width) pw = shot->freeze_buf->width - px;
+    if (py + ph > shot->freeze_buf->height) ph = shot->freeze_buf->height - py;
+    if (pw <= 0 || ph <= 0) return false;
+
+    const char *home = getenv("HOME");
+    if (!home) return false;
+    char dir[512];
+    snprintf(dir, sizeof(dir), "%s/Pictures/Screenshots", home);
+    mkdir(dir, 0755);
+
+    time_t now = time(NULL);
+    struct tm tm_now;
+    localtime_r(&now, &tm_now);
+    char path[640];
+    snprintf(path, sizeof(path), "%s/Screenshot_%04d-%02d-%02d_%02d-%02d-%02d-%d.png",
+             dir, tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday,
+             tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec, (int)getpid());
+
+    cairo_surface_t *out = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, pw, ph);
+    if (cairo_surface_status(out) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(out);
+        return false;
+    }
+    cairo_t *cr = cairo_create(out);
+    cairo_set_source_surface(cr, shot->freeze_buf->surface, -px, -py);
+    cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+    cairo_paint(cr);
+    cairo_destroy(cr);
+
+    cairo_status_t wst = cairo_surface_write_to_png(out, path);
+    cairo_surface_destroy(out);
+    if (wst != CAIRO_STATUS_SUCCESS) return false;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "wl-copy --type image/png < '%s' 2>/dev/null || true; "
+             "notify-send -a 'Screenshot' -i '%s' 'Screenshot Saved' '%s' 2>/dev/null || true; "
+             "echo '[AuraDE] Screenshot saved: %s'",
+             path, path, path, path);
+    app_launch_command(cmd);
+    return true;
+}
+
 static void cancel_region(aurade_screenshot_t *shot) {
     if (!shot) return;
     shot->active = false;
     shot->direct_crop = false;
     shot->dragging = false;
     shot->active_handle = HANDLE_NONE;
+    shot->freeze_valid = false;
+    if (shot->freeze_scene) {
+        wlr_scene_node_set_enabled(&shot->freeze_scene->node, false);
+    }
     wlr_scene_node_set_enabled(&shot->scene_buffer->node, false);
     reset_cursor(shot);
     if (shot->server) schedule_all_outputs(shot->server);
@@ -1121,11 +1274,15 @@ static void screenshot_perform_action(aurade_screenshot_t *shot) {
     if (ry + rh > shot->height) rh = shot->height - ry;
 
     bool is_video = (shot->mode == SHOT_MODE_VIDEO);
+    bool saved_from_freeze = false;
+    if (!is_video && shot->freeze_valid) {
+        saved_from_freeze = screenshot_save_from_freeze(shot, rx, ry, rw, rh);
+    }
     cancel_region(shot);
 
     if (is_video) {
         start_wf_recorder(shot, rx, ry, rw, rh);
-    } else {
+    } else if (!saved_from_freeze) {
         capture_command(shot->target != SHOT_TARGET_FULLSCREEN, rx, ry, rw, rh);
     }
 }
@@ -1179,6 +1336,12 @@ void screenshot_destroy(aurade_screenshot_t *shot) {
     if (shot->recording_timer) {
         wl_event_source_remove(shot->recording_timer);
     }
+    if (shot->freeze_scene) {
+        wlr_scene_node_destroy(&shot->freeze_scene->node);
+    }
+    if (shot->freeze_buf) {
+        wlr_buffer_drop(&shot->freeze_buf->base);
+    }
     if (shot->scene_buffer) {
         wlr_scene_node_destroy(&shot->scene_buffer->node);
     }
@@ -1207,6 +1370,10 @@ bool screenshot_is_active(aurade_screenshot_t *shot) {
 static void screenshot_open(aurade_screenshot_t *shot, bool direct_crop) {
     if (!shot || shot->active) return;
 
+    if (shot->mode == SHOT_MODE_STILL) {
+        screenshot_capture_freeze(shot);
+    }
+
     shot->active = true;
     shot->direct_crop = direct_crop;
     shot->dragging = false;
@@ -1221,6 +1388,10 @@ static void screenshot_open(aurade_screenshot_t *shot, bool direct_crop) {
     shot->sel_w = 0;
     shot->sel_h = 0;
 
+    if (shot->freeze_valid && shot->freeze_scene) {
+        wlr_scene_node_set_enabled(&shot->freeze_scene->node, true);
+        wlr_scene_node_raise_to_top(&shot->freeze_scene->node);
+    }
     wlr_scene_node_set_position(&shot->scene_buffer->node, 0, 0);
     wlr_scene_node_set_enabled(&shot->scene_buffer->node, true);
     wlr_scene_node_raise_to_top(&shot->scene_buffer->node);

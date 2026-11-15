@@ -286,7 +286,7 @@ static cc_layout_t cc_layout_for_page(const aurade_control_center_t *cc, cc_page
                 int rows = (cc->bt_codec_count + 2) / 3;
                 y += 24.0 + rows * 28.0 + 6.0;
             }
-            y += 44.0;
+            y += 52.0;
         }
         y += CC_PAD;
         if (y < 360.0) y = 360.0;
@@ -3535,6 +3535,9 @@ void control_center_render(aurade_control_center_t *cc) {
         cc->bg_cache_dark = dark;
         snprintf(cc->bg_cache_accent, sizeof(cc->bg_cache_accent), "%s", accent);
         bg_rebuilt = true;
+    }
+    if (bg_rebuilt && cc->active) {
+        cc_apply_transform(cc, cc->progress);
     }
 
     int partial = cc->dirty_slider;
