@@ -249,7 +249,15 @@ typedef struct aurade_control_center {
     // while dragging and applies the final value on release.
     int dragging;
     bool needs_render;
+    int dirty_slider;      // 0 = full render, 1 = display card, 2 = sound card
+    bool has_full_render;
     uint64_t last_drag_apply_ms;
+
+    bool br_sysfs_checked;
+    bool br_sysfs_writable;
+    char br_sysfs_path[512];
+    char br_dev_name[128];
+    long br_sysfs_max;
 
     cairo_surface_t *bg_cache;
     int bg_cache_w;

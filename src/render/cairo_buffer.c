@@ -96,6 +96,26 @@ void cairo_buffer_apply_to_scene(cairo_buffer_t *buf, struct wlr_scene_buffer *s
     wlr_scene_buffer_set_buffer_with_damage(scene_buf, &buf->base, NULL);
 }
 
+void cairo_buffer_apply_to_scene_damage(cairo_buffer_t *buf, struct wlr_scene_buffer *scene_buf,
+                                        int x, int y, int w, int h) {
+    if (!buf || !scene_buf) return;
+    cairo_surface_flush(buf->surface);
+    if (w <= 0 || h <= 0) {
+        wlr_scene_buffer_set_buffer_with_damage(scene_buf, &buf->base, NULL);
+        return;
+    }
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > buf->width) w = buf->width - x;
+    if (y + h > buf->height) h = buf->height - y;
+    if (w <= 0 || h <= 0) return;
+
+    pixman_region32_t damage;
+    pixman_region32_init_rect(&damage, x, y, w, h);
+    wlr_scene_buffer_set_buffer_with_damage(scene_buf, &buf->base, &damage);
+    pixman_region32_fini(&damage);
+}
+
 void draw_rounded_rect(cairo_t *cr, double x, double y, double w, double h, double r) {
     if (w <= 0 || h <= 0) return;
     if (r > w / 2.0) r = w / 2.0;

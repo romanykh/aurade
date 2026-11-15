@@ -37,6 +37,8 @@ void cairo_buffer_clear(cairo_buffer_t *buf);
  * Update the scene buffer node with this cairo buffer.
  */
 void cairo_buffer_apply_to_scene(cairo_buffer_t *buf, struct wlr_scene_buffer *scene_buf);
+void cairo_buffer_apply_to_scene_damage(cairo_buffer_t *buf, struct wlr_scene_buffer *scene_buf,
+                                        int x, int y, int w, int h);
 
 /**
  * Draw a smooth rounded rectangle path.

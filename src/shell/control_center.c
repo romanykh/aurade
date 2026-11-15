@@ -23,6 +23,8 @@
 #include <wayland-server-core.h>
 #include <sys/eventfd.h>
 #include <dirent.h>
+#include <fcntl.h>
+#include <gio/gio.h>
 #include <time.h>
 
 // ---------------------------------------------------------------------------
@@ -2235,14 +2237,116 @@ static void apply_bluetooth(aurade_control_center_t *cc, bool enabled) {
     cc_schedule_refresh(cc, 700);
 }
 
-static void apply_brightness(aurade_control_center_t *cc) {
-    if (!cc->brightness_available) return;
-    int pct = (int)lround(cc->brightness * 100.0);
+static void cc_probe_backlight_sysfs(aurade_control_center_t *cc) {
+    if (!cc || cc->br_sysfs_checked) return;
+    cc->br_sysfs_checked = true;
+    DIR *dir = opendir("/sys/class/backlight");
+    if (!dir) return;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+        char b_path[512], m_path[512];
+        snprintf(b_path, sizeof(b_path), "/sys/class/backlight/%s/brightness", entry->d_name);
+        snprintf(m_path, sizeof(m_path), "/sys/class/backlight/%s/max_brightness", entry->d_name);
+        FILE *fm = fopen(m_path, "r");
+        if (!fm) continue;
+        long max_v = 0;
+        if (fscanf(fm, "%ld", &max_v) == 1 && max_v > 0) {
+            snprintf(cc->br_dev_name, sizeof(cc->br_dev_name), "%s", entry->d_name);
+            snprintf(cc->br_sysfs_path, sizeof(cc->br_sysfs_path), "%s", b_path);
+            cc->br_sysfs_max = max_v;
+            cc->br_sysfs_writable = (access(b_path, W_OK) == 0);
+            fclose(fm);
+            if (strncmp(entry->d_name, "acpi_video", 10) != 0) {
+                break; // Prefer native GPU/panel backlight over acpi_video
+            }
+            continue;
+        }
+        fclose(fm);
+    }
+    closedir(dir);
+}
+
+static void apply_brightness_live(aurade_control_center_t *cc) {
+    if (!cc || !cc->brightness_available) return;
+    cc_probe_backlight_sysfs(cc);
+
+    double br = cc->brightness;
+    if (br < 0.01) br = 0.01;
+    if (br > 1.0) br = 1.0;
+
+    if (cc->br_sysfs_writable && cc->br_sysfs_max > 0) {
+        long raw = lround(br * (double)cc->br_sysfs_max);
+        if (raw < 1) raw = 1;
+        if (raw > cc->br_sysfs_max) raw = cc->br_sysfs_max;
+        int fd = open(cc->br_sysfs_path, O_WRONLY | O_CLOEXEC);
+        if (fd >= 0) {
+            char buf[32];
+            int len = snprintf(buf, sizeof(buf), "%ld\n", raw);
+            if (len > 0) {
+                ssize_t w = write(fd, buf, (size_t)len);
+                (void)w;
+            }
+            close(fd);
+            return;
+        }
+        cc->br_sysfs_writable = false;
+    }
+
+    if (cc->br_dev_name[0] && cc->br_sysfs_max > 0) {
+        static GDBusConnection *sys_bus = NULL;
+        static bool bus_tried = false;
+        if (!bus_tried) {
+            bus_tried = true;
+            sys_bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, NULL);
+        }
+        if (sys_bus) {
+            long raw = lround(br * (double)cc->br_sysfs_max);
+            if (raw < 1) raw = 1;
+            if (raw > cc->br_sysfs_max) raw = cc->br_sysfs_max;
+            g_dbus_connection_call(sys_bus,
+                "org.freedesktop.login1",
+                "/org/freedesktop/login1/session/auto",
+                "org.freedesktop.login1.Session",
+                "SetBrightness",
+                g_variant_new("(ssu)", "backlight", cc->br_dev_name, (guint32)raw),
+                NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL, NULL);
+            return;
+        }
+    }
+
+    int pct = (int)lround(br * 100.0);
     if (pct < 1) pct = 1;
     if (pct > 100) pct = 100;
-    char command[128];
-    snprintf(command, sizeof(command), "brightnessctl set %d%%", pct);
-    app_launch_command(command);
+    char pct_arg[16];
+    snprintf(pct_arg, sizeof(pct_arg), "%d%%", pct);
+    char *argv[] = {"brightnessctl", "set", pct_arg, NULL};
+    g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH | G_SPAWN_STDOUT_TO_DEV_NULL | G_SPAWN_STDERR_TO_DEV_NULL,
+                  NULL, NULL, NULL, NULL);
+}
+
+static void apply_volume_live(aurade_control_center_t *cc) {
+    if (!cc || !cc->volume_available) return;
+    int pct = (int)lround(cc->volume * 100.0);
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    char pct_arg[16];
+    snprintf(pct_arg, sizeof(pct_arg), "%d%%", pct);
+
+    if (cc->volume_uses_pactl) {
+        char *argv[] = {"pactl", "set-sink-volume", "@DEFAULT_SINK@", pct_arg, NULL};
+        g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH | G_SPAWN_STDOUT_TO_DEV_NULL | G_SPAWN_STDERR_TO_DEV_NULL,
+                      NULL, NULL, NULL, NULL);
+    } else {
+        char *argv[] = {"wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", pct_arg, NULL};
+        g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH | G_SPAWN_STDOUT_TO_DEV_NULL | G_SPAWN_STDERR_TO_DEV_NULL,
+                      NULL, NULL, NULL, NULL);
+    }
+}
+
+static void apply_brightness(aurade_control_center_t *cc) {
+    if (!cc->brightness_available) return;
+    apply_brightness_live(cc);
     if (cc->server) {
         session_state_set_brightness(&cc->server->state, cc->brightness);
     }
@@ -3406,6 +3510,7 @@ void control_center_render(aurade_control_center_t *cc) {
 
     int bw = cc->buffer->width;
     int bh = cc->buffer->height;
+    bool bg_rebuilt = false;
     if (!cc->bg_cache || cc->bg_cache_w != bw || cc->bg_cache_h != bh ||
         fabs(cc->bg_cache_panel_h - panel_h) > 0.25 ||
         cc->bg_cache_dark != dark ||
@@ -3429,6 +3534,49 @@ void control_center_render(aurade_control_center_t *cc) {
         cc->bg_cache_panel_h = panel_h;
         cc->bg_cache_dark = dark;
         snprintf(cc->bg_cache_accent, sizeof(cc->bg_cache_accent), "%s", accent);
+        bg_rebuilt = true;
+    }
+
+    int partial = cc->dirty_slider;
+    cc->dirty_slider = 0;
+
+    if (!bg_rebuilt && partial != 0 && cc->has_full_render &&
+        cc->current_page == CC_PAGE_MAIN && cc->page_anim >= 0.999) {
+        cc_rect_t card = (partial == 1) ? L.display : L.sound;
+        int dx = (int)floor(CC_SHADOW_PAD + card.x - 2.0);
+        int dy = (int)floor(CC_SHADOW_PAD + card.y - 2.0);
+        int dw = (int)ceil(card.w + 4.0);
+        int dh = (int)ceil(card.h + 4.0);
+
+        cairo_save(cr);
+        cairo_rectangle(cr, dx, dy, dw, dh);
+        cairo_clip(cr);
+
+        cairo_set_source_surface(cr, cc->bg_cache, 0.0, 0.0);
+        cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+        cairo_paint(cr);
+        cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+
+        cairo_translate(cr, CC_SHADOW_PAD, CC_SHADOW_PAD);
+        if (partial == 1) {
+            cc_draw_slider_card(cr, L.display, L.display_track, L.display_detail, &theme,
+                                CC_ICON_SUN, CC_ICON_DISPLAY_BADGE, "Display",
+                                cc->brightness, false, cc->brightness_available,
+                                cc->hover == CC_MODULE_DISPLAY, cc->pressed == CC_MODULE_DISPLAY,
+                                cc->hover == CC_MODULE_DISPLAY_DETAIL, cc->pressed == CC_MODULE_DISPLAY_DETAIL);
+        } else {
+            cc_draw_slider_card(cr, L.sound, L.sound_track, L.sound_detail, &theme,
+                                CC_ICON_SPEAKER, CC_ICON_AIRPLAY_AUDIO, "Sound",
+                                cc->volume, cc->volume_muted, cc->volume_available,
+                                cc->hover == CC_MODULE_SOUND, cc->pressed == CC_MODULE_SOUND,
+                                cc->hover == CC_MODULE_SOUND_DETAIL, cc->pressed == CC_MODULE_SOUND_DETAIL);
+        }
+        cairo_restore(cr);
+
+        if (cc->scene_buffer) {
+            cairo_buffer_apply_to_scene_damage(cc->buffer, cc->scene_buffer, dx, dy, dw, dh);
+        }
+        return;
     }
 
     cairo_save(cr);
@@ -3468,6 +3616,7 @@ void control_center_render(aurade_control_center_t *cc) {
 
     cairo_restore(cr);
 
+    cc->has_full_render = true;
     if (cc->scene_buffer) cairo_buffer_apply_to_scene(cc->buffer, cc->scene_buffer);
 }
 
@@ -3652,9 +3801,9 @@ static void cc_handle_subpage_motion(aurade_control_center_t *cc, double px, dou
         if (fabs(cc->volume - p) < 0.002) return;
         cc->volume = p;
         uint64_t now = cc_now_ms();
-        if (now - cc->last_drag_apply_ms >= 70) {
+        if (now - cc->last_drag_apply_ms >= 45) {
             cc->last_drag_apply_ms = now;
-            apply_volume(cc);
+            apply_volume_live(cc);
         }
         cc_request_render(cc);
         return;
@@ -3879,7 +4028,27 @@ void control_center_handle_motion(aurade_control_center_t *cc, double x, double 
     if (cc->dragging != 0) {
         double px = 0.0;
         cc_to_panel_coords(cc, x, y, &px, NULL);
+        double prev_val = (cc->dragging == 1) ? cc->brightness : cc->volume;
         set_slider_from_x(cc, px, cc->dragging);
+        double cur_val = (cc->dragging == 1) ? cc->brightness : cc->volume;
+        if (fabs(cur_val - prev_val) < 0.002) return;
+
+        uint64_t now = cc_now_ms();
+        if (cc->dragging == 1) {
+            if (cc->br_sysfs_writable || now - cc->last_drag_apply_ms >= 25) {
+                cc->last_drag_apply_ms = now;
+                apply_brightness_live(cc);
+            }
+        } else {
+            cc->volume_muted = false;
+            if (now - cc->last_drag_apply_ms >= 45) {
+                cc->last_drag_apply_ms = now;
+                apply_volume_live(cc);
+            }
+        }
+        if (!cc->needs_render && cc->has_full_render) {
+            cc->dirty_slider = cc->dragging;
+        }
         cc_request_render(cc);
         return;
     }
@@ -3891,6 +4060,7 @@ void control_center_handle_motion(aurade_control_center_t *cc, double x, double 
 
     if (module != cc->hover) {
         cc->hover = module;
+        cc->dirty_slider = 0;
         cc_request_render(cc);
     }
 }
