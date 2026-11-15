@@ -71,10 +71,11 @@ AuraDE requires **wlroots 0.20** and **scenefx 0.5** (which can be built automat
 
 ### Arch Linux / Manjaro
 ```bash
-sudo pacman -S gcc make pkgconf meson ninja git wlroots wayland wayland-protocols \
-               libxkbcommon cairo pango json-c libinput libdrm librsvg \
-               pixman libxcb xcb-util-wm pam gtk4 pipewire wireplumber \
-               networkmanager bluez bluez-utils brightnessctl
+sudo pacman -S --needed gcc make pkgconf meson ninja git wlroots0.20 wayland \
+                        wayland-protocols libxkbcommon cairo pango json-c \
+                        libinput libdrm librsvg pixman libxcb xcb-util-wm pam \
+                        gtk4 pipewire wireplumber networkmanager bluez \
+                        bluez-utils brightnessctl
 ```
 
 ### Fedora (41+)

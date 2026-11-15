@@ -30,7 +30,7 @@ echo "==> Checking wlroots-0.20..."
 if ! pkg-config --exists wlroots-0.20; then
     echo "Error: wlroots-0.20 development files were not found by pkg-config."
     echo "Install wlroots 0.20+ first:"
-    echo "  Arch:   sudo pacman -S wlroots"
+    echo "  Arch:   sudo pacman -S wlroots0.20"
     echo "  Fedora: sudo dnf install wlroots-devel"
     echo "  Debian/Ubuntu: install libwlroots-0.20-dev (or build wlroots 0.20 from source)"
     exit 1
