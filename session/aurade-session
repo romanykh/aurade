@@ -31,5 +31,18 @@ for version in 3.0 4.0; do
 done
 
 mkdir -p "$HOME/.cache/aurade"
-/home/user/AI/aura-connect/linux/aura_connect --daemon >>"$HOME/.cache/aurade/aura-connect.log" 2>&1 &
-exec /home/user/AI/de/aurade >>"$HOME/.cache/aurade/aurade.log" 2>&1
+if command -v aura_connect >/dev/null 2>&1; then
+    aura_connect --daemon >>"$HOME/.cache/aurade/aura-connect.log" 2>&1 &
+elif [ -x /home/user/AI/aura-connect/linux/aura_connect ]; then
+    /home/user/AI/aura-connect/linux/aura_connect --daemon >>"$HOME/.cache/aurade/aura-connect.log" 2>&1 &
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if command -v aurade >/dev/null 2>&1; then
+    AURADE_BIN="aurade"
+elif [ -x "$SCRIPT_DIR/../aurade" ]; then
+    AURADE_BIN="$SCRIPT_DIR/../aurade"
+else
+    AURADE_BIN="/usr/local/bin/aurade"
+fi
+exec "$AURADE_BIN" >>"$HOME/.cache/aurade/aurade.log" 2>&1

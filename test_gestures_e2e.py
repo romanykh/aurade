@@ -21,7 +21,8 @@ def test_aurade():
     os.makedirs(env["XDG_RUNTIME_DIR"], exist_ok=True)
 
     print("--- 2. Launching AuraDE Headless Compositor ---")
-    proc = subprocess.Popen(["/home/user/AI/de/aurade"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    aurade_bin = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aurade")
+    proc = subprocess.Popen([aurade_bin], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     time.sleep(1.0)
     assert proc.poll() is None, "Compositor crashed on startup!"

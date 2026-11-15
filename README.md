@@ -47,7 +47,7 @@ Unlike traditional Linux window managers that treat gestures as binary triggers 
 
 ## 🎛️ Settings Application (`aurade-settings`)
 
-AuraDE includes a dedicated, responsive GTK4 settings suite (`settings/aurade_settings.py`):
+AuraDE includes a dedicated, native C + GTK4 settings suite (`settings/aurade-settings`):
 
 | Module | Features & Capabilities |
 | :--- | :--- |
@@ -59,6 +59,7 @@ AuraDE includes a dedicated, responsive GTK4 settings suite (`settings/aurade_se
 | **Mouse & Touchpad** | Tap-to-click, tracking speed, natural scrolling (reverse direction), palm rejection (disable-while-typing), and acceleration curves. |
 | **Keyboard** | Multiple XKB layout strings (e.g. `us,ua`), repeat delay/speed sliders, and shortcut reference cheatsheet. |
 | **Appearance** | Dark/Light glass theme switch, custom accent colour picker, cursor theme & size selector, and wallpaper chooser. |
+| **Blur & Glass** | Per-element opacity, blur radius, and Liquid Glass toggles for panels, overlays, and windows. |
 | **Dock & Gestures** | Dock autohide/intellihide, icon sizing, magnification range, 3/4-finger gesture mappings, and live touchpad telemetry. |
 | **About** | Hardware specs (CPU, RAM, GPU, Kernel, Hostname) and direct config backup/reset controls. |
 
@@ -66,29 +67,33 @@ AuraDE includes a dedicated, responsive GTK4 settings suite (`settings/aurade_se
 
 ## 📦 Prerequisites & Installation
 
+AuraDE requires **wlroots 0.20** and **scenefx 0.5** (which can be built automatically with `make deps`).
+
 ### Arch Linux / Manjaro
 ```bash
-sudo pacman -S gcc make pkgconf wlroots wayland wayland-protocols \
-               libxkbcommon cairo pango json-c libinput libdrm \
-               librsvg python python-gobject gtk4 pipewire wireplumber \
+sudo pacman -S gcc make pkgconf meson ninja git wlroots wayland wayland-protocols \
+               libxkbcommon cairo pango json-c libinput libdrm librsvg \
+               pixman libxcb xcb-util-wm pam gtk4 pipewire wireplumber \
                networkmanager bluez bluez-utils brightnessctl
 ```
 
-### Fedora (40+)
+### Fedora (41+)
 ```bash
-sudo dnf install gcc make pkgconfig wlroots-devel wayland-devel \
-                 wayland-protocols-devel libxkbcommon-devel cairo-devel \
-                 pango-devel json-c-devel libinput-devel libdrm-devel \
-                 librsvg2-devel python3 python3-gobject gtk4 \
-                 pipewire wireplumber NetworkManager bluez brightnessctl
+sudo dnf install gcc make pkgconf-pkg-config meson ninja-build git wlroots-devel \
+                 wayland-devel wayland-protocols-devel libxkbcommon-devel \
+                 cairo-devel pango-devel json-c-devel libinput-devel libdrm-devel \
+                 librsvg2-devel pixman-devel libxcb-devel xcb-util-wm-devel \
+                 pam-devel gtk4-devel pipewire wireplumber NetworkManager bluez \
+                 brightnessctl
 ```
 
-### Ubuntu / Debian (24.04+)
+### Ubuntu / Debian (requires wlroots 0.20+)
 ```bash
-sudo apt install build-essential pkg-config libwlroots-dev libwayland-dev \
-                 wayland-protocols libxkbcommon-dev libcairo2-dev \
+sudo apt install build-essential pkg-config meson ninja-build git libwlroots-0.20-dev \
+                 libwayland-dev wayland-protocols libxkbcommon-dev libcairo2-dev \
                  libpango1.0-dev libjson-c-dev libinput-dev libdrm-dev \
-                 librsvg2-dev python3 python3-gi gir1.2-gtk-4.0 \
+                 librsvg2-dev libpixman-1-dev libxcb1-dev libxcb-icccm4-dev \
+                 libxcb-ewmh-dev libpam0g-dev libgtk-4-dev \
                  pipewire wireplumber network-manager bluez brightnessctl
 ```
 
@@ -96,10 +101,11 @@ sudo apt install build-essential pkg-config libwlroots-dev libwayland-dev \
 
 ## 🛠️ Building & Testing
 
-### 1. Build the Compositor
+### 1. Build Dependencies (`scenefx-0.5`) & Compositor
 ```bash
 git clone https://github.com/romanykh/aurade.git
 cd aurade
+make deps       # builds and installs scenefx-0.5 locally into deps/local
 make -j$(nproc)
 ```
 
@@ -115,10 +121,10 @@ To run AuraDE inside your current Wayland or X11 desktop inside a window:
 ./test_nested.sh
 ```
 
-### 4. Install Session for Display Managers (GDM / SDDM)
-To log directly into AuraDE from your display manager:
+### 4. Install System-Wide (Display Manager Session + Settings)
+To install `aurade`, `aurade-settings`, `aurade-session`, and register AuraDE in GDM / SDDM:
 ```bash
-sudo cp session/aurade.desktop /usr/share/wayland-sessions/
+sudo make install
 ```
 Log out and choose **AuraDE** from your login screen.
 

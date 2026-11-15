@@ -6,6 +6,7 @@ settings/aurade-settings
 tools/cc_preview
 tools/gesture_sim
 build/
+deps/
 *.zip
 
 # Python cache
