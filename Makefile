@@ -18,6 +18,14 @@ endif
 INCLUDES = -Isrc $(shell PKG_CONFIG_PATH="$(PKG_PATHS)" pkg-config --cflags $(PKGS))
 LIBS = $(shell PKG_CONFIG_PATH="$(PKG_PATHS)" pkg-config --libs $(PKGS)) -Wl,-rpath,$(CURDIR)/deps/local/lib -Wl,-rpath,$(PREFIX)/lib -Wl,-rpath,/home/user/AI/local/lib -lm -lpthread -lpam
 
+SCENEFX_INC_DIR := $(shell PKG_CONFIG_PATH="$(PKG_PATHS)" pkg-config --variable=includedir scenefx-0.5 2>/dev/null)
+HAS_LIQUID_GLASS := $(shell grep -q 'wlr_scene_blur_set_liquid_glass' "$(SCENEFX_INC_DIR)/scenefx-0.5/scenefx/types/wlr_scene.h" 2>/dev/null && echo 1 || echo 0)
+ifeq ($(HAS_LIQUID_GLASS),1)
+CFLAGS += -DHAVE_SCENEFX_LIQUID_GLASS=1
+else
+CFLAGS += -include src/compat/scenefx_compat.h
+endif
+
 SRCS = src/main.c \
        src/gestures/physics.c \
        src/gestures/gesture_engine.c \
