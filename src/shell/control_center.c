@@ -1912,9 +1912,13 @@ static int cc_probe_event_handler(int fd, uint32_t mask, void *data) {
             memcpy(cc->audio_inputs, snap.audio_inputs, sizeof(cc->audio_inputs));
         }
 
-        cc_arm_anim(cc);
-        control_center_render(cc);
-        if (cc->server) schedule_all_outputs(cc->server);
+        if (cc->active) {
+            cc_arm_anim(cc);
+            control_center_render(cc);
+            if (cc->server) schedule_all_outputs(cc->server);
+        } else {
+            cc->needs_render = true;
+        }
     }
 
     if (request_another) {
@@ -2613,7 +2617,13 @@ void control_center_begin(aurade_control_center_t *cc) {
     cc->active = true;
     cc->hover = CC_MODULE_NONE;
     cc->pressed = CC_MODULE_NONE;
-    cc->anim_panel_h = cc_layout(cc).panel_h;
+    double target_h = cc_layout(cc).panel_h;
+    if (cc->needs_render || fabs(cc->anim_panel_h - target_h) > 0.5) {
+        cc->anim_panel_h = target_h;
+        control_center_render(cc);
+    } else {
+        cc->anim_panel_h = target_h;
+    }
     wlr_scene_node_set_enabled(&cc->scene_buffer->node, true);
     // Place the panel at progress 0 before the first frame so it can never
     // flash at the scene origin when a gesture starts.
@@ -2691,7 +2701,6 @@ void control_center_update_progress(aurade_control_center_t *cc, double progress
 
     wlr_scene_node_set_enabled(&cc->scene_buffer->node, true);
     cc_apply_transform(cc, progress);
-    control_center_render(cc);
 }
 
 void control_center_end(aurade_control_center_t *cc, bool opened) {
@@ -3380,6 +3389,7 @@ static void cc_draw_page_content(cairo_t *cr, cc_page_t page, const cc_theme_t *
 
 void control_center_render(aurade_control_center_t *cc) {
     if (!cc || !cc->buffer || !cc->buffer->cr) return;
+    cc->needs_render = false;
     cairo_t *cr = cc->buffer->cr;
     cairo_buffer_clear(cc->buffer);
 
@@ -3605,9 +3615,17 @@ static void cc_handle_subpage_motion(aurade_control_center_t *cc, double px, dou
         double p = (px - cc->sound_sub_slider_rect.x) / cc->sound_sub_slider_rect.w;
         if (p < 0.0) p = 0.0;
         if (p > 1.0) p = 1.0;
+        if (fabs(cc->volume - p) < 0.002) return;
         cc->volume = p;
-        apply_volume(cc);
-        control_center_render(cc);
+        uint64_t now = cc_now_ms();
+        if (now - cc->last_drag_apply_ms >= 70) {
+            cc->last_drag_apply_ms = now;
+            apply_volume(cc);
+        }
+        if (now - cc->last_drag_render_ms >= 12) {
+            cc->last_drag_render_ms = now;
+            control_center_render(cc);
+        }
         return;
     }
 
@@ -3831,7 +3849,11 @@ void control_center_handle_motion(aurade_control_center_t *cc, double x, double 
         double px = 0.0;
         cc_to_panel_coords(cc, x, y, &px, NULL);
         set_slider_from_x(cc, px, cc->dragging);
-        control_center_render(cc);
+        uint64_t now = cc_now_ms();
+        if (now - cc->last_drag_render_ms >= 12) {
+            cc->last_drag_render_ms = now;
+            control_center_render(cc);
+        }
         return;
     }
 
@@ -3849,6 +3871,8 @@ void control_center_handle_motion(aurade_control_center_t *cc, double x, double 
 void control_center_handle_release(aurade_control_center_t *cc, double x, double y) {
     if (!cc) return;
     cc->pressed = CC_MODULE_NONE;
+    cc->last_drag_apply_ms = 0;
+    cc->last_drag_render_ms = 0;
 
     if (cc->sub_dragging_slider) {
         cc->sub_dragging_slider = false;

@@ -248,6 +248,9 @@ typedef struct aurade_control_center {
     // 0 = none, 1 = brightness, 2 = volume. A slider changes its visual value
     // while dragging and applies the final value on release.
     int dragging;
+    bool needs_render;
+    uint64_t last_drag_apply_ms;
+    uint64_t last_drag_render_ms;
 
     // Hover / press feedback, so the panel feels alive like fluid.
     int hover;    // cc_module_t
