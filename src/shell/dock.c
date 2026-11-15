@@ -1200,6 +1200,58 @@ void dock_tick_bounce(aurade_dock_t *dock, double dt) {
     }
 }
 
+static double dock_target_item_scale(const aurade_dock_t *dock, int idx) {
+    if (!dock || !dock->server) return 1.0;
+    bool magnify = dock->server->config.dock_magnification &&
+                   dock->mouse_over_dock && !dock->menu_open && !dock->is_dragging;
+    if (!magnify) return 1.0;
+
+    double max_scale = dock->server->config.dock_max_scale;
+    if (max_scale < 1.0) max_scale = 1.0;
+    if (max_scale > 2.2) max_scale = 2.2;
+    double radius = dock->server->config.dock_mag_radius;
+    if (radius < 40.0) radius = 40.0;
+
+    double d = fabs(dock->mouse_x - dock->items[idx].center_x);
+    if (d >= radius) return 1.0;
+    double c = cos((M_PI * d) / (2.0 * radius));
+    return 1.0 + (max_scale - 1.0) * c * c;
+}
+
+bool dock_is_magnifying(const aurade_dock_t *dock) {
+    if (!dock) return false;
+    for (int i = 0; i < dock->item_count; i++) {
+        double target = dock_target_item_scale(dock, i);
+        double cur = dock->items[i].current_scale >= 1.0 ? dock->items[i].current_scale : 1.0;
+        if (fabs(cur - target) > 0.002) return true;
+    }
+    return false;
+}
+
+void dock_tick_mag(aurade_dock_t *dock, double dt) {
+    if (!dock) return;
+    if (dt <= 0.0 || dt > 0.1) dt = 0.016;
+    double alpha = 1.0 - exp(-20.0 * dt);
+    if (alpha > 1.0) alpha = 1.0;
+
+    bool changed = false;
+    for (int i = 0; i < dock->item_count; i++) {
+        double target = dock_target_item_scale(dock, i);
+        double cur = dock->items[i].current_scale >= 1.0 ? dock->items[i].current_scale : 1.0;
+        double diff = target - cur;
+        if (fabs(diff) > 0.002) {
+            dock->items[i].current_scale = cur + diff * alpha;
+            changed = true;
+        } else if (cur != target) {
+            dock->items[i].current_scale = target;
+            changed = true;
+        }
+    }
+    if (changed) {
+        dock->needs_render = true;
+    }
+}
+
 void dock_refresh(aurade_server_t *server) {
     if (!server || !server->dock) return;
     dock_update_running_state(server->dock);
@@ -1270,31 +1322,18 @@ void dock_render(aurade_dock_t *dock) {
     if (base > 96) base = 96;
     dock->base_icon_size = base;
 
-    bool magnify = dock->server->config.dock_magnification && dock->mouse_over_dock && !dock->menu_open && !dock->is_dragging;
-    double max_scale = dock->server->config.dock_max_scale;
-    if (max_scale < 1.0) max_scale = 1.0;
-    if (max_scale > 2.2) max_scale = 2.2;
-    double radius = dock->server->config.dock_mag_radius;
-    if (radius < 40.0) radius = 40.0;
-
-    // --- pass 1: widths from current centre guesses
-    double width[24];
-    double used = 0.0;
     int pinned_count = 0;
     for (int i = 0; i < count; i++) {
         if (dock->items[i].is_pinned) pinned_count++;
     }
     bool has_separator = (pinned_count > 0 && pinned_count < count);
 
+    // --- pass 1: widths from smoothed current_scale
+    double width[24];
+    double used = 0.0;
     for (int i = 0; i < count; i++) {
-        double scale = 1.0;
-        if (magnify) {
-            double d = fabs(dock->mouse_x - dock->items[i].center_x);
-            if (d < radius) {
-                double c = cos((M_PI * d) / (2.0 * radius));
-                scale = 1.0 + (max_scale - 1.0) * c * c;
-            }
-        }
+        double scale = dock->items[i].current_scale;
+        if (scale < 1.0) scale = 1.0;
         dock->items[i].current_scale = scale;
         width[i] = base * scale;
         used += width[i];

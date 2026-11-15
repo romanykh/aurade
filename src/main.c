@@ -341,7 +341,7 @@ static void output_frame(struct wl_listener *listener, void *data) {
             break;
         }
     }
-    bool dock_animating = server->dock && (dock_is_bouncing(server->dock) || dock_is_sliding(server->dock) || server->dock->needs_render);
+    bool dock_animating = server->dock && (dock_is_bouncing(server->dock) || dock_is_sliding(server->dock) || dock_is_magnifying(server->dock) || server->dock->needs_render);
     bool topbar_animating = server->topbar && server->topbar->needs_render;
     bool launchpad_animating = server->launchpad &&
         (server->launchpad->page_animating ||
@@ -3627,6 +3627,9 @@ void server_tick_animations(aurade_server_t *server, double dt) {
         }
         if (dock_is_sliding(server->dock)) {
             dock_tick_slide(server->dock, dt);
+        }
+        if (dock_is_magnifying(server->dock)) {
+            dock_tick_mag(server->dock, dt);
         }
     }
 

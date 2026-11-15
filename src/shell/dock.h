@@ -116,6 +116,8 @@ bool dock_is_bouncing(aurade_dock_t *dock);
 void dock_tick_bounce(aurade_dock_t *dock, double dt);
 bool dock_is_sliding(const aurade_dock_t *dock);
 void dock_tick_slide(aurade_dock_t *dock, double dt);
+bool dock_is_magnifying(const aurade_dock_t *dock);
+void dock_tick_mag(aurade_dock_t *dock, double dt);
 bool dock_pin_app(aurade_dock_t *dock, const char *name, const char *exec,
                   const char *icon_name, cairo_surface_t *icon_surface);
 bool dock_has_app(aurade_dock_t *dock, const desktop_app_t *app);
