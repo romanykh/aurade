@@ -1751,15 +1751,26 @@ struct find_buffer_data {
     int max_area;
 };
 
-static void find_largest_buffer_iterator(struct wlr_scene_buffer *scene_buffer,
-                                         int sx, int sy, void *user_data) {
-    (void)sx; (void)sy;
-    struct find_buffer_data *data = user_data;
-    if (!scene_buffer || !scene_buffer->buffer) return;
-    int area = scene_buffer->buffer->width * scene_buffer->buffer->height;
-    if (area > data->max_area) {
-        data->max_area = area;
-        data->best_buffer = scene_buffer;
+static void find_largest_buffer_any_state(struct wlr_scene_node *node,
+                                          struct find_buffer_data *data) {
+    if (!node) return;
+    if (node->type == WLR_SCENE_NODE_BUFFER) {
+        struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
+        if (sb && sb->buffer) {
+            int area = sb->buffer->width * sb->buffer->height;
+            if (area > data->max_area) {
+                data->max_area = area;
+                data->best_buffer = sb;
+            }
+        }
+        return;
+    }
+    if (node->type == WLR_SCENE_NODE_TREE) {
+        struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+        struct wlr_scene_node *child;
+        wl_list_for_each(child, &tree->children, link) {
+            find_largest_buffer_any_state(child, data);
+        }
     }
 }
 
@@ -1774,10 +1785,59 @@ void view_spawn_close_animation(aurade_view_t *view) {
     if (view->workspace != view->server->current_workspace) return;
 
     struct find_buffer_data find_data = { .best_buffer = NULL, .max_area = 0 };
-    wlr_scene_node_for_each_buffer(&view->scene_tree->node, find_largest_buffer_iterator, &find_data);
-    if (!find_data.best_buffer || !find_data.best_buffer->buffer) return;
+    find_largest_buffer_any_state(&view->scene_tree->node, &find_data);
 
-    struct wlr_buffer *locked_buf = wlr_buffer_lock(find_data.best_buffer->buffer);
+    struct wlr_buffer *locked_buf = NULL;
+    if (find_data.best_buffer && find_data.best_buffer->buffer) {
+        locked_buf = wlr_buffer_lock(find_data.best_buffer->buffer);
+    }
+
+    if (!locked_buf) {
+        struct wlr_surface *surf = NULL;
+        if (view->xdg_toplevel && view->xdg_toplevel->base) {
+            surf = view->xdg_toplevel->base->surface;
+        } else if (view->xwayland_surface) {
+            surf = view->xwayland_surface->surface;
+        }
+        if (surf && surf->buffer) {
+            locked_buf = wlr_buffer_lock(&surf->buffer->base);
+        }
+    }
+
+    int w = view->width;
+    int h = view->height;
+    if (w <= 0 && find_data.best_buffer && find_data.best_buffer->dst_width > 0) {
+        w = find_data.best_buffer->dst_width;
+    }
+    if (h <= 0 && find_data.best_buffer && find_data.best_buffer->dst_height > 0) {
+        h = find_data.best_buffer->dst_height;
+    }
+
+    if (!locked_buf && w > 0 && h > 0) {
+        cairo_buffer_t *cb = cairo_buffer_create(w, h);
+        if (cb) {
+            if (view->thumb_surface) {
+                int tw = cairo_image_surface_get_width(view->thumb_surface);
+                int th = cairo_image_surface_get_height(view->thumb_surface);
+                if (tw > 0 && th > 0) {
+                    cairo_save(cb->cr);
+                    cairo_scale(cb->cr, (double)w / tw, (double)h / th);
+                    cairo_set_source_surface(cb->cr, view->thumb_surface, 0, 0);
+                    cairo_pattern_set_filter(cairo_get_source(cb->cr), CAIRO_FILTER_BILINEAR);
+                    cairo_paint(cb->cr);
+                    cairo_restore(cb->cr);
+                }
+            } else {
+                bool dark = view->server->config.dark_mode;
+                cairo_set_source_rgba(cb->cr,
+                    dark ? 0.14 : 0.92, dark ? 0.16 : 0.93, dark ? 0.20 : 0.96, 0.92);
+                cairo_paint(cb->cr);
+            }
+            locked_buf = wlr_buffer_lock(&cb->base);
+            wlr_buffer_drop(&cb->base);
+        }
+    }
+
     if (!locked_buf) return;
 
     struct wlr_scene_buffer *ghost_scene = wlr_scene_buffer_create(view->server->workspace_trees[view->workspace], locked_buf);
@@ -1786,10 +1846,6 @@ void view_spawn_close_animation(aurade_view_t *view) {
         return;
     }
 
-    int w = view->width;
-    int h = view->height;
-    if (w <= 0 && find_data.best_buffer->dst_width > 0) w = find_data.best_buffer->dst_width;
-    if (h <= 0 && find_data.best_buffer->dst_height > 0) h = find_data.best_buffer->dst_height;
     if (w <= 0) w = locked_buf->width;
     if (h <= 0) h = locked_buf->height;
 
@@ -1797,10 +1853,12 @@ void view_spawn_close_animation(aurade_view_t *view) {
     wlr_scene_buffer_set_dest_size(ghost_scene, w, h);
     wlr_scene_buffer_set_filter_mode(ghost_scene, WLR_SCALE_FILTER_BILINEAR);
 
-    if (find_data.best_buffer->src_box.width > 0 && find_data.best_buffer->src_box.height > 0) {
-        wlr_scene_buffer_set_source_box(ghost_scene, &find_data.best_buffer->src_box);
+    if (find_data.best_buffer && find_data.best_buffer->buffer) {
+        if (find_data.best_buffer->src_box.width > 0 && find_data.best_buffer->src_box.height > 0) {
+            wlr_scene_buffer_set_source_box(ghost_scene, &find_data.best_buffer->src_box);
+        }
+        wlr_scene_buffer_set_transform(ghost_scene, find_data.best_buffer->transform);
     }
-    wlr_scene_buffer_set_transform(ghost_scene, find_data.best_buffer->transform);
 
     int rad = 12;
     int max_r = (w < h ? w : h) / 4;
