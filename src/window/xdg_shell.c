@@ -1875,6 +1875,8 @@ static void xdg_surface_commit_debug(struct wl_listener *listener, void *data) {
     if (!surface->initialized || view->pending_configure) return;
     if (!wlr_surface_has_buffer(surface->surface)) return;
 
+    view->thumb_dirty = true;
+
     if (view->current_scale > 0.0 && fabs(view->current_scale - 1.0) >= 0.001) {
         view_set_scale(view, view->current_scale, view->current_scale);
     } else {
@@ -2198,6 +2200,10 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
     }
     dock_refresh(server);
     server_export_running_windows(server);
+    if (view->thumb_surface) {
+        cairo_surface_destroy(view->thumb_surface);
+        view->thumb_surface = NULL;
+    }
     free(view);
 }
 

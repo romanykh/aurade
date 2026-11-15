@@ -9,6 +9,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <drm_fourcc.h>
+#include <wlr/render/wlr_texture.h>
+#include <wlr/types/wlr_buffer.h>
 
 #define MC_FONT "Inter, Adwaita Sans, sans-serif"
 
@@ -1623,6 +1626,160 @@ void mission_control_handle_axis(aurade_mission_control_t *mc, enum wl_pointer_a
 
 
 
+static cairo_surface_t *mc_downscale_buffer_to_cairo(const uint8_t *src, uint32_t fmt,
+                                                    int src_w, int src_h, size_t src_stride,
+                                                    int crop_x, int crop_y, int crop_w, int crop_h) {
+    if (!src || src_w <= 0 || src_h <= 0) return NULL;
+    bool is_argb = (fmt == DRM_FORMAT_ARGB8888);
+    bool is_xrgb = (fmt == DRM_FORMAT_XRGB8888);
+    bool is_abgr = (fmt == DRM_FORMAT_ABGR8888);
+    bool is_xbgr = (fmt == DRM_FORMAT_XBGR8888);
+    if (!is_argb && !is_xrgb && !is_abgr && !is_xbgr) return NULL;
+
+    if (crop_w <= 0 || crop_h <= 0) {
+        crop_x = 0; crop_y = 0; crop_w = src_w; crop_h = src_h;
+    } else {
+        if (crop_x < 0) { crop_w += crop_x; crop_x = 0; }
+        if (crop_y < 0) { crop_h += crop_y; crop_y = 0; }
+        if (crop_x + crop_w > src_w) crop_w = src_w - crop_x;
+        if (crop_y + crop_h > src_h) crop_h = src_h - crop_y;
+        if (crop_w <= 0 || crop_h <= 0) {
+            crop_x = 0; crop_y = 0; crop_w = src_w; crop_h = src_h;
+        }
+    }
+
+    const int max_dim = 256;
+    int dst_w = crop_w, dst_h = crop_h;
+    if (dst_w > max_dim || dst_h > max_dim) {
+        if (dst_w >= dst_h) {
+            dst_h = (int)((double)crop_h * max_dim / (double)crop_w);
+            dst_w = max_dim;
+        } else {
+            dst_w = (int)((double)crop_w * max_dim / (double)crop_h);
+            dst_h = max_dim;
+        }
+    }
+    if (dst_w < 1) dst_w = 1;
+    if (dst_h < 1) dst_h = 1;
+
+    cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, dst_w, dst_h);
+    if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(surf);
+        return NULL;
+    }
+    cairo_surface_flush(surf);
+    uint8_t *dst = cairo_image_surface_get_data(surf);
+    int dst_stride = cairo_image_surface_get_stride(surf);
+
+    double step_x = (double)crop_w / (double)dst_w;
+    double step_y = (double)crop_h / (double)dst_h;
+    bool opaque = (is_xrgb || is_xbgr);
+    bool swap_rb = (is_abgr || is_xbgr);
+
+    for (int y = 0; y < dst_h; y++) {
+        int sy0 = crop_y + (int)(y * step_y);
+        int sy1 = crop_y + (int)((y + 0.5) * step_y);
+        if (sy0 >= src_h) sy0 = src_h - 1;
+        if (sy1 >= src_h) sy1 = src_h - 1;
+        uint32_t *drow = (uint32_t *)(dst + (size_t)y * (size_t)dst_stride);
+        const uint8_t *srow0 = src + (size_t)sy0 * src_stride;
+        const uint8_t *srow1 = src + (size_t)sy1 * src_stride;
+
+        for (int x = 0; x < dst_w; x++) {
+            int sx0 = crop_x + (int)(x * step_x);
+            int sx1 = crop_x + (int)((x + 0.5) * step_x);
+            if (sx0 >= src_w) sx0 = src_w - 1;
+            if (sx1 >= src_w) sx1 = src_w - 1;
+
+            const uint8_t *p00 = srow0 + (size_t)sx0 * 4;
+            const uint8_t *p01 = srow0 + (size_t)sx1 * 4;
+            const uint8_t *p10 = srow1 + (size_t)sx0 * 4;
+            const uint8_t *p11 = srow1 + (size_t)sx1 * 4;
+
+            uint32_t c0 = ((uint32_t)p00[0] + p01[0] + p10[0] + p11[0]) >> 2;
+            uint32_t c1 = ((uint32_t)p00[1] + p01[1] + p10[1] + p11[1]) >> 2;
+            uint32_t c2 = ((uint32_t)p00[2] + p01[2] + p10[2] + p11[2]) >> 2;
+            uint32_t c3 = opaque ? 255 : (((uint32_t)p00[3] + p01[3] + p10[3] + p11[3]) >> 2);
+
+            if (swap_rb) {
+                uint32_t tmp = c0; c0 = c2; c2 = tmp;
+            }
+            drow[x] = (c3 << 24) | (c2 << 16) | (c1 << 8) | c0;
+        }
+    }
+
+    cairo_surface_mark_dirty(surf);
+    return surf;
+}
+
+static cairo_surface_t *mc_get_view_thumb(aurade_view_t *v) {
+    if (!v) return NULL;
+    struct wlr_surface *surf = NULL;
+    int crop_x = 0, crop_y = 0, crop_w = 0, crop_h = 0;
+    if (v->xdg_toplevel && v->xdg_toplevel->base) {
+        surf = v->xdg_toplevel->base->surface;
+        crop_x = v->xdg_toplevel->base->geometry.x;
+        crop_y = v->xdg_toplevel->base->geometry.y;
+        crop_w = v->xdg_toplevel->base->geometry.width;
+        crop_h = v->xdg_toplevel->base->geometry.height;
+    } else if (v->xwayland_surface) {
+        surf = v->xwayland_surface->surface;
+    }
+
+    if (!surf) return v->thumb_surface;
+    if (v->thumb_surface && !v->thumb_dirty && v->thumb_seq == surf->current.seq) {
+        return v->thumb_surface;
+    }
+
+    cairo_surface_t *next_thumb = NULL;
+
+    // Fast path: direct SHM buffer read without touching the GPU
+    if (surf->buffer) {
+        void *src_data = NULL;
+        uint32_t fmt = 0;
+        size_t src_stride = 0;
+        if (wlr_buffer_begin_data_ptr_access(&surf->buffer->base,
+                WLR_BUFFER_DATA_PTR_ACCESS_READ, &src_data, &fmt, &src_stride)) {
+            next_thumb = mc_downscale_buffer_to_cairo(
+                (const uint8_t *)src_data, fmt,
+                surf->buffer->base.width, surf->buffer->base.height, src_stride,
+                crop_x, crop_y, crop_w, crop_h);
+            wlr_buffer_end_data_ptr_access(&surf->buffer->base);
+        }
+    }
+
+    // Fallback for GPU/DMA-BUF buffers: read pixels from the wlr_texture
+    if (!next_thumb) {
+        struct wlr_texture *tex = wlr_surface_get_texture(surf);
+        if (tex && tex->width > 0 && tex->height > 0) {
+            uint32_t raw_stride = (uint32_t)tex->width * 4;
+            uint8_t *raw = malloc((size_t)raw_stride * (size_t)tex->height);
+            if (raw) {
+                struct wlr_texture_read_pixels_options opts = {
+                    .data = raw,
+                    .format = DRM_FORMAT_ARGB8888,
+                    .stride = raw_stride,
+                };
+                if (wlr_texture_read_pixels(tex, &opts)) {
+                    next_thumb = mc_downscale_buffer_to_cairo(
+                        raw, DRM_FORMAT_ARGB8888,
+                        (int)tex->width, (int)tex->height, raw_stride,
+                        crop_x, crop_y, crop_w, crop_h);
+                }
+                free(raw);
+            }
+        }
+    }
+
+    if (next_thumb) {
+        if (v->thumb_surface) cairo_surface_destroy(v->thumb_surface);
+        v->thumb_surface = next_thumb;
+        v->thumb_seq = surf->current.seq;
+        v->thumb_dirty = false;
+    }
+    return v->thumb_surface;
+}
+
 static void mc_draw_workspace_mini_windows(cairo_t *cr, aurade_mission_control_t *mc,
                                            int ws, double sx, double sy,
                                            double thumb_w, double thumb_h,
@@ -1678,6 +1835,37 @@ static void mc_draw_workspace_mini_windows(cairo_t *cr, aurade_mission_control_t
         draw_rounded_rect(cr, wx, wy + 1.2, ww, wh, r);
         cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.45 * alpha);
         cairo_fill(cr);
+
+        cairo_surface_t *vthumb = mc_get_view_thumb(v);
+        if (vthumb) {
+            int tw = cairo_image_surface_get_width(vthumb);
+            int th = cairo_image_surface_get_height(vthumb);
+            if (tw > 0 && th > 0) {
+                cairo_save(cr);
+                draw_rounded_rect(cr, wx, wy, ww, wh, r);
+                cairo_clip(cr);
+
+                if (is_dark) {
+                    cairo_set_source_rgba(cr, 0.10, 0.11, 0.14, 0.95 * alpha);
+                } else {
+                    cairo_set_source_rgba(cr, 0.92, 0.93, 0.95, 0.95 * alpha);
+                }
+                cairo_paint(cr);
+
+                cairo_translate(cr, wx, wy);
+                cairo_scale(cr, ww / (double)tw, wh / (double)th);
+                cairo_set_source_surface(cr, vthumb, 0, 0);
+                cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
+                cairo_paint_with_alpha(cr, alpha);
+                cairo_restore(cr);
+
+                draw_rounded_rect(cr, wx + 0.5, wy + 0.5, ww - 1.0, wh - 1.0, r);
+                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (is_dark ? 0.22 : 0.30) * alpha);
+                cairo_set_line_width(cr, 0.8);
+                cairo_stroke(cr);
+                continue;
+            }
+        }
 
         cairo_pattern_t *pat = cairo_pattern_create_linear(wx, wy, wx, wy + wh);
         if (is_dark) {

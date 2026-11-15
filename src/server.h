@@ -123,6 +123,11 @@ typedef struct aurade_view {
     uint64_t last_configure_ms; // last time we sent a toplevel configure
     int prev_x, prev_y, prev_w, prev_h;
 
+    // Cached downscaled window preview for Mission Control workspace thumbnails
+    cairo_surface_t *thumb_surface;
+    uint32_t thumb_seq;
+    bool thumb_dirty;
+
     struct wl_listener map;
     struct wl_listener unmap;
     struct wl_listener destroy;

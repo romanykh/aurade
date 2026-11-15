@@ -301,6 +301,10 @@ static void xwayland_surface_destroy(struct wl_listener *listener, void *data) {
         view->scene_tree = NULL;
         view->blur_node = NULL;
     }
+    if (view->thumb_surface) {
+        cairo_surface_destroy(view->thumb_surface);
+        view->thumb_surface = NULL;
+    }
 
     if (server->focused_view == view) {
         server->focused_view = NULL;
