@@ -111,6 +111,7 @@ static page_meta_t PAGES[] = {
     { "dock",        "Dock",             "view-paged-symbolic",                   "badge-dock",        build_page_dock,        NULL, NULL, false },
     { "gestures",    "Gestures",         "input-touchpad-symbolic",               "badge-gestures",    build_page_gestures,    NULL, NULL, false },
     { "default-apps","Default Apps",     "preferences-desktop-apps-symbolic",     "badge-appearance",  build_page_default_apps,NULL, NULL, false },
+    { "extensions",  "Extensions",       "application-x-addon-symbolic",          "badge-gestures",    build_page_extensions,  NULL, NULL, false },
     { "about",       "About",            "help-about-symbolic",                   "badge-about",       build_page_about,       NULL, NULL, false },
 };
 static const int PAGES_COUNT = sizeof(PAGES) / sizeof(PAGES[0]);

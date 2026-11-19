@@ -72,6 +72,12 @@ typedef struct aurade_notifications {
     double nc_max_scroll;
     bool nc_clear_hover;
 
+    // Compact interactive calendar inside Notification Center
+    bool nc_show_calendar;
+    int cal_year;
+    int cal_month;       // 0..11
+    int cal_hover_nav;   // 0=none, -1=prev, 1=next, 2=title (today)
+
     // Inter-thread pipe to deliver D-Bus calls into Wayland main loop
     int pipe_read_fd;
     int pipe_write_fd;
@@ -105,7 +111,9 @@ bool notifications_pointer_owns(aurade_notifications_t *notif, double x, double 
 void notifications_nc_open(aurade_notifications_t *notif);
 void notifications_nc_close(aurade_notifications_t *notif);
 void notifications_nc_toggle(aurade_notifications_t *notif);
+void notifications_nc_toggle_calendar(aurade_notifications_t *notif);
 bool notifications_nc_is_open(const aurade_notifications_t *notif);
+bool notifications_nc_calendar_is_open(const aurade_notifications_t *notif);
 bool notifications_nc_pointer_owns(const aurade_notifications_t *notif, double x, double y);
 bool notifications_nc_handle_scroll(aurade_notifications_t *notif, double delta_y);
 

@@ -138,6 +138,7 @@ typedef struct {
     double blur_contrast;
     double blur_noise;
     bool liquid_glass;
+    double glass_light;
 
     // Per-element Blur, Liquid Glass & Opacity
     glass_element_t glass_windows;

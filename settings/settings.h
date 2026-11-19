@@ -80,6 +80,7 @@ GtkWidget *build_page_blur_glass(void);
 GtkWidget *build_page_dock(void);
 GtkWidget *build_page_gestures(void);
 GtkWidget *build_page_default_apps(void);
+GtkWidget *build_page_extensions(void);
 GtkWidget *build_page_about(void);
 
 #endif // AURADE_SETTINGS_H

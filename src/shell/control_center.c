@@ -2755,8 +2755,8 @@ static void cc_apply_transform(aurade_control_center_t *cc, double p) {
     if (p < 0.0) p = 0.0;
     if (p > 1.0) p = 1.0;
 
-    double scale = 0.94 + 0.06 * p;
-    double opacity = p * 2.0;
+    double scale = 0.90 + 0.10 * p;
+    double opacity = p * 1.6;
     if (opacity > 1.0) opacity = 1.0;
 
     int bw = control_center_width(cc);
@@ -2769,7 +2769,7 @@ static void cc_apply_transform(aurade_control_center_t *cc, double p) {
     wlr_scene_buffer_set_opacity(cc->scene_buffer, (float)(opacity * base_op / 0.85 > 1.0 ? 1.0 : opacity * (base_op / 0.85)));
 
     double node_x = (cc->screen_width - CC_MARGIN_RIGHT) - scale * (CC_SHADOW_PAD + CC_WIDTH);
-    double node_y = (TOPBAR_HEIGHT + CC_MARGIN_TOP) - scale * CC_SHADOW_PAD;
+    double node_y = (TOPBAR_HEIGHT + CC_MARGIN_TOP) - scale * CC_SHADOW_PAD - 14.0 * (1.0 - p);
     wlr_scene_node_set_position(&cc->scene_buffer->node, (int)lround(node_x),
                                 (int)lround(node_y));
 

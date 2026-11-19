@@ -9,6 +9,7 @@
 #include "shell/launchpad.h"
 #include "shell/control_center.h"
 #include "shell/osd.h"
+#include "ext/extension.h"
 #include "shell/screenshot.h"
 #include "shell/notifications.h"
 #include "shell/music_pill.h"
@@ -66,6 +67,7 @@ static void crash_handler(int sig) {
 void server_update_blur_config(aurade_server_t *server) {
     if (!server || !server->scene) return;
     cairo_buffer_set_liquid_glass_enabled(server->config.liquid_glass);
+    cairo_buffer_set_glass_light(server->config.glass_light);
     double str = server->config.blur_strength > 0.05 ? server->config.blur_strength : 1.0;
 
     int passes = server->config.blur_passes > 0 ? server->config.blur_passes : 2;
@@ -1354,6 +1356,11 @@ static void cursor_button(struct wl_listener *listener, void *data) {
         return;
     }
 
+    if (server->ext &&
+        ext_manager_handle_button(server->ext, lx, ly, event->button, pressed)) {
+        return;
+    }
+
     if (!pressed) {
         // Only the button that started a compositor grab can end it. Releasing
         // the right button while dragging with the left button, for example,
@@ -2132,6 +2139,13 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 
     for (int i = 0; i < nsyms; i++) {
         xkb_keysym_t sym = syms[i];
+
+        if (server->ext) {
+            uint32_t mods = (super ? 1u : 0u) | (shift ? 2u : 0u) | (ctrl ? 4u : 0u) | (alt ? 8u : 0u);
+            if (ext_manager_handle_key(server->ext, sym, mods, pressed)) {
+                return;
+            }
+        }
 
         // A screengrab selection is modal: it owns Escape and swallows
         // keystrokes so the focused application cannot react while the user is
@@ -3616,6 +3630,9 @@ void server_tick_animations(aurade_server_t *server, double dt) {
     if (server->notifications) {
         notifications_tick(server->notifications, dt);
     }
+    if (server->ext) {
+        ext_manager_tick(server->ext, dt);
+    }
 
     // 6. Window View Animations (Map pop, Scale minimize/restore, Geometry maximize/tile)
     server_tick_view_animations(server, dt);
@@ -3852,6 +3869,7 @@ int main(int argc, char *argv[]) {
     server.music_pill = music_pill_create(&server);
     server.lockscreen = lockscreen_create(&server);
     server_update_blur_config(&server);
+    server.ext = ext_manager_create(&server);
 
 // Config reload watcher setup moved above
 
@@ -3937,6 +3955,7 @@ if (server.config_inotify_fd >= 0) {
     if (server.audio_subscribe_pid > 0) kill(server.audio_subscribe_pid, SIGTERM);
 
     server_finish_xwayland(&server);
+    if (server.ext) ext_manager_destroy(server.ext);
     if (server.keymap) xkb_keymap_unref(server.keymap);
     if (server.notifications) notifications_destroy(server.notifications);
     if (server.lockscreen) lockscreen_destroy(server.lockscreen);

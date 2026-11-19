@@ -226,6 +226,7 @@ aurade_config_t config_get_defaults(void) {
         .blur_contrast = 1.04,
         .blur_noise = 0.015,
         .liquid_glass = true,
+        .glass_light = 0.50,
 
         // Per-element Blur, Liquid Glass & Opacity
         .glass_windows            = { .opacity = 1.00, .blur = 0.0, .liquid_glass = false },
@@ -558,6 +559,10 @@ bool config_load(aurade_config_t *cfg, const char *path) {
             double sat = json_object_get_double(v);
             if (sat >= 0.2 && sat <= 3.0) cfg->blur_saturation = sat;
         }
+        if (json_object_object_get_ex(blur, "glass_light", &v)) {
+            double gl = json_object_get_double(v);
+            if (gl >= 0.0 && gl <= 2.0) cfg->glass_light = gl;
+        }
         if (json_object_object_get_ex(blur, "brightness", &v)) {
             double b = json_object_get_double(v);
             if (b >= 0.5 && b <= 2.0) cfg->blur_brightness = b;
@@ -789,6 +794,7 @@ bool config_save(const aurade_config_t *cfg, const char *path) {
     json_object_object_add(blur, "brightness", json_object_new_double(cfg->blur_brightness > 0.1 ? cfg->blur_brightness : 1.02));
     json_object_object_add(blur, "contrast", json_object_new_double(cfg->blur_contrast > 0.1 ? cfg->blur_contrast : 1.04));
     json_object_object_add(blur, "noise", json_object_new_double(cfg->blur_noise >= 0.0 ? cfg->blur_noise : 0.015));
+    json_object_object_add(blur, "glass_light", json_object_new_double(cfg->glass_light >= 0.0 ? cfg->glass_light : 0.50));
 
     struct json_object *elems = json_object_new_object();
     struct { const char *key; const glass_element_t *src; } map[] = {

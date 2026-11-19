@@ -1,4 +1,5 @@
 #include "notifications.h"
+#include "topbar.h"
 #include "../util/apps.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -391,7 +392,11 @@ static void nc_panel_rect(const aurade_notifications_t *notif, double *out_x, do
     bool left = notif->server && notif->server->config.notif_center_left;
     double closed_x = left ? (-w - 16.0) : (notif->screen_width + 16.0);
     double open_x = left ? 12.0 : (notif->screen_width - w - 12.0);
-    double x = closed_x + (open_x - closed_x) * notif->nc_progress;
+    double p = notif->nc_progress;
+    if (p < 0.0) p = 0.0;
+    if (p > 1.0) p = 1.0;
+    double e = 1.0 - pow(1.0 - p, 3.0);
+    double x = closed_x + (open_x - closed_x) * e;
     if (out_x) *out_x = x;
     if (out_y) *out_y = y;
     if (out_w) *out_w = w;
@@ -404,8 +409,8 @@ static void nc_draw_liquid_glass_panel(cairo_t *cr, double x, double y, double w
 
     draw_rounded_rect(cr, x, y, w, h, r);
     cairo_pattern_t *bg = cairo_pattern_create_linear(x, y, x, y + h);
-    cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.13, 0.14, 0.19, 0.80 * opacity);
-    cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.08, 0.09, 0.12, 0.88 * opacity);
+    cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.22, 0.20, 0.32, 0.52 * opacity);
+    cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.10, 0.09, 0.18, 0.66 * opacity);
     cairo_set_source(cr, bg);
     cairo_fill(cr);
     cairo_pattern_destroy(bg);
@@ -413,10 +418,11 @@ static void nc_draw_liquid_glass_panel(cairo_t *cr, double x, double y, double w
     cairo_save(cr);
     draw_rounded_rect(cr, x, y, w, h, r);
     cairo_clip(cr);
-    double sheen_h = 80.0;
+    double sheen_h = 120.0;
+    double gl = cairo_buffer_get_glass_light();
     cairo_pattern_t *sheen = cairo_pattern_create_linear(x, y, x, y + sheen_h);
-    cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.045 * opacity);
-    cairo_pattern_add_color_stop_rgba(sheen, 0.6, 1.0, 1.0, 1.0, 0.01 * opacity);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.11 * opacity * gl);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.6, 1.0, 1.0, 1.0, 0.03 * opacity * gl);
     cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
     cairo_rectangle(cr, x, y, w, sheen_h);
     cairo_set_source(cr, sheen);
@@ -464,6 +470,191 @@ static void nc_update_scene_nodes(aurade_notifications_t *notif) {
     }
 }
 
+#define NC_CAL_X 14.0
+#define NC_CAL_Y 14.0
+#define NC_CAL_H 214.0
+#define NC_CAL_OFFSET 234.0
+
+static inline double nc_content_y_off(const aurade_notifications_t *notif) {
+    return (notif && notif->nc_show_calendar) ? NC_CAL_OFFSET : 0.0;
+}
+
+static void nc_cal_ensure_init(aurade_notifications_t *notif) {
+    if (!notif || notif->cal_year > 0) return;
+    time_t now = time(NULL);
+    struct tm tm;
+    localtime_r(&now, &tm);
+    notif->cal_year = tm.tm_year + 1900;
+    notif->cal_month = tm.tm_mon;
+}
+
+static void nc_cal_reset_today(aurade_notifications_t *notif) {
+    if (!notif) return;
+    time_t now = time(NULL);
+    struct tm tm;
+    localtime_r(&now, &tm);
+    notif->cal_year = tm.tm_year + 1900;
+    notif->cal_month = tm.tm_mon;
+}
+
+static int cal_days_in_month(int year, int month) {
+    static const int mdays[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    if (month < 0) { year--; month = 11; }
+    if (month > 11) { year++; month = 0; }
+    int d = mdays[month];
+    if (month == 1 && ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0))) {
+        d = 29;
+    }
+    return d;
+}
+
+static void nc_draw_calendar_card(aurade_notifications_t *notif, cairo_t *cr, double w, double a) {
+    nc_cal_ensure_init(notif);
+    double cx = NC_CAL_X, cy = NC_CAL_Y, cw = w - 28.0, ch = NC_CAL_H;
+
+    // Subtle glass card container
+    draw_rounded_rect(cr, cx, cy, cw, ch, 16.0);
+    cairo_pattern_t *cbg = cairo_pattern_create_linear(cx, cy, cx, cy + ch);
+    cairo_pattern_add_color_stop_rgba(cbg, 0.0, 1.0, 1.0, 1.0, 0.09 * a);
+    cairo_pattern_add_color_stop_rgba(cbg, 1.0, 1.0, 1.0, 1.0, 0.04 * a);
+    cairo_set_source(cr, cbg);
+    cairo_fill_preserve(cr);
+    cairo_pattern_destroy(cbg);
+    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.14 * a);
+    cairo_set_line_width(cr, 1.0);
+    cairo_stroke(cr);
+
+    time_t now = time(NULL);
+    struct tm today_tm;
+    localtime_r(&now, &today_tm);
+    int today_y = today_tm.tm_year + 1900;
+    int today_m = today_tm.tm_mon;
+    int today_d = today_tm.tm_mday;
+    bool is_cur_month = (notif->cal_year == today_y && notif->cal_month == today_m);
+
+    static const char *month_names[12] = {
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    };
+    char title_buf[48];
+    snprintf(title_buf, sizeof(title_buf), "%s %d",
+             month_names[notif->cal_month % 12], notif->cal_year);
+
+    // Month/Year title (hoverable to jump back to Today)
+    double title_y = cy + 22.0;
+    if (notif->cal_hover_nav == 2 && !is_cur_month) {
+        draw_rounded_rect(cr, cx + 8.0, cy + 9.0, 152.0, 26.0, 8.0);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12 * a);
+        cairo_fill(cr);
+    }
+    draw_text(cr, title_buf, NOTIF_FONT, 13.5, true,
+              1.0, 1.0, 1.0, 0.96 * a, cx + 16.0, title_y, false, true);
+    if (!is_cur_month) {
+        // Subtle blue dot indicating you can click title to return to Today
+        cairo_arc(cr, cx + 150.0, title_y, 3.0, 0, 2 * M_PI);
+        cairo_set_source_rgba(cr, 0.35, 0.62, 1.0, 0.90 * a);
+        cairo_fill(cr);
+    }
+
+    // Prev (<) and Next (>) navigation buttons
+    double prev_cx = cx + cw - 46.0, next_cx = cx + cw - 18.0, nav_cy = title_y;
+    for (int dir = -1; dir <= 1; dir += 2) {
+        double bx = (dir < 0) ? prev_cx : next_cx;
+        bool hov = (notif->cal_hover_nav == dir);
+        cairo_arc(cr, bx, nav_cy, 11.5, 0, 2 * M_PI);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (hov ? 0.22 : 0.08) * a);
+        cairo_fill(cr);
+
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (hov ? 0.98 : 0.78) * a);
+        cairo_set_line_width(cr, 1.5);
+        cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+        cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+        double s = (dir < 0) ? -1.0 : 1.0;
+        cairo_move_to(cr, bx - s * 2.0, nav_cy - 3.8);
+        cairo_line_to(cr, bx + s * 2.2, nav_cy);
+        cairo_line_to(cr, bx - s * 2.0, nav_cy + 3.8);
+        cairo_stroke(cr);
+    }
+
+    // Hairline divider inside calendar card
+    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.08 * a);
+    cairo_set_line_width(cr, 1.0);
+    cairo_move_to(cr, cx + 12.0, cy + 40.0);
+    cairo_line_to(cr, cx + cw - 12.0, cy + 40.0);
+    cairo_stroke(cr);
+
+    // Weekday headers (Monday-first)
+    static const char *wdays[7] = { "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" };
+    double grid_x = cx + 10.0;
+    double cell_w = (cw - 20.0) / 7.0;
+    double wday_y = cy + 54.0;
+    for (int c = 0; c < 7; c++) {
+        bool wknd = (c >= 5);
+        draw_text(cr, wdays[c], NOTIF_FONT, 10.5, true,
+                  wknd ? 0.80 : 1.0, wknd ? 0.82 : 1.0, 1.0,
+                  (wknd ? 0.45 : 0.56) * a,
+                  grid_x + (c + 0.5) * cell_w, wday_y, true, true);
+    }
+
+    // First day of displayed month (Monday = 0 .. Sunday = 6)
+    struct tm first_tm = {0};
+    first_tm.tm_year = notif->cal_year - 1900;
+    first_tm.tm_mon = notif->cal_month;
+    first_tm.tm_mday = 1;
+    mktime(&first_tm);
+    int start_col = (first_tm.tm_wday + 6) % 7;
+    int days_cur = cal_days_in_month(notif->cal_year, notif->cal_month);
+    int days_prev = cal_days_in_month(notif->cal_year, notif->cal_month - 1);
+
+    double grid_y = cy + 74.0;
+    double row_h = 23.0;
+    for (int cell = 0; cell < 42; cell++) {
+        int r = cell / 7;
+        int c = cell % 7;
+        double dcx = grid_x + (c + 0.5) * cell_w;
+        double dcy = grid_y + r * row_h;
+
+        int day_num;
+        bool in_month = true;
+        if (cell < start_col) {
+            day_num = days_prev - (start_col - 1 - cell);
+            in_month = false;
+        } else if (cell >= start_col + days_cur) {
+            day_num = cell - (start_col + days_cur) + 1;
+            in_month = false;
+        } else {
+            day_num = cell - start_col + 1;
+        }
+
+        bool is_today = in_month && is_cur_month && (day_num == today_d);
+        char dstr[8];
+        snprintf(dstr, sizeof(dstr), "%d", day_num);
+
+        if (is_today) {
+            // Soft luminous glow behind Today pill
+            cairo_pattern_t *glow = cairo_pattern_create_radial(dcx, dcy, 2.0, dcx, dcy, 15.0);
+            cairo_pattern_add_color_stop_rgba(glow, 0.0, 0.30, 0.58, 1.0, 0.55 * a);
+            cairo_pattern_add_color_stop_rgba(glow, 1.0, 0.30, 0.58, 1.0, 0.0);
+            cairo_arc(cr, dcx, dcy, 15.0, 0, 2 * M_PI);
+            cairo_set_source(cr, glow);
+            cairo_fill(cr);
+            cairo_pattern_destroy(glow);
+
+            cairo_arc(cr, dcx, dcy, 10.5, 0, 2 * M_PI);
+            cairo_set_source_rgba(cr, 0.28, 0.56, 1.0, 0.96 * a);
+            cairo_fill(cr);
+
+            draw_text(cr, dstr, NOTIF_FONT, 11.5, true,
+                      1.0, 1.0, 1.0, 1.0 * a, dcx, dcy, true, true);
+        } else {
+            bool wknd = (c >= 5);
+            double alpha = in_month ? (wknd ? 0.68 : 0.90) : 0.24;
+            draw_text(cr, dstr, NOTIF_FONT, 11.2, false,
+                      1.0, 1.0, 1.0, alpha * a, dcx, dcy, true, true);
+        }
+    }
+}
+
 static void notifications_nc_render(aurade_notifications_t *notif) {
     if (!notif || !notif->nc_buffer || !notif->nc_buffer->cr) return;
     cairo_t *cr = notif->nc_buffer->cr;
@@ -489,13 +680,19 @@ static void notifications_nc_render(aurade_notifications_t *notif) {
         draw_glass_panel(cr, 0.0, 0.0, w, h, 20.0, 0.12, 0.13, 0.17, gnc.opacity * a);
     }
 
+    if (notif->nc_show_calendar) {
+        nc_draw_calendar_card(notif, cr, w, a);
+    }
+
+    double y_off = nc_content_y_off(notif);
+
     // Header
     draw_text(cr, "Notifications", NOTIF_FONT, 15.0, true,
-              1.0, 1.0, 1.0, 0.95 * a, 18.0, 27.0, false, true);
+              1.0, 1.0, 1.0, 0.95 * a, 18.0, y_off + 27.0, false, true);
 
     if (notif->history_count > 0) {
         double btn_w = 70.0, btn_h = 24.0;
-        double btn_x = w - btn_w - 16.0, btn_y = 15.0;
+        double btn_x = w - btn_w - 16.0, btn_y = y_off + 15.0;
         draw_rounded_rect(cr, btn_x, btn_y, btn_w, btn_h, 12.0);
         cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (notif->nc_clear_hover ? 0.24 : 0.13) * a);
         cairo_fill(cr);
@@ -504,22 +701,62 @@ static void notifications_nc_render(aurade_notifications_t *notif) {
                   btn_x + btn_w / 2.0, btn_y + btn_h / 2.0, true, true);
     }
 
-    // Subtle divider
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.10 * a);
+    // Subtle horizontal-fade divider
+    cairo_pattern_t *div_pat = cairo_pattern_create_linear(16.0, 0, w - 16.0, 0);
+    cairo_pattern_add_color_stop_rgba(div_pat, 0.0, 1.0, 1.0, 1.0, 0.0);
+    cairo_pattern_add_color_stop_rgba(div_pat, 0.15, 1.0, 1.0, 1.0, 0.14 * a);
+    cairo_pattern_add_color_stop_rgba(div_pat, 0.85, 1.0, 1.0, 1.0, 0.14 * a);
+    cairo_pattern_add_color_stop_rgba(div_pat, 1.0, 1.0, 1.0, 1.0, 0.0);
+    cairo_set_source(cr, div_pat);
     cairo_set_line_width(cr, 1.0);
-    cairo_move_to(cr, 16.0, 50.0);
-    cairo_line_to(cr, w - 16.0, 50.0);
+    cairo_move_to(cr, 16.0, y_off + 50.0);
+    cairo_line_to(cr, w - 16.0, y_off + 50.0);
     cairo_stroke(cr);
+    cairo_pattern_destroy(div_pat);
 
-    double list_top = 58.0;
+    double list_top = y_off + 58.0;
     double list_h = h - list_top - 14.0;
 
     if (notif->history_count == 0) {
         notif->nc_max_scroll = 0.0;
         notif->nc_scroll_y = 0.0;
-        draw_text(cr, "No Notifications", NOTIF_FONT, 13.5, false,
-                  1.0, 1.0, 1.0, 0.45 * a,
-                  w / 2.0, list_top + list_h * 0.42, true, true);
+
+        double ecx = w / 2.0;
+        double ecy = list_top + list_h * 0.42;
+        if (list_h >= 120.0) {
+            // Frosted circular bell badge
+            cairo_arc(cr, ecx, ecy - 22.0, 22.0, 0, 2 * M_PI);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.07 * a);
+            cairo_fill_preserve(cr);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.13 * a);
+            cairo_set_line_width(cr, 1.0);
+            cairo_stroke(cr);
+
+            // Minimal vector bell glyph
+            cairo_save(cr);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.46 * a);
+            cairo_set_line_width(cr, 1.6);
+            cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+            cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+            double bx = ecx, by = ecy - 22.0;
+            cairo_arc(cr, bx, by - 2.0, 6.2, M_PI, 2 * M_PI);
+            cairo_line_to(cr, bx + 7.5, by + 5.2);
+            cairo_line_to(cr, bx - 7.5, by + 5.2);
+            cairo_close_path(cr);
+            cairo_stroke(cr);
+            cairo_arc(cr, bx, by + 7.6, 1.7, 0, M_PI);
+            cairo_stroke(cr);
+            cairo_restore(cr);
+
+            draw_text(cr, "No Notifications", NOTIF_FONT, 13.5, true,
+                      1.0, 1.0, 1.0, 0.62 * a, ecx, ecy + 16.0, true, true);
+            draw_text(cr, "You're all caught up", NOTIF_FONT, 11.0, false,
+                      1.0, 1.0, 1.0, 0.36 * a, ecx, ecy + 34.0, true, true);
+        } else {
+            draw_text(cr, "No Notifications", NOTIF_FONT, 13.0, false,
+                      1.0, 1.0, 1.0, 0.48 * a, ecx, ecy, true, true);
+        }
+
         cairo_buffer_apply_to_scene(notif->nc_buffer, notif->nc_scene_buffer);
         nc_update_scene_nodes(notif);
         return;
@@ -1286,10 +1523,31 @@ static bool nc_handle_motion(aurade_notifications_t *notif, double mouse_x, doub
     double ly = mouse_y - py;
 
     bool changed = false;
+
+    int new_cal_nav = 0;
+    if (over_panel && notif->nc_show_calendar) {
+        double cx = NC_CAL_X, cy = NC_CAL_Y, cw = pw - 28.0;
+        double nav_cy = cy + 22.0;
+        double prev_cx = cx + cw - 46.0;
+        double next_cx = cx + cw - 18.0;
+        if (hypot(lx - prev_cx, ly - nav_cy) <= 13.0) {
+            new_cal_nav = -1;
+        } else if (hypot(lx - next_cx, ly - nav_cy) <= 13.0) {
+            new_cal_nav = 1;
+        } else if (lx >= cx + 8.0 && lx <= cx + 160.0 && ly >= cy + 8.0 && ly <= cy + 36.0) {
+            new_cal_nav = 2;
+        }
+    }
+    if (new_cal_nav != notif->cal_hover_nav) {
+        notif->cal_hover_nav = new_cal_nav;
+        changed = true;
+    }
+
+    double y_off = nc_content_y_off(notif);
     bool new_clear_hover = false;
     if (over_panel && notif->history_count > 0) {
         double btn_w = 70.0, btn_h = 24.0;
-        double btn_x = pw - btn_w - 16.0, btn_y = 15.0;
+        double btn_x = pw - btn_w - 16.0, btn_y = y_off + 15.0;
         if (lx >= btn_x && lx <= btn_x + btn_w && ly >= btn_y && ly <= btn_y + btn_h) {
             new_clear_hover = true;
         }
@@ -1299,7 +1557,7 @@ static bool nc_handle_motion(aurade_notifications_t *notif, double mouse_x, doub
         changed = true;
     }
 
-    double list_top = 58.0;
+    double list_top = y_off + 58.0;
     double list_h = ph - list_top - 14.0;
     for (int i = 0; i < notif->history_count; i++) {
         notif_history_item_t *hi = &notif->history[i];
@@ -1409,9 +1667,37 @@ static bool nc_handle_click(aurade_notifications_t *notif, double mouse_x, doubl
     double lx = mouse_x - px;
     double ly = mouse_y - py;
 
+    if (notif->nc_show_calendar) {
+        nc_cal_ensure_init(notif);
+        double cx = NC_CAL_X, cy = NC_CAL_Y, cw = pw - 28.0;
+        double nav_cy = cy + 22.0;
+        double prev_cx = cx + cw - 46.0;
+        double next_cx = cx + cw - 18.0;
+        if (hypot(lx - prev_cx, ly - nav_cy) <= 13.0) {
+            notif->cal_month--;
+            if (notif->cal_month < 0) { notif->cal_month = 11; notif->cal_year--; }
+            notifications_nc_render(notif);
+            if (notif->server) schedule_all_outputs(notif->server);
+            return true;
+        } else if (hypot(lx - next_cx, ly - nav_cy) <= 13.0) {
+            notif->cal_month++;
+            if (notif->cal_month > 11) { notif->cal_month = 0; notif->cal_year++; }
+            notifications_nc_render(notif);
+            if (notif->server) schedule_all_outputs(notif->server);
+            return true;
+        } else if (lx >= cx + 8.0 && lx <= cx + 160.0 && ly >= cy + 8.0 && ly <= cy + 36.0) {
+            nc_cal_reset_today(notif);
+            notifications_nc_render(notif);
+            if (notif->server) schedule_all_outputs(notif->server);
+            return true;
+        }
+    }
+
+    double y_off = nc_content_y_off(notif);
+
     if (notif->history_count > 0) {
         double btn_w = 70.0, btn_h = 24.0;
-        double btn_x = pw - btn_w - 16.0, btn_y = 15.0;
+        double btn_x = pw - btn_w - 16.0, btn_y = y_off + 15.0;
         if (lx >= btn_x && lx <= btn_x + btn_w && ly >= btn_y && ly <= btn_y + btn_h) {
             for (int i = 0; i < notif->history_count; i++) {
                 if (notif->history[i].icon_surface) {
@@ -1428,7 +1714,7 @@ static bool nc_handle_click(aurade_notifications_t *notif, double mouse_x, doubl
         }
     }
 
-    double list_top = 58.0;
+    double list_top = y_off + 58.0;
     double list_h = ph - list_top - 14.0;
     if (ly >= list_top && ly <= list_top + list_h) {
         for (int i = 0; i < notif->history_count; i++) {
@@ -1510,18 +1796,28 @@ bool notifications_handle_click(aurade_notifications_t *notif, double mouse_x, d
 
 void notifications_nc_open(aurade_notifications_t *notif) {
     if (!notif) return;
+    nc_cal_reset_today(notif);
+    notif->nc_show_calendar = true;
+    notif->cal_hover_nav = 0;
     notif->nc_open = true;
     notif->nc_target = 1.0;
     if (notif->nc_progress <= 0.002) notif->nc_progress = 0.01;
     notifications_nc_render(notif);
-    if (notif->server) schedule_all_outputs(notif->server);
+    if (notif->server) {
+        if (notif->server->topbar) topbar_render(notif->server->topbar);
+        schedule_all_outputs(notif->server);
+    }
 }
 
 void notifications_nc_close(aurade_notifications_t *notif) {
     if (!notif) return;
     notif->nc_open = false;
     notif->nc_target = 0.0;
-    if (notif->server) schedule_all_outputs(notif->server);
+    notif->cal_hover_nav = 0;
+    if (notif->server) {
+        if (notif->server->topbar) topbar_render(notif->server->topbar);
+        schedule_all_outputs(notif->server);
+    }
 }
 
 void notifications_nc_toggle(aurade_notifications_t *notif) {
@@ -1530,8 +1826,18 @@ void notifications_nc_toggle(aurade_notifications_t *notif) {
     else notifications_nc_open(notif);
 }
 
+void notifications_nc_toggle_calendar(aurade_notifications_t *notif) {
+    if (!notif) return;
+    if (notif->nc_open) notifications_nc_close(notif);
+    else notifications_nc_open(notif);
+}
+
 bool notifications_nc_is_open(const aurade_notifications_t *notif) {
     return notif && (notif->nc_open || notif->nc_progress > 0.05);
+}
+
+bool notifications_nc_calendar_is_open(const aurade_notifications_t *notif) {
+    return notif && notif->nc_open && notif->nc_show_calendar;
 }
 
 bool notifications_nc_pointer_owns(const aurade_notifications_t *notif, double x, double y) {

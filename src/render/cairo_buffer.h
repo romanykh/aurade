@@ -56,6 +56,8 @@ cairo_surface_t *cairo_buffer_get_wallpaper_surface(void);
  */
 void cairo_buffer_set_liquid_glass_enabled(bool enabled);
 bool cairo_buffer_get_liquid_glass_enabled(void);
+void cairo_buffer_set_glass_light(double intensity);
+double cairo_buffer_get_glass_light(void);
 
 /**
  * Draw a modern fluid frosted glass panel with subtle top-highlight border.

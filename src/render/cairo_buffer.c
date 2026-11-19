@@ -129,9 +129,12 @@ void draw_rounded_rect(cairo_t *cr, double x, double y, double w, double h, doub
     cairo_close_path(cr);
 }
 
+static double s_glass_light = 0.50;
+
 void draw_refractive_glass_rim(cairo_t *cr, double x, double y, double w, double h,
                                double r, double edge_a) {
-    if (w <= 4.0 || h <= 4.0 || edge_a <= 0.01) return;
+    edge_a *= s_glass_light;
+    if (w <= 4.0 || h <= 4.0 || edge_a <= 0.005) return;
     if (r > w / 2.0) r = w / 2.0;
     if (r > h / 2.0) r = h / 2.0;
 
@@ -243,6 +246,16 @@ void cairo_buffer_set_liquid_glass_enabled(bool enabled) {
 
 bool cairo_buffer_get_liquid_glass_enabled(void) {
     return s_liquid_glass_enabled;
+}
+
+void cairo_buffer_set_glass_light(double intensity) {
+    if (intensity < 0.0) intensity = 0.0;
+    if (intensity > 2.0) intensity = 2.0;
+    s_glass_light = intensity;
+}
+
+double cairo_buffer_get_glass_light(void) {
+    return s_glass_light;
 }
 
 void draw_liquid_glass_lens(cairo_t *target_cr,

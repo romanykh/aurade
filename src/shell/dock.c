@@ -1763,20 +1763,21 @@ void dock_render(aurade_dock_t *dock) {
             // 1. Refractive depth gradient body tint overlay (translucent)
             draw_rounded_rect(cr, pill_x, pill_local_y, used, pill_h, pill_r);
             cairo_pattern_t *bg = cairo_pattern_create_linear(pill_x, pill_local_y, pill_x, pill_local_y + pill_h);
-            cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.14, 0.16, 0.22, 0.28 * dock_op);
-            cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.06, 0.07, 0.10, 0.40 * dock_op);
+            cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.22, 0.21, 0.31, 0.34 * dock_op);
+            cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.09, 0.09, 0.16, 0.48 * dock_op);
             cairo_set_source(cr, bg);
             cairo_fill(cr);
             cairo_pattern_destroy(bg);
 
-            // 2. Caustic surface sheen wash across top 40%
+            // 2. Caustic surface sheen wash across top 45%
             cairo_save(cr);
             draw_rounded_rect(cr, pill_x, pill_local_y, used, pill_h, pill_r);
             cairo_clip(cr);
-            double sheen_h = pill_h * 0.40;
+            double sheen_h = pill_h * 0.45;
+            double gl = cairo_buffer_get_glass_light();
             cairo_pattern_t *sheen = cairo_pattern_create_linear(pill_x, pill_local_y, pill_x, pill_local_y + sheen_h);
-            cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.035 * dock_op);
-            cairo_pattern_add_color_stop_rgba(sheen, 0.6, 1.0, 1.0, 1.0, 0.01 * dock_op);
+            cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.11 * dock_op * gl);
+            cairo_pattern_add_color_stop_rgba(sheen, 0.55, 1.0, 1.0, 1.0, 0.03 * dock_op * gl);
             cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
             cairo_rectangle(cr, pill_x, pill_local_y, used, sheen_h);
             cairo_set_source(cr, sheen);
@@ -2008,32 +2009,39 @@ void dock_render(aurade_dock_t *dock) {
                 }
             }
         } else {
+            double dot_y = pill_local_y + pill_h - 5.5;
             if (dock->items[i].demands_attention) {
-                cairo_arc(cr, cx, pill_local_y + pill_h - 5.0, 3.0, 0, 2 * M_PI);
-                cairo_set_source_rgba(cr, 1.0, 0.45, 0.10, 0.98);
+                cairo_pattern_t *glow = cairo_pattern_create_radial(cx, dot_y, 0.5, cx, dot_y, 6.0);
+                cairo_pattern_add_color_stop_rgba(glow, 0.0, 1.0, 0.55, 0.15, 0.85);
+                cairo_pattern_add_color_stop_rgba(glow, 1.0, 1.0, 0.35, 0.05, 0.0);
+                cairo_arc(cr, cx, dot_y, 6.0, 0, 2 * M_PI);
+                cairo_set_source(cr, glow);
+                cairo_fill(cr);
+                cairo_pattern_destroy(glow);
+
+                cairo_arc(cr, cx, dot_y, 2.4, 0, 2 * M_PI);
+                cairo_set_source_rgba(cr, 1.0, 0.60, 0.20, 0.98);
                 cairo_fill(cr);
             } else if (dock->items[i].is_running) {
                 int wcount = dock->items[i].window_count;
-                double dot_y = pill_local_y + pill_h - 5.0;
-                double alpha = dock->items[i].is_pinned ? 1.0 : 0.75;
-                if (wcount <= 1) {
-                    cairo_arc(cr, cx, dot_y, 2.1, 0, 2 * M_PI);
-                    cairo_set_source_rgba(cr, alpha, 1.0, 1.0, 0.86);
+                int ndots = (wcount <= 1) ? 1 : (wcount == 2 ? 2 : 3);
+                double spread = (ndots == 1) ? 0.0 : (ndots == 2 ? 3.5 : 5.2);
+                double core_r = (ndots == 1) ? 2.0 : (ndots == 2 ? 1.7 : 1.5);
+                double alpha = dock->items[i].is_pinned ? 0.95 : 0.78;
+                for (int d = 0; d < ndots; d++) {
+                    double dx = (ndots == 1) ? cx : (ndots == 2 ? (d == 0 ? cx - spread : cx + spread)
+                                                               : (cx + (d - 1) * spread));
+                    cairo_pattern_t *glow = cairo_pattern_create_radial(dx, dot_y, 0.3, dx, dot_y, 5.2);
+                    cairo_pattern_add_color_stop_rgba(glow, 0.0, 0.75, 0.88, 1.0, 0.55 * alpha);
+                    cairo_pattern_add_color_stop_rgba(glow, 1.0, 0.55, 0.75, 1.0, 0.0);
+                    cairo_arc(cr, dx, dot_y, 5.2, 0, 2 * M_PI);
+                    cairo_set_source(cr, glow);
                     cairo_fill(cr);
-                } else if (wcount == 2) {
-                    cairo_arc(cr, cx - 3.5, dot_y, 1.8, 0, 2 * M_PI);
-                    cairo_set_source_rgba(cr, alpha, 1.0, 1.0, 0.86);
+                    cairo_pattern_destroy(glow);
+
+                    cairo_arc(cr, dx, dot_y, core_r, 0, 2 * M_PI);
+                    cairo_set_source_rgba(cr, 0.96, 0.98, 1.0, alpha);
                     cairo_fill(cr);
-                    cairo_arc(cr, cx + 3.5, dot_y, 1.8, 0, 2 * M_PI);
-                    cairo_set_source_rgba(cr, alpha, 1.0, 1.0, 0.86);
-                    cairo_fill(cr);
-                } else {
-                    double dots[3] = { cx - 5.5, cx, cx + 5.5 };
-                    for (int d = 0; d < 3; d++) {
-                        cairo_arc(cr, dots[d], dot_y, 1.6, 0, 2 * M_PI);
-                        cairo_set_source_rgba(cr, alpha, 1.0, 1.0, 0.86);
-                        cairo_fill(cr);
-                    }
                 }
             }
         }

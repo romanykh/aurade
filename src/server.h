@@ -318,6 +318,7 @@ typedef struct aurade_server {
     struct aurade_notifications *notifications;
     struct aurade_music_pill *music_pill;
     struct aurade_lockscreen *lockscreen;
+    struct aurade_ext_manager *ext;
 
     // Gesture State Machine (Direct Manipulation + Springs)
     gesture_mode_t gesture_mode;

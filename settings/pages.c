@@ -1324,6 +1324,7 @@ static void on_music_pill_pos_changed(int idx, gpointer user_data) {
 static void on_blur_radius_changed(double val, gpointer user_data) { (void)user_data; g_config.blur_radius = (int)lround(val); }
 static void on_blur_passes_changed(double val, gpointer user_data) { (void)user_data; g_config.blur_passes = (int)lround(val); }
 static void on_blur_saturation_changed(double val, gpointer user_data) { (void)user_data; g_config.blur_saturation = val; }
+static void on_glass_light_changed(double val, gpointer user_data) { (void)user_data; g_config.glass_light = val; }
 
 // Running Windows Opacity Helpers
 static void populate_running_windows(GtkWidget *card);
@@ -1628,6 +1629,9 @@ GtkWidget *build_page_blur_glass(void) {
 
     GtkWidget *sc_sat = ui_scale(g_config.blur_saturation > 0.1 ? g_config.blur_saturation : 1.25, 0.50, 2.00, 0.05, 2, on_blur_saturation_changed, NULL);
     ui_add_row(c_opt, "Vibrancy Saturation", "Color vibrance and saturation enhancement for backdrop lighting", sc_sat, "color-management-symbolic", "badge-appearance");
+
+    GtkWidget *sc_light = ui_scale(g_config.glass_light >= 0.0 ? g_config.glass_light : 0.50, 0.00, 2.00, 0.05, 2, on_glass_light_changed, NULL);
+    ui_add_row(c_opt, "Glass Light", "Specular rim glow and surface sheen on glass elements (0.00 = off, 2.00 = strong)", sc_light, "weather-clear-symbolic", "badge-appearance");
 
     // Per-element Opacity, Blur & Liquid Glass Cards
     struct {
@@ -2378,3 +2382,98 @@ GtkWidget *build_page_default_apps(void) {
 
     return page;
 }
+
+static void on_ext_reenable_clicked(GtkButton *btn, gpointer user_data) {
+    GtkWidget *status_lbl = GTK_WIDGET(user_data);
+    const char *home = getenv("HOME");
+    if (home && *home) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/.config/aurade/ext_disabled", home);
+        unlink(path);
+    }
+    gtk_widget_set_sensitive(GTK_WIDGET(btn), FALSE);
+    gtk_button_set_label(btn, "Re-enabled (Restart DE)");
+    if (status_lbl) {
+        gtk_label_set_text(GTK_LABEL(status_lbl), "Safe Mode cleared. Restart AuraDE to load extensions.");
+    }
+}
+
+static void on_ext_open_dir_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn; (void)user_data;
+    const char *home = getenv("HOME");
+    if (home && *home) {
+        char cmd[512];
+        snprintf(cmd, sizeof(cmd), "mkdir -p '%s/.local/share/aurade/extensions' && xdg-open '%s/.local/share/aurade/extensions' >/dev/null 2>&1 &", home, home);
+        run_cmd_async(cmd);
+    }
+}
+
+GtkWidget *build_page_extensions(void) {
+    GtkWidget *page = ui_page_container("Extensions", "Native .so modules that extend AuraDE UI or modify compositor behavior.");
+
+    const char *home = getenv("HOME");
+    char flag_path[512] = {0};
+    bool safe_mode = false;
+    char crash_info[256] = {0};
+    if (home && *home) {
+        snprintf(flag_path, sizeof(flag_path), "%s/.config/aurade/ext_disabled", home);
+        FILE *fp = fopen(flag_path, "r");
+        if (fp) {
+            safe_mode = true;
+            size_t r = fread(crash_info, 1, sizeof(crash_info) - 1, fp);
+            crash_info[r] = '\0';
+            fclose(fp);
+        }
+    }
+
+    GtkWidget *c_status = ui_card(page, "EXTENSION RUNTIME");
+    if (safe_mode) {
+        char msg[320];
+        snprintf(msg, sizeof(msg), "All extensions disabled after a crash (%s).",
+                 crash_info[0] ? crash_info : "unknown module");
+        GtkWidget *btn = gtk_button_new_with_label("Re-enable Extensions");
+        gtk_widget_add_css_class(btn, "suggested-action");
+        GtkWidget *row = ui_add_row(c_status, "Safe Mode Active", msg, btn,
+                                    "dialog-warning-symbolic", "badge-gestures");
+        (void)row;
+        g_signal_connect(btn, "clicked", G_CALLBACK(on_ext_reenable_clicked), NULL);
+    } else {
+        GtkWidget *btn_open = gtk_button_new_with_label("Open Folder");
+        ui_add_row(c_status, "Extension Engine Active",
+                   "Place compiled .so modules in ~/.local/share/aurade/extensions/",
+                   btn_open, "application-x-addon-symbolic", "badge-appearance");
+        g_signal_connect(btn_open, "clicked", G_CALLBACK(on_ext_open_dir_clicked), NULL);
+    }
+
+    GtkWidget *c_list = ui_card(page, "INSTALLED MODULES");
+    const char *dirs[2] = { NULL, "/usr/local/share/aurade/extensions" };
+    char user_dir[512] = {0};
+    if (home && *home) {
+        snprintf(user_dir, sizeof(user_dir), "%s/.local/share/aurade/extensions", home);
+        dirs[0] = user_dir;
+    }
+
+    int found = 0;
+    for (int d_idx = 0; d_idx < 2; d_idx++) {
+        if (!dirs[d_idx]) continue;
+        GDir *dir = g_dir_open(dirs[d_idx], 0, NULL);
+        if (!dir) continue;
+        const char *name;
+        while ((name = g_dir_read_name(dir)) != NULL) {
+            if (!g_str_has_suffix(name, ".so")) continue;
+            found++;
+            GtkWidget *pill = gtk_label_new(safe_mode ? "Disabled (Safe Mode)" : "Enabled");
+            gtk_widget_add_css_class(pill, safe_mode ? "disconnected-pill" : "connected-pill");
+            ui_add_row(c_list, name, dirs[d_idx], pill, "application-x-addon-symbolic", "badge-appearance");
+        }
+        g_dir_close(dir);
+    }
+    if (found == 0) {
+        ui_add_row(c_list, "No Extensions Installed",
+                   "SDK header: src/ext/aurade_ext.h (compile with gcc -shared -fPIC)",
+                   NULL, "emblem-documents-symbolic", "badge-about");
+    }
+
+    return page;
+}
+

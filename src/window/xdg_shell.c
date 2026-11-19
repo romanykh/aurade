@@ -1,4 +1,5 @@
 #include "xdg_shell.h"
+#include "../ext/extension.h"
 #include "../render/cairo_buffer.h"
 #include "../shell/topbar.h"
 #include "../shell/dock.h"
@@ -2155,11 +2156,17 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 
     dock_refresh(view->server);
     server_export_running_windows(view->server);
+    if (view->server && view->server->ext) {
+        ext_manager_notify_window_open(view->server->ext, view);
+    }
 }
 
 static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
     (void)data;
     aurade_view_t *view = wl_container_of(listener, view, unmap);
+    if (view->server && view->server->ext) {
+        ext_manager_notify_window_close(view->server->ext, view);
+    }
     int ws = view->workspace;
 
     view_spawn_close_animation(view);

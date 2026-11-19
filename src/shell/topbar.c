@@ -1,5 +1,6 @@
 #include "topbar.h"
 #include "control_center.h"
+#include "../ext/extension.h"
 #include "music_pill.h"
 #include "notifications.h"
 #include "screenshot.h"
@@ -303,55 +304,6 @@ void topbar_set_active_app(aurade_topbar_t *bar, const char *title) {
     topbar_render(bar);
 }
 
-static void draw_nc_bell_pill(aurade_topbar_t *bar, cairo_t *cr, double x, double y, double pw, double ph) {
-    bar->nc_x = x;
-    bar->nc_y = y;
-    bar->nc_w = pw;
-    bar->nc_h = ph;
-
-    bool nc_open = bar->server && bar->server->notifications &&
-                   notifications_nc_is_open(bar->server->notifications);
-    bool has_notifs = bar->server && bar->server->notifications &&
-                      bar->server->notifications->history_count > 0;
-
-    draw_rounded_rect(cr, x, y, pw, ph, ph / 2.0);
-    if (bar->hover_nc || nc_open) {
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.22);
-    } else {
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12);
-    }
-    cairo_fill_preserve(cr);
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.18);
-    cairo_set_line_width(cr, 1.0);
-    cairo_stroke(cr);
-
-    double cx = x + pw / 2.0;
-    double cy = y + ph / 2.0;
-    double a = (bar->hover_nc || nc_open) ? 1.0 : 0.88;
-    cairo_save(cr);
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, a);
-    cairo_set_line_width(cr, 1.35);
-    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
-    cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
-    cairo_move_to(cr, cx - 4.0, cy + 2.5);
-    cairo_line_to(cr, cx + 4.0, cy + 2.5);
-    cairo_line_to(cr, cx + 3.0, cy + 1.0);
-    cairo_line_to(cr, cx + 3.0, cy - 1.5);
-    cairo_arc_negative(cr, cx, cy - 1.5, 3.0, 0.0, M_PI);
-    cairo_line_to(cr, cx - 3.0, cy + 1.0);
-    cairo_close_path(cr);
-    cairo_stroke(cr);
-
-    cairo_arc(cr, cx, cy + 4.0, 1.0, 0.0, 2.0 * M_PI);
-    cairo_fill(cr);
-
-    if (has_notifs && !nc_open) {
-        cairo_arc(cr, cx + 5.0, cy - 3.5, 2.0, 0.0, 2.0 * M_PI);
-        cairo_set_source_rgba(cr, 0.25, 0.62, 1.0, 0.95);
-        cairo_fill(cr);
-    }
-    cairo_restore(cr);
-}
 
 void topbar_render(aurade_topbar_t *bar) {
     if (!bar || !bar->buffer || !bar->buffer->cr) return;
@@ -410,12 +362,22 @@ void topbar_render(aurade_topbar_t *bar) {
     }
 
     double clock_x = w - 14.0 - cached_clock_w;
-    bar->clock_x = clock_x - 4.0;
-    bar->clock_w = cached_clock_w + 18.0;
+    bar->clock_x = clock_x - 8.0;
+    bar->clock_w = cached_clock_w + 16.0;
+    bool cal_open = bar->server && notifications_nc_calendar_is_open(bar->server->notifications);
+    if (bar->hover_clock || cal_open) {
+        draw_rounded_rect(cr, bar->clock_x, 3.0, bar->clock_w, h - 6.0, (h - 6.0) / 2.0);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, cal_open ? 0.22 : 0.14);
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, cal_open ? 0.22 : 0.12);
+        cairo_set_line_width(cr, 1.0);
+        cairo_stroke(cr);
+    }
     draw_text(cr, cached_clock_str, FONT_UI, 12.5, true,
-              1.0, 1.0, 1.0, 0.92, clock_x, h / 2.0, false, true);
+              1.0, 1.0, 1.0, (bar->hover_clock || cal_open) ? 1.0 : 0.92,
+              clock_x, h / 2.0, false, true);
 
-    double cursor_x = clock_x - 14.0;
+    double cursor_x = clock_x - 16.0;
 
     int capacity = 0;
     bool charging = false;
@@ -452,14 +414,6 @@ void topbar_render(aurade_topbar_t *bar) {
                              (bar->hover_cc || cc_open) ? 1.0 : 0.88);
 
     cursor_x -= 8.0;
-
-    bool nc_left = bar->server && bar->server->config.notif_center_left;
-    if (!nc_left) {
-        double nc_w = 26.0, nc_h = 17.0;
-        cursor_x -= nc_w;
-        draw_nc_bell_pill(bar, cr, cursor_x, (h - nc_h) / 2.0, nc_w, nc_h);
-        cursor_x -= 8.0;
-    }
 
     // Processor Temperature Widget (Average and Max)
     bool show_cpu = bar->server && bar->server->config.topbar_cpu_temp;
@@ -621,11 +575,6 @@ void topbar_render(aurade_topbar_t *bar) {
     // Active application name clamped before the Dynamic Pill / right status area
     {
         double app_x = 36.0;
-        if (nc_left) {
-            double nc_w = 26.0, nc_h = 17.0;
-            draw_nc_bell_pill(bar, cr, 36.0, (h - nc_h) / 2.0, nc_w, nc_h);
-            app_x += nc_w + 8.0;
-        }
         double right_limit = (bar->rec_w > 0.0 && bar->rec_x < cursor_x) ? (bar->rec_x - 12.0) : (cursor_x - 14.0);
         if (bar->server->music_pill &&
             music_pill_get_pos(bar->server->music_pill) == MUSIC_PILL_POS_TOPBAR_CENTER &&
@@ -639,6 +588,10 @@ void topbar_render(aurade_topbar_t *bar) {
             draw_text_clamped(cr, bar->active_app_title, FONT_UI, 13.0, true,
                               1.0, 1.0, 1.0, 0.96, app_x, h / 2.0, max_app_w);
         }
+    }
+
+    if (bar->server && bar->server->ext) {
+        ext_manager_render_topbar(bar->server->ext, cr, w, h);
     }
 
     cairo_buffer_apply_to_scene(bar->buffer, bar->scene_buffer);
@@ -734,8 +687,8 @@ static void power_menu_render(aurade_topbar_t *bar) {
                       POWER_MENU_PANEL_W, POWER_MENU_PANEL_H, 12.0);
     cairo_pattern_t *bg = cairo_pattern_create_linear(POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y,
                                                       POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y + POWER_MENU_PANEL_H);
-    cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.12, 0.13, 0.17, 0.45);
-    cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.06, 0.07, 0.10, 0.65);
+    cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.22, 0.20, 0.32, 0.30);
+    cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.10, 0.09, 0.18, 0.46);
     cairo_set_source(cr, bg);
     cairo_fill(cr);
     cairo_pattern_destroy(bg);
@@ -746,10 +699,11 @@ static void power_menu_render(aurade_topbar_t *bar) {
                       POWER_MENU_PANEL_W, POWER_MENU_PANEL_H, 12.0);
     cairo_clip(cr);
     double sheen_h = POWER_MENU_PANEL_H * 0.35;
+    double gl = cairo_buffer_get_glass_light();
     cairo_pattern_t *sheen = cairo_pattern_create_linear(POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y,
                                                         POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y + sheen_h);
-    cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.028);
-    cairo_pattern_add_color_stop_rgba(sheen, 0.60, 1.0, 1.0, 1.0, 0.008);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.0, 1.0, 1.0, 1.0, 0.10 * gl);
+    cairo_pattern_add_color_stop_rgba(sheen, 0.60, 1.0, 1.0, 1.0, 0.03 * gl);
     cairo_pattern_add_color_stop_rgba(sheen, 1.0, 1.0, 1.0, 1.0, 0.0);
     cairo_rectangle(cr, POWER_MENU_PANEL_X, POWER_MENU_PANEL_Y, POWER_MENU_PANEL_W, sheen_h);
     cairo_set_source(cr, sheen);
@@ -767,24 +721,34 @@ static void power_menu_render(aurade_topbar_t *bar) {
 
             if (i == bar->power_menu_hover_row) {
                 draw_rounded_rect(cr, POWER_MENU_PANEL_X + 6.0, ry + 1.0,
-                                  POWER_MENU_PANEL_W - 12.0, POWER_MENU_ROW_H - 2.0, 6.0);
-                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.13);
-                cairo_fill(cr);
+                                  POWER_MENU_PANEL_W - 12.0, POWER_MENU_ROW_H - 2.0, 8.0);
+                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.16);
+                cairo_fill_preserve(cr);
+                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.14);
+                cairo_set_line_width(cr, 1.0);
+                cairo_stroke(cr);
             }
 
             draw_text(cr, power_row_label[i], FONT_UI, 13.0, false,
-                      1.0, 1.0, 1.0, 0.94,
+                      1.0, 1.0, 1.0, i == bar->power_menu_hover_row ? 1.0 : 0.90,
                       POWER_MENU_PANEL_X + 16.0, ry + POWER_MENU_ROW_H / 2.0,
                       false, true);
         }
 
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12);
-        cairo_rectangle(cr, POWER_MENU_PANEL_X + 8.0, 52.0,
-                        POWER_MENU_PANEL_W - 16.0, 1.0);
-        cairo_fill(cr);
-        cairo_rectangle(cr, POWER_MENU_PANEL_X + 8.0, 186.0,
-                        POWER_MENU_PANEL_W - 16.0, 1.0);
-        cairo_fill(cr);
+        double sep_ys[2] = { 52.0, 186.0 };
+        for (int s = 0; s < 2; s++) {
+            cairo_pattern_t *sp = cairo_pattern_create_linear(POWER_MENU_PANEL_X + 10.0, 0,
+                                                              POWER_MENU_PANEL_X + POWER_MENU_PANEL_W - 10.0, 0);
+            cairo_pattern_add_color_stop_rgba(sp, 0.0, 1.0, 1.0, 1.0, 0.0);
+            cairo_pattern_add_color_stop_rgba(sp, 0.15, 1.0, 1.0, 1.0, 0.16);
+            cairo_pattern_add_color_stop_rgba(sp, 0.85, 1.0, 1.0, 1.0, 0.16);
+            cairo_pattern_add_color_stop_rgba(sp, 1.0, 1.0, 1.0, 1.0, 0.0);
+            cairo_set_source(cr, sp);
+            cairo_rectangle(cr, POWER_MENU_PANEL_X + 10.0, sep_ys[s],
+                            POWER_MENU_PANEL_W - 20.0, 1.0);
+            cairo_fill(cr);
+            cairo_pattern_destroy(sp);
+        }
     } else {
         power_action_t action = bar->power_menu_confirm;
 
@@ -859,6 +823,62 @@ static void power_menu_perform(aurade_topbar_t *bar, power_action_t action) {
     }
 }
 
+static void pm_anim_apply(aurade_topbar_t *bar) {
+    double t = bar->pm_anim;
+    double e = 1.0 - pow(1.0 - t, 3.0);          // ease-out cubic
+    double sc = 0.94 + 0.06 * e;
+    double dy = -10.0 * (1.0 - e);
+    (void)sc;
+    if (bar->power_menu_scene) {
+        wlr_scene_buffer_set_opacity(bar->power_menu_scene, (float)e);
+        wlr_scene_node_set_position(&bar->power_menu_scene->node,
+                                    POWER_MENU_SCENE_X, (int)(POWER_MENU_SCENE_Y + dy));
+    }
+    if (bar->power_menu_blur_node) {
+        wlr_scene_node_set_position(&bar->power_menu_blur_node->node,
+                                    (int)(POWER_MENU_SCENE_X + POWER_MENU_PANEL_X),
+                                    (int)(POWER_MENU_SCENE_Y + POWER_MENU_PANEL_Y + dy));
+        glass_element_t gp = bar->server ? bar->server->config.glass_power_menu : (glass_element_t){ 0.85, 1.0, true };
+        wlr_scene_blur_set_strength(bar->power_menu_blur_node, (float)(gp.blur * e));
+    }
+}
+
+static int pm_anim_tick(void *data) {
+    aurade_topbar_t *bar = data;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    uint64_t now = (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    double dt = bar->pm_last_ms ? (double)(now - bar->pm_last_ms) : 16.0;
+    bar->pm_last_ms = now;
+    double dur = bar->pm_target ? 220.0 : 150.0;
+    bar->pm_anim += (bar->pm_target ? 1.0 : -1.0) * dt / dur;
+    bool done = false;
+    if (bar->pm_anim >= 1.0) { bar->pm_anim = 1.0; done = true; }
+    if (bar->pm_anim <= 0.0) { bar->pm_anim = 0.0; done = true; }
+    pm_anim_apply(bar);
+    if (done) {
+        bar->pm_last_ms = 0;
+        if (!bar->pm_target) {
+            if (bar->power_menu_scene) wlr_scene_node_set_enabled(&bar->power_menu_scene->node, false);
+            if (bar->power_menu_blur_node) wlr_scene_node_set_enabled(&bar->power_menu_blur_node->node, false);
+        }
+    } else {
+        wl_event_source_timer_update(bar->pm_timer, 8);
+    }
+    return 0;
+}
+
+static void pm_anim_to(aurade_topbar_t *bar, bool open) {
+    bar->pm_target = open;
+    if (!bar->server || !bar->server->wl_display) { bar->pm_anim = open ? 1.0 : 0.0; pm_anim_apply(bar); return; }
+    if (!bar->pm_timer) {
+        struct wl_event_loop *loop = wl_display_get_event_loop(bar->server->wl_display);
+        bar->pm_timer = wl_event_loop_add_timer(loop, pm_anim_tick, bar);
+    }
+    bar->pm_last_ms = 0;
+    wl_event_source_timer_update(bar->pm_timer, 1);
+}
+
 static void topbar_open_power_menu(aurade_topbar_t *bar) {
     bar->power_menu_state = POWER_MENU_OPEN;
     bar->power_menu_confirm = POWER_ACTION_NONE;
@@ -880,6 +900,8 @@ static void topbar_open_power_menu(aurade_topbar_t *bar) {
         wlr_scene_node_place_below(&bar->power_menu_blur_node->node, &bar->power_menu_scene->node);
     }
     power_menu_render(bar);
+    pm_anim_apply(bar);
+    pm_anim_to(bar, true);
     topbar_render(bar);
 }
 
@@ -896,12 +918,7 @@ void topbar_close_power_menu(aurade_topbar_t *bar) {
     bar->power_menu_confirm_hover = 0;
     bar->hover_sysmenu = false;
 
-    if (bar->power_menu_scene) {
-        wlr_scene_node_set_enabled(&bar->power_menu_scene->node, false);
-    }
-    if (bar->power_menu_blur_node) {
-        wlr_scene_node_set_enabled(&bar->power_menu_blur_node->node, false);
-    }
+    pm_anim_to(bar, false);
     topbar_render(bar);
 }
 
@@ -969,12 +986,12 @@ bool topbar_handle_motion(aurade_topbar_t *bar, double x, double y) {
     }
 
     if (y > bar->height + 2.0) {
-        if (bar->hover_cc || bar->hover_nc || bar->hover_sysmenu || bar->hover_rec || bar->hover_cpu_temp) {
+        if (bar->hover_cc || bar->hover_sysmenu || bar->hover_rec || bar->hover_cpu_temp || bar->hover_clock) {
             bar->hover_cc = false;
-            bar->hover_nc = false;
             bar->hover_sysmenu = false;
             bar->hover_rec = false;
             bar->hover_cpu_temp = false;
+            bar->hover_clock = false;
             topbar_render(bar);
         }
         return false;
@@ -982,9 +999,6 @@ bool topbar_handle_motion(aurade_topbar_t *bar, double x, double y) {
 
     bool cc = (x >= bar->cc_x && x <= bar->cc_x + bar->cc_w &&
                y >= bar->cc_y && y <= bar->cc_y + bar->cc_h);
-    bool nc = (bar->nc_w > 0 &&
-               x >= bar->nc_x && x <= bar->nc_x + bar->nc_w &&
-               y >= bar->nc_y && y <= bar->nc_y + bar->nc_h);
     bool sysmenu = (x >= bar->sysmenu_x && x <= bar->sysmenu_x + bar->sysmenu_w &&
                     y >= bar->sysmenu_y && y <= bar->sysmenu_y + bar->sysmenu_h);
     bool rec = (bar->rec_w > 0 &&
@@ -993,13 +1007,15 @@ bool topbar_handle_motion(aurade_topbar_t *bar, double x, double y) {
     bool temp = (bar->cpu_temp_w > 0 &&
                  x >= bar->cpu_temp_x && x <= bar->cpu_temp_x + bar->cpu_temp_w &&
                  y >= bar->cpu_temp_y && y <= bar->cpu_temp_y + bar->cpu_temp_h);
+    bool clk = (bar->clock_w > 0 && x >= bar->clock_x && x <= bar->clock_x + bar->clock_w);
 
-    if (cc != bar->hover_cc || nc != bar->hover_nc || sysmenu != bar->hover_sysmenu || rec != bar->hover_rec || temp != bar->hover_cpu_temp) {
+    if (cc != bar->hover_cc || sysmenu != bar->hover_sysmenu ||
+        rec != bar->hover_rec || temp != bar->hover_cpu_temp || clk != bar->hover_clock) {
         bar->hover_cc = cc;
-        bar->hover_nc = nc;
         bar->hover_sysmenu = sysmenu;
         bar->hover_rec = rec;
         bar->hover_cpu_temp = temp;
+        bar->hover_clock = clk;
         topbar_render(bar);
         return true;
     }
@@ -1056,31 +1072,21 @@ bool topbar_handle_click(aurade_topbar_t *bar, double x, double y) {
         return true;
     }
 
-    // Notification Center button
-    if (bar->nc_w > 0 &&
-        x >= bar->nc_x && x <= bar->nc_x + bar->nc_w &&
-        y >= bar->nc_y && y <= bar->nc_y + bar->nc_h) {
-        if (bar->server && bar->server->notifications) {
-            notifications_nc_toggle(bar->server->notifications);
-        }
-        return true;
-    }
-
     // Control Center
     if (x >= bar->cc_x && x <= bar->cc_x + bar->cc_w &&
         y >= bar->cc_y && y <= bar->cc_y + bar->cc_h) {
         // Start a short way in and let the spring finish the drop-in, so the
         // panel scales and fades in instead of appearing fully formed.
         server_handle_gesture_begin(bar->server, ACTION_CONTROL_CENTER);
-        server_handle_gesture_update(bar->server, -90.0, 0, 1.0);
+        server_handle_gesture_update(bar->server, -16.0, 0, 1.0);
         server_handle_gesture_end(bar->server, false, -500.0, 0);
         return true;
     }
 
-    // Clock -> Toggle Notification Center
+    // Clock -> Toggle Notification Center with Calendar
     if (bar->clock_w > 0 && x >= bar->clock_x && x <= bar->clock_x + bar->clock_w) {
         if (bar->server && bar->server->notifications) {
-            notifications_nc_toggle(bar->server->notifications);
+            notifications_nc_toggle_calendar(bar->server->notifications);
         }
         return true;
     }

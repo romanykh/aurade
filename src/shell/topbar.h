@@ -38,6 +38,7 @@ typedef struct aurade_topbar {
     double nc_x, nc_y, nc_w, nc_h;
     bool hover_nc;
     double clock_x, clock_w;
+    bool hover_clock;
     double rec_x, rec_y, rec_w, rec_h;
     bool hover_rec;
 
@@ -54,6 +55,10 @@ typedef struct aurade_topbar {
     power_action_t power_menu_confirm;
     int power_menu_hover_row;      // -1 = no row hovered
     int power_menu_confirm_hover;  // 0 = none, 1 = cancel, 2 = confirm
+    double pm_anim;
+    bool pm_target;
+    uint64_t pm_last_ms;
+    struct wl_event_source *pm_timer;
     cairo_buffer_t *power_menu_buffer;
     struct wlr_scene_buffer *power_menu_scene;
     struct wlr_scene_blur *power_menu_blur_node;

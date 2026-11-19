@@ -2037,10 +2037,19 @@ void launchpad_render(aurade_launchpad_t *lp) {
     lp_layout_t l;
     lp_layout(lp, &l);
 
-    // Search bar
-    draw_glass_panel(cr, l.search_x, l.search_y, l.search_w, l.search_h, l.search_h / 2.0,
-                     0.22, 0.24, 0.30, 0.72 * p);
-    draw_search_icon(cr, l.search_x + 19.0, l.search_y + l.search_h / 2.0, 15.0, 0.65 * p);
+    // Search bar (frosted liquid-glass capsule)
+    draw_rounded_rect(cr, l.search_x, l.search_y, l.search_w, l.search_h, l.search_h / 2.0);
+    cairo_pattern_t *sbg = cairo_pattern_create_linear(l.search_x, l.search_y,
+                                                       l.search_x, l.search_y + l.search_h);
+    cairo_pattern_add_color_stop_rgba(sbg, 0.0, 0.28, 0.28, 0.38, 0.56 * p);
+    cairo_pattern_add_color_stop_rgba(sbg, 1.0, 0.16, 0.16, 0.24, 0.64 * p);
+    cairo_set_source(cr, sbg);
+    cairo_fill_preserve(cr);
+    cairo_pattern_destroy(sbg);
+    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (lp->search_query[0] ? 0.34 : 0.20) * p);
+    cairo_set_line_width(cr, 1.0);
+    cairo_stroke(cr);
+    draw_search_icon(cr, l.search_x + 19.0, l.search_y + l.search_h / 2.0, 15.0, 0.72 * p);
 
     if (lp->search_query[0] == '\0') {
         draw_text(cr, "Search", LP_FONT, 13.0, false,
